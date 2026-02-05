@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
@@ -6,7 +6,7 @@ import wordIcon from '@/assets/svgs/Group 57.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import { useDocuments } from '@/contexts/DocumentsContext'
 import type { DocumentItem } from '@/contexts/DocumentsContext'
-import { FileText, Download, Trash2, X } from 'lucide-react'
+import { FileText, Download, Trash2, X, Loader2 } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,8 @@ import {
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
+import { renderAsync } from 'docx-preview'
+import * as mammoth from 'mammoth'
 
 function getFileIconSrc(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase()
@@ -26,6 +28,115 @@ function getFileIconSrc(fileName: string): string {
 
 function isPdf(fileName: string): boolean {
   return fileName.split('.').pop()?.toLowerCase() === 'pdf'
+}
+
+function getOfficeDocType(fileName: string): 'docx' | 'doc' | null {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  if (ext === 'docx') return 'docx'
+  if (ext === 'doc') return 'doc'
+  return null
+}
+
+function isOfficeDocPreviewable(fileName: string): boolean {
+  return getOfficeDocType(fileName) !== null
+}
+
+function OfficePreview({
+  file,
+  className,
+}: {
+  file: DocumentItem
+  className?: string
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!file.url || !containerRef.current) return
+
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+
+    const run = async () => {
+      try {
+        const res = await fetch(file.url, { credentials: 'include' })
+        if (!res.ok) throw new Error('Impossible de charger le fichier')
+        const blob = await res.blob()
+        if (cancelled) return
+
+        const container = containerRef.current
+        if (!container) return
+
+        container.innerHTML = ''
+        const type = getOfficeDocType(file.name)
+
+        if (type === 'docx') {
+          await renderAsync(blob, container, undefined, {
+            className: 'docx-preview-document',
+            inWrapper: true,
+          })
+        } else if (type === 'doc') {
+          const arrayBuffer = await blob.arrayBuffer()
+          const result = await mammoth.convertToHtml({ arrayBuffer })
+          container.innerHTML = `<div class="mammoth-content text-foreground [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6">${result.value}</div>`
+        }
+
+        if (cancelled) container.innerHTML = ''
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Erreur d’aperçu')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [file.id, file.url, file.name])
+
+  if (error) {
+    return (
+      <div className={className}>
+        <div className="p-4 flex flex-col gap-3">
+          <p className="font-medium truncate">{file.name}</p>
+          <p className="text-muted-foreground text-sm">{error}</p>
+          {file.url && (
+            <a
+              href={file.url}
+              download={file.name}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+            >
+              <Download className="size-4" />
+              Télécharger le fichier
+            </a>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className={className}>
+      {loading && (
+        <div className="flex items-center justify-center gap-2 p-6 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" />
+          <span className="text-sm">Chargement de l’aperçu…</span>
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        className="min-h-[min(70vh,500px)] overflow-auto bg-white p-4 [&_.docx-preview-document]:!max-w-none"
+        style={{ display: loading ? 'none' : 'block' }}
+      />
+    </div>
+  )
 }
 
 function FilePreviewContent({
@@ -43,27 +154,35 @@ function FilePreviewContent({
 }) {
   return (
     <div className={className}>
-      {canPreviewOffice ? (
-        <iframe
-          src={file.viewerUrl}
-          title={file.name}
-          className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
-        />
-      ) : canPreviewPdf ? (
+      {canPreviewPdf ? (
         <iframe
           src={file.url}
           title={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
         />
+      ) : canPreviewOffice ? (
+        <OfficePreview file={file} className="w-full h-full min-h-[min(70vh,500px)]" />
       ) : (
-        <div className="p-4">
+        <div className="p-4 flex flex-col gap-3">
           <p className="font-medium truncate">{file.name}</p>
-          <p className="text-muted-foreground text-sm mt-1">
+          <p className="text-muted-foreground text-sm">
             {formatSize(file.size)}
           </p>
-          <p className="text-muted-foreground text-sm mt-2">
+          <p className="text-muted-foreground text-sm">
             Aperçu non disponible pour ce type de fichier.
           </p>
+          {file.url && (
+            <a
+              href={file.url}
+              download={file.name}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+            >
+              <Download className="size-4" />
+              Télécharger le fichier
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -85,16 +204,13 @@ function FileCard({
 }) {
   const iconSrc = getFileIconSrc(file.name)
   const canPreviewPdf = isPdf(file.name) && !!file.url
-  const canPreviewOffice = !canPreviewPdf && !!file.viewerUrl
+  const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
 
   const handleClick = () => {
     if (onSelect) {
       onSelect(file)
-    } else if (canPreviewPdf && file.url) {
-      window.open(file.url, '_blank', 'noopener,noreferrer')
-    } else if (canPreviewOffice && file.viewerUrl) {
-      window.open(file.viewerUrl, '_blank', 'noopener,noreferrer')
     } else if (file.url) {
+      // Use direct file URL for all files (Office Viewer often fails in prod)
       window.open(file.url, '_blank', 'noopener,noreferrer')
     }
   }
@@ -302,7 +418,7 @@ const DocumentSection = () => {
                   formatSize={formatSize}
                   canPreviewPdf={isPdf(selectedFile.name) && !!selectedFile.url}
                   canPreviewOffice={
-                    !isPdf(selectedFile.name) && !!selectedFile.viewerUrl
+                    isOfficeDocPreviewable(selectedFile.name) && !!selectedFile.url
                   }
                   className="h-full min-h-[min(70vh,500px)]"
                 />
