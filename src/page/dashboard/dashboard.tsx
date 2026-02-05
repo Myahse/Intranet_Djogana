@@ -79,11 +79,11 @@ function DashboardLayout() {
             aria-label="Ouvrir le menu"
             className="md:hidden shrink-0"
           />
-          <Link to="/dashboard" className="flex items-center gap-2 shrink-0">
+          <Link to="/" className="flex items-center gap-2 shrink-0">
             <img
               src={logoDjogana}
               alt="Djogana"
-              className="h-20 w-auto"
+              className="h-14 w-auto"
             />
           </Link>
         </header>

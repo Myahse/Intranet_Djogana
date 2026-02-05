@@ -1,11 +1,37 @@
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
+import { useAuth } from "@/contexts/AuthContext"
+import { User } from "lucide-react"
 
 const Landing = () => {
+  const { user } = useAuth()
+
   return (
-    <div className="min-h-svh flex flex-col items-center justify-center bg-gradient-to-b from-background to-muted/30 px-4">
-      <main className="max-w-4xl mx-auto text-center space-y-0">
+    <div className="min-h-svh flex flex-col bg-gradient-to-b from-background to-muted/30">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4 w-full">
+        <Link to="/" className="flex items-center gap-2 shrink-0">
+          <img
+            src={logoDjogana}
+            alt="Djogana"
+            className="h-20 w-auto"
+          />
+        </Link>
+        {user ? (
+          <Link
+            to="/dashboard"
+            className="flex size-10 items-center justify-center rounded-full border bg-muted hover:bg-muted/80 transition-colors"
+            aria-label="Accéder au tableau de bord"
+          >
+            <User className="size-5 text-muted-foreground" />
+          </Link>
+        ) : (
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/login">Connexion</Link>
+          </Button>
+        )}
+      </header>
+      <main className="max-w-4xl mx-auto text-center space-y-0 flex-1 flex flex-col items-center justify-center px-4">
         <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold text-foreground tracking-tight text-center">
           Bienvenue sur la base
         </h1>
@@ -17,9 +43,15 @@ const Landing = () => {
         </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-4">
-          <Button asChild size="lg" className="text-base px-8">
-            <Link to="/login">Accéder à l'intranet</Link>
-          </Button>
+          {user ? (
+            <Button asChild size="lg" className="text-base px-8">
+              <Link to="/dashboard">Accéder au tableau de bord</Link>
+            </Button>
+          ) : (
+            <Button asChild size="lg" className="text-base px-8">
+              <Link to="/login">Accéder à l'intranet</Link>
+            </Button>
+          )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-12 text-left">
           <div className="p-4 rounded-lg bg-card border shadow-sm">
