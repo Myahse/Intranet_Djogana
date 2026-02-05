@@ -27,8 +27,9 @@ const Login = () => {
       <CardContent className="flex flex-col gap-4 ">
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit((data) => {
-              if (login(data.identifiant, data.mot_de_passe)) {
+            onSubmit={form.handleSubmit(async (data) => {
+              const ok = await login(data.identifiant, data.mot_de_passe)
+              if (ok) {
                 navigate("/dashboard")
               } else {
                 toast.error("Identifiant ou mot de passe incorrect")

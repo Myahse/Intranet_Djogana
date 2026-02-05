@@ -14,17 +14,23 @@ import {
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { FileText, FolderPlus, LogOut, Upload } from 'lucide-react'
+import { FileText, FolderPlus, LogOut, Upload, UserPlus, KeyRound } from 'lucide-react'
 
 const fileInputClass =
   'flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
 
 const ProfilePage = () => {
   const navigate = useNavigate()
-  const { user, isAdmin, logout } = useAuth()
+  const { user, isAdmin, logout, registerUser, changePassword } = useAuth()
   const { folderOptions, addFile, addFolder } = useDocuments()
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [newFolderName, setNewFolderName] = useState('')
+  const [newUserPhone, setNewUserPhone] = useState('')
+  const [isCreatingUser, setIsCreatingUser] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
   const uploadFileInputRef = useRef<HTMLInputElement>(null)
   const addFolderFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -78,6 +84,66 @@ const ProfilePage = () => {
     }
   }
 
+  const handleCreateUser = async () => {
+    const phone = newUserPhone.trim()
+    if (!phone) {
+      toast.error('Veuillez saisir un numéro de téléphone')
+      return
+    }
+
+    try {
+      setIsCreatingUser(true)
+      const ok = await registerUser(phone, phone)
+      if (ok) {
+        toast.success(
+          "Utilisateur créé. Le numéro de téléphone est utilisé comme identifiant et mot de passe initial."
+        )
+        setNewUserPhone('')
+      } else {
+        toast.error(
+          "Impossible de créer l'utilisateur. Vérifiez que le numéro n'est pas déjà utilisé."
+        )
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err)
+      toast.error("Erreur lors de la création de l'utilisateur")
+    } finally {
+      setIsCreatingUser(false)
+    }
+  }
+
+  const handleChangePassword = async () => {
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      toast.error('Veuillez remplir tous les champs')
+      return
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      toast.error('Les nouveaux mots de passe ne correspondent pas')
+      return
+    }
+
+    try {
+      setIsChangingPassword(true)
+      const ok = await changePassword(currentPassword, newPassword)
+      if (ok) {
+        toast.success('Mot de passe mis à jour')
+        setCurrentPassword('')
+        setNewPassword('')
+        setConfirmNewPassword('')
+      } else {
+        toast.error('Impossible de changer le mot de passe. Vérifiez votre mot de passe actuel.')
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err)
+      toast.error('Erreur lors du changement de mot de passe')
+    } finally {
+      setIsChangingPassword(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-8">
       <div className="flex items-center justify-between">
@@ -104,8 +170,80 @@ const ProfilePage = () => {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <KeyRound className="size-5" />
+            Changer mon mot de passe
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2 max-w-xs">
+            <Label htmlFor="current-password">Mot de passe actuel</Label>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2 max-w-xs">
+            <Label htmlFor="new-password">Nouveau mot de passe</Label>
+            <Input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2 max-w-xs">
+            <Label htmlFor="confirm-new-password">Confirmer le nouveau mot de passe</Label>
+            <Input
+              id="confirm-new-password"
+              type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+            />
+          </div>
+          <Button onClick={handleChangePassword} disabled={isChangingPassword}>
+            <KeyRound className="size-4 mr-2" />
+            {isChangingPassword ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
+          </Button>
+        </CardContent>
+      </Card>
+
       {isAdmin && (
         <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <UserPlus className="size-5" />
+                Créer un utilisateur
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                Créez un utilisateur en utilisant son numéro de téléphone comme identifiant et mot de
+                passe initial. Il pourra le changer ensuite.
+              </p>
+              <div className="grid gap-2 max-w-xs">
+                <Label htmlFor="new-user-phone">Numéro de téléphone</Label>
+                <Input
+                  id="new-user-phone"
+                  value={newUserPhone}
+                  onChange={(e) => setNewUserPhone(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Ex. 0701020304"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                />
+              </div>
+              <Button onClick={handleCreateUser} disabled={isCreatingUser}>
+                <UserPlus className="size-4 mr-2" />
+                {isCreatingUser ? 'Création...' : "Créer l'utilisateur"}
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">

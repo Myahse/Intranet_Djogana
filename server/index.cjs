@@ -1,3 +1,6 @@
+const dotenv = require('dotenv')
+dotenv.config()
+
 const express = require('express')
 const multer = require('multer')
 const cors = require('cors')
@@ -111,6 +114,40 @@ app.post('/api/auth/login', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('login error', err)
     return res.status(500).json({ error: 'Erreur lors de la connexion.' })
+  }
+})
+
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    const { identifiant, currentPassword, newPassword } = req.body || {}
+    if (!identifiant || !currentPassword || !newPassword) {
+      return res
+        .status(400)
+        .json({ error: 'Identifiant, mot de passe actuel et nouveau mot de passe sont requis.' })
+    }
+
+    const result = await pool.query(
+      'SELECT id, password_hash FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Identifiants invalides.' })
+    }
+
+    const user = result.rows[0]
+    const ok = await bcrypt.compare(currentPassword, user.password_hash)
+    if (!ok) {
+      return res.status(401).json({ error: 'Mot de passe actuel incorrect.' })
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10)
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashed, user.id])
+
+    return res.json({ success: true })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('change-password error', err)
+    return res.status(500).json({ error: 'Erreur lors du changement de mot de passe.' })
   }
 })
 
