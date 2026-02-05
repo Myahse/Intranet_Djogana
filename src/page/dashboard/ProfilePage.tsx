@@ -15,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { FileText, FolderPlus, LogOut, Upload, UserPlus, KeyRound } from 'lucide-react'
+import { FileText, FolderPlus, LogOut, Trash2, Upload, UserPlus, KeyRound } from 'lucide-react'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -259,6 +259,32 @@ const ProfilePage = () => {
       )
     }
 
+    const handleDeleteUser = async (targetUser: { id: string; identifiant: string }) => {
+      if (
+        // eslint-disable-next-line no-alert
+        !window.confirm(
+          `Supprimer l'utilisateur "${targetUser.identifiant}" ? Cette action est irréversible.`
+        )
+      ) {
+        return
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}`, {
+          method: 'DELETE',
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data?.error ?? 'Échec de la suppression')
+        }
+        setUsers((prev) => prev.filter((u) => u.id !== targetUser.id))
+        toast.success('Utilisateur supprimé')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
+        // eslint-disable-next-line no-console
+        console.error(err)
+      }
+    }
+
     return (
       <div className="max-h-64 overflow-y-auto border rounded-md">
         <table className="w-full text-sm">
@@ -266,6 +292,7 @@ const ProfilePage = () => {
             <tr>
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
               <th className="px-3 py-2 text-left font-medium">Rôle</th>
+              <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -273,6 +300,21 @@ const ProfilePage = () => {
               <tr key={u.id} className="border-t">
                 <td className="px-3 py-2">{u.identifiant}</td>
                 <td className="px-3 py-2 capitalize">{u.role}</td>
+                <td className="px-3 py-2 text-right">
+                  {user?.identifiant !== u.identifiant ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => handleDeleteUser(u)}
+                      aria-label={`Supprimer ${u.identifiant}`}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">(vous)</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
