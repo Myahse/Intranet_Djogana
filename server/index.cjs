@@ -80,6 +80,21 @@ app.get('/api/users', async (_req, res) => {
   }
 })
 
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id])
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    return res.status(204).send()
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('delete user error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression de l’utilisateur.' })
+  }
+})
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { identifiant, password } = req.body || {}
