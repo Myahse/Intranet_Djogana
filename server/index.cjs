@@ -9,7 +9,14 @@ const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 
 const app = express()
-app.use(cors())
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+)
 app.use(express.json())
 
 const BASE_URL = process.env.PUBLIC_BASE_URL || 'http://localhost:3000'
