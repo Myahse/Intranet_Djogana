@@ -121,3 +121,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Sidebar starts below the top navbar on dashboard */
+.dashboard-with-top-nav [data-slot="sidebar-container"] {
+  top: 3.5rem;
+  height: calc(100vh - 3.5rem);
+}

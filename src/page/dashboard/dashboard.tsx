@@ -24,6 +24,7 @@ import { ChevronDown, ChevronRight, FolderOpen, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
 import { useDocuments } from '@/contexts/DocumentsContext'
+import logoDjogana from '@/assets/logo_djogana.png'
 
 const Dashboard = () => (
   <SidebarProvider>
@@ -72,105 +73,125 @@ function DashboardLayout() {
 
   return (
     <>
-      <Sidebar>
-        <SidebarHeader>
-          <Link to="/dashboard" className="text-sidebar-foreground font-semibold">
-            Dashboard
+      <div className="dashboard-with-top-nav flex flex-1 flex-col min-h-0 w-full">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 w-full">
+          <SidebarTrigger
+            aria-label="Ouvrir le menu"
+            className="md:hidden shrink-0"
+          />
+          <Link to="/dashboard" className="flex items-center gap-2 shrink-0">
+            <img
+              src={logoDjogana}
+              alt="Djogana"
+              className="h-20 w-auto"
+            />
           </Link>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
-            <SidebarGroupContent>
+        </header>
+        <div className="flex flex-1 min-h-0 min-w-0">
+          <Sidebar>
+            <SidebarHeader>
+              <Link to="/dashboard" className="text-sidebar-foreground font-semibold">
+                Dashboard
+              </Link>
+            </SidebarHeader>
+            <SidebarContent>
+              <SidebarGroup>
+                <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={isDocumentsRoot}>
+                        <Link to="/dashboard/documents">
+                          <FolderOpen className="size-4" />
+                          <span>Tous les dossiers</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    {rootFolders.map((folder) => (
+                      <SidebarMenuItem key={folder.value}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isFolderActive(folder.value)}
+                        >
+                          <Link to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}>
+                            <span>{folder.label}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                    {Object.entries(groupedFolders).map(([groupKey, group]) => {
+                      const groupHasActive = group.subfolders.some((sf) =>
+                        isFolderActive(sf.value)
+                      )
+                      const isOpen = openGroups[groupKey] ?? groupHasActive
+
+                      return (
+                        <SidebarMenuItem key={groupKey}>
+                          <SidebarMenuButton
+                            isActive={groupHasActive}
+                            onClick={() =>
+                              setOpenGroups((prev) => ({
+                                ...prev,
+                                [groupKey]: !isOpen,
+                              }))
+                            }
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="size-4" />
+                            ) : (
+                              <ChevronRight className="size-4" />
+                            )}
+                            <span>{group.groupLabel}</span>
+                          </SidebarMenuButton>
+                          {isOpen && (
+                            <SidebarMenuSub>
+                              {group.subfolders.map((subfolder) => (
+                                <SidebarMenuSubItem key={subfolder.value}>
+                                  <SidebarMenuSubButton
+                                    asChild
+                                    isActive={isFolderActive(subfolder.value)}
+                                  >
+                                    <Link
+                                      to={`/dashboard/documents/${encodeURIComponent(
+                                        subfolder.value
+                                      )}`}
+                                    >
+                                      <span>{subfolder.label}</span>
+                                    </Link>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              ))}
+                            </SidebarMenuSub>
+                          )}
+                        </SidebarMenuItem>
+                      )
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </SidebarContent>
+            <SidebarFooter>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={isDocumentsRoot}>
-                    <Link to="/dashboard/documents">
-                      <FolderOpen className="size-4" />
-                      <span>Tous les dossiers</span>
-                    </Link>
+                  <SidebarMenuButton
+                    onClick={() => setProfileOpen(true)}
+                    isActive={profileOpen}
+                    className={cn(
+                      profileOpen && 'border-t border-black'
+                    )}
+                  >
+                    <User className="size-4" />
+                    <span>Profil</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {rootFolders.map((folder) => (
-                  <SidebarMenuItem key={folder.value}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isFolderActive(folder.value)}
-                    >
-                      <Link to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}>
-                        <span>{folder.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-                {Object.entries(groupedFolders).map(([groupKey, group]) => {
-                  const groupHasActive = group.subfolders.some((sf) =>
-                    isFolderActive(sf.value)
-                  )
-                  const isOpen = openGroups[groupKey] ?? groupHasActive
-
-                  return (
-                    <SidebarMenuItem key={groupKey}>
-                      <SidebarMenuButton
-                        isActive={groupHasActive}
-                        onClick={() =>
-                          setOpenGroups((prev) => ({
-                            ...prev,
-                            [groupKey]: !isOpen,
-                          }))
-                        }
-                      >
-                        {isOpen ? (
-                          <ChevronDown className="size-4" />
-                        ) : (
-                          <ChevronRight className="size-4" />
-                        )}
-                        <span>{group.groupLabel}</span>
-                      </SidebarMenuButton>
-                      {isOpen && (
-                        <SidebarMenuSub>
-                          {group.subfolders.map((subfolder) => (
-                            <SidebarMenuSubItem key={subfolder.value}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={isFolderActive(subfolder.value)}
-                              >
-                                <Link
-                                  to={`/dashboard/documents/${encodeURIComponent(
-                                    subfolder.value
-                                  )}`}
-                                >
-                                  <span>{subfolder.label}</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      )}
-                    </SidebarMenuItem>
-                  )
-                })}
               </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                onClick={() => setProfileOpen(true)}
-                isActive={profileOpen}
-                className={cn(
-                  profileOpen && 'border-t border-black'
-                )}
-              >
-                <User className="size-4" />
-                <span>Profil</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      </Sidebar>
+            </SidebarFooter>
+          </Sidebar>
+          <SidebarInset className="min-w-0">
+            <Outlet />
+          </SidebarInset>
+        </div>
+      </div>
       <Sheet open={profileOpen} onOpenChange={setProfileOpen}>
         <SheetContent
           side="bottom"
@@ -181,13 +202,6 @@ function DashboardLayout() {
           </div>
         </SheetContent>
       </Sheet>
-      <SidebarInset>
-        <header className="sticky top-0 z-10 flex md:hidden items-center gap-2 border-b bg-background px-4 py-2">
-          <SidebarTrigger aria-label="Ouvrir le menu" />
-          <span className="text-sm font-semibold">Menu</span>
-        </header>
-        <Outlet />
-      </SidebarInset>
     </>
   )
 }
