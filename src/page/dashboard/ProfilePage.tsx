@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select,
   SelectContent,
@@ -11,10 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { FileText, FolderPlus, LogOut, Upload, UserPlus, KeyRound } from 'lucide-react'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 const fileInputClass =
   'flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
@@ -22,9 +25,12 @@ const fileInputClass =
 const ProfilePage = () => {
   const navigate = useNavigate()
   const { user, isAdmin, logout, registerUser, changePassword } = useAuth()
-  const { folderOptions, addFile, addFolder } = useDocuments()
+  const { folderOptions, addFile, addFolder, addFolderMeta } = useDocuments()
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [newFolderName, setNewFolderName] = useState('')
+  const [formationGroupName, setFormationGroupName] = useState('')
+  const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
+  const [formationSubfolderName, setFormationSubfolderName] = useState('')
   const [newUserPhone, setNewUserPhone] = useState('')
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
@@ -33,6 +39,22 @@ const ProfilePage = () => {
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const uploadFileInputRef = useRef<HTMLInputElement>(null)
   const addFolderFileInputRef = useRef<HTMLInputElement>(null)
+  const formationFolderFileInputRef = useRef<HTMLInputElement>(null)
+  const [users, setUsers] = useState<Array<{ id: string; identifiant: string; role: string }>>([])
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+
+  // Existing formation groups derived from folder keys using "group::subfolder" convention
+  const formationGroupOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          folderOptions
+            .map((opt) => opt.value.split('::')[0])
+            .filter((name) => name && name.trim().length > 0)
+        )
+      ).map((name) => ({ value: name, label: name })),
+    [folderOptions]
+  )
 
   const handleLogout = () => {
     logout()
@@ -83,6 +105,56 @@ const ProfilePage = () => {
       console.error(err)
     }
   }
+
+  const handleAddFormationFolder = async () => {
+    const group = (selectedFormationGroup || formationGroupName).trim()
+    const sub = formationSubfolderName.trim()
+    if (!group || !sub) {
+      toast.error('Veuillez saisir le nom du groupe et du sous-dossier')
+      return
+    }
+    const file = formationFolderFileInputRef.current?.files?.[0]
+    const folderKey = `${group}::${sub}`
+    try {
+      if (file) {
+        await addFolder(folderKey, file)
+        toast.success('Dossier de formation créé et fichier ajouté')
+      } else {
+        await addFolderMeta(folderKey)
+        toast.success('Dossier de formation créé (sans fichier)')
+      }
+      setFormationGroupName('')
+      setSelectedFormationGroup('')
+      setFormationSubfolderName('')
+      if (formationFolderFileInputRef.current) formationFolderFileInputRef.current.value = ''
+    } catch (err) {
+      toast.error("Erreur lors de la création du dossier de formation")
+      // eslint-disable-next-line no-console
+      console.error(err)
+    }
+  }
+
+  useEffect(() => {
+    if (!isAdmin) return
+    ;(async () => {
+      try {
+        setIsLoadingUsers(true)
+        const res = await fetch(`${API_BASE_URL}/api/users`)
+        if (!res.ok) return
+        const data = (await res.json()) as Array<{
+          id: string
+          identifiant: string
+          role: string
+        }>
+        setUsers(data)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(err)
+      } finally {
+        setIsLoadingUsers(false)
+      }
+    })()
+  }, [isAdmin])
 
   const handleCreateUser = async () => {
     const phone = newUserPhone.trim()
@@ -142,6 +214,71 @@ const ProfilePage = () => {
     } finally {
       setIsChangingPassword(false)
     }
+  }
+
+  const renderUsersTable = () => {
+    if (isLoadingUsers) {
+      return (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <div className="max-h-64 overflow-hidden border rounded-md">
+            <table className="w-full text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">
+                    <Skeleton className="h-3 w-24" />
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium">
+                    <Skeleton className="h-3 w-16" />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {[0, 1, 2].map((i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-3 py-2">
+                      <Skeleton className="h-3 w-32" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Skeleton className="h-3 w-16" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )
+    }
+
+    if (users.length === 0) {
+      return (
+        <p className="text-sm text-muted-foreground">
+          Aucun utilisateur pour le moment.
+        </p>
+      )
+    }
+
+    return (
+      <div className="max-h-64 overflow-y-auto border rounded-md">
+        <table className="w-full text-sm">
+          <thead className="bg-muted">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Identifiant</th>
+              <th className="px-3 py-2 text-left font-medium">Rôle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id} className="border-t">
+                <td className="px-3 py-2">{u.identifiant}</td>
+                <td className="px-3 py-2 capitalize">{u.role}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
   }
 
   return (
@@ -213,7 +350,19 @@ const ProfilePage = () => {
       </Card>
 
       {isAdmin && (
-        <>
+        <div className="space-y-8">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <UserPlus className="size-5" />
+                Utilisateurs
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {renderUsersTable()}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
@@ -283,6 +432,77 @@ const ProfilePage = () => {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
+                <FolderPlus className="size-5" />
+                Ajouter un dossier de formation (groupe + sous-dossier)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                Créez une structure hiérarchique pour les documents de formation&nbsp;: un groupe
+                (ex. &quot;Module 1&quot;) contenant un sous-dossier (ex. &quot;Cours&quot;), puis
+                ajoutez un premier fichier.
+              </p>
+              <div className="grid gap-2">
+                <Label htmlFor="formation-group-name">Nom du groupe</Label>
+                {formationGroupOptions.length > 0 && (
+                  <Select
+                    value={selectedFormationGroup}
+                    onValueChange={(value) => {
+                      setSelectedFormationGroup(value)
+                      setFormationGroupName('')
+                    }}
+                  >
+                    <SelectTrigger className="w-full max-w-xs">
+                      <SelectValue placeholder="Sélectionner un groupe existant" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {formationGroupOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Input
+                  id="formation-group-name"
+                  value={formationGroupName}
+                  onChange={(e) => {
+                    setFormationGroupName(e.target.value)
+                    setSelectedFormationGroup('')
+                  }}
+                  placeholder='Ou saisir un nouveau groupe, ex. "Module 1"'
+                  className="max-w-xs"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="formation-subfolder-name">Nom du sous-dossier</Label>
+                <Input
+                  id="formation-subfolder-name"
+                  value={formationSubfolderName}
+                  onChange={(e) => setFormationSubfolderName(e.target.value)}
+                  placeholder='Ex. "Cours", "Supports", "Exercices"'
+                  className="max-w-xs"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Fichier à envoyer</Label>
+                <input
+                  ref={formationFolderFileInputRef}
+                  type="file"
+                  className={fileInputClass}
+                />
+              </div>
+              <Button onClick={handleAddFormationFolder}>
+                <FolderPlus className="size-4 mr-2" />
+                Créer le sous-dossier de formation et ajouter le fichier
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
                 <Upload className="size-5" />
                 Uploader un fichier
               </CardTitle>
@@ -320,7 +540,7 @@ const ProfilePage = () => {
               </Button>
             </CardContent>
           </Card>
-        </>
+        </div>
       )}
     </div>
   )
