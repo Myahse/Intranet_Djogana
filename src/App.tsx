@@ -20,14 +20,8 @@ export default function App() {
           <Route path="/document" element={<Documents />} />
           <Route path="/dashboard" element={<Dashboard />}>
             <Route index element={<DashboardHome />} />
-            <Route path="documents/formation" element={<DocumentSection />} />
-            <Route path="documents/mode-operation" element={<DocumentSection />} />
-            <Route path="documents/mode-operation/gestion-projet" element={<DocumentSection />} />
-            <Route
-              path="documents/mode-operation/reglement-interieur"
-              element={<DocumentSection />}
-            />
-            <Route path="documents/mode-operation/gestion-personnel" element={<DocumentSection />} />
+        <Route path="documents" element={<DocumentSection />} />
+        <Route path="documents/:folder" element={<DocumentSection />} />
           </Route>
         </Routes>
       </DocumentsProvider>

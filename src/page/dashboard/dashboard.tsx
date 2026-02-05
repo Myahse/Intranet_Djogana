@@ -17,19 +17,45 @@ import {
   SidebarProvider,
   SidebarInset,
 } from '@/components/ui/sidebar'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
-import { BookOpen, ChevronDownIcon, FolderOpen, User } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
+import { useDocuments } from '@/contexts/DocumentsContext'
 
 const Dashboard = () => {
   const location = useLocation()
   const [profileOpen, setProfileOpen] = useState(false)
+  const { folderOptions } = useDocuments()
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
-  const isActive = (path: string) => location.pathname === path
-  const isModeOperationActive = (path: string) =>
-    path.startsWith('/dashboard/documents/mode-operation')
+  const isFolderActive = (folderValue: string) =>
+    location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
+  const isDocumentsRoot = location.pathname === '/dashboard/documents'
+
+  // Group folders by "group::subfolder" convention.
+  const rootFolders: typeof folderOptions = []
+  const groupedFolders: Record<
+    string,
+    { groupLabel: string; subfolders: { value: string; label: string }[] }
+  > = {}
+
+  folderOptions.forEach((folder) => {
+    const [group, sub] = folder.value.split('::')
+    if (!sub) {
+      rootFolders.push(folder)
+      return
+    }
+
+    if (!groupedFolders[group]) {
+      groupedFolders[group] = { groupLabel: group, subfolders: [] }
+    }
+
+    groupedFolders[group].subfolders.push({
+      value: folder.value,
+      label: sub,
+    })
+  })
 
   return (
     <SidebarProvider>
@@ -41,87 +67,76 @@ const Dashboard = () => {
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>Types de documents</SidebarGroupLabel>
+            <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={isActive('/dashboard/documents/formation')}>
-                    <Link to="/dashboard/documents/formation">
-                      <BookOpen className="size-4" />
-                      <span>Documents de formation</span>
+                  <SidebarMenuButton asChild isActive={isDocumentsRoot}>
+                    <Link to="/dashboard/documents">
+                      <FolderOpen className="size-4" />
+                      <span>Tous les dossiers</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <Collapsible
-                    defaultOpen={isModeOperationActive(location.pathname)}
-                    className="group/collapsible"
-                  >
-                    <CollapsibleTrigger asChild>
+                {rootFolders.map((folder) => (
+                  <SidebarMenuItem key={folder.value}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isFolderActive(folder.value)}
+                    >
+                      <Link to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}>
+                        <span>{folder.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+                {Object.entries(groupedFolders).map(([groupKey, group]) => {
+                  const groupHasActive = group.subfolders.some((sf) =>
+                    isFolderActive(sf.value)
+                  )
+                  const isOpen = openGroups[groupKey] ?? groupHasActive
+
+                  return (
+                    <SidebarMenuItem key={groupKey}>
                       <SidebarMenuButton
-                        isActive={isModeOperationActive(location.pathname)}
-                        className="[&>svg:last-child]:ml-auto"
+                        isActive={groupHasActive}
+                        onClick={() =>
+                          setOpenGroups((prev) => ({
+                            ...prev,
+                            [groupKey]: !isOpen,
+                          }))
+                        }
                       >
-                        <FolderOpen className="size-4" />
-                        <span>Mode opération</span>
-                        <ChevronDownIcon
-                          className={cn(
-                            'size-4 shrink-0 transition-transform duration-200',
-                            'group-data-[state=open]/collapsible:rotate-180'
-                          )}
-                        />
+                        {isOpen ? (
+                          <ChevronDown className="size-4" />
+                        ) : (
+                          <ChevronRight className="size-4" />
+                        )}
+                        <span>{group.groupLabel}</span>
                       </SidebarMenuButton>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive('/dashboard/documents/mode-operation')}
-                          >
-                            <Link to="/dashboard/documents/mode-operation">
-                              Vue d'ensemble
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive('/dashboard/documents/mode-operation/gestion-projet')}
-                          >
-                            <Link to="/dashboard/documents/mode-operation/gestion-projet">
-                              Gestion de projet
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive(
-                              '/dashboard/documents/mode-operation/reglement-interieur'
-                            )}
-                          >
-                            <Link to="/dashboard/documents/mode-operation/reglement-interieur">
-                              Règlement intérieur
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive(
-                              '/dashboard/documents/mode-operation/gestion-personnel'
-                            )}
-                          >
-                            <Link to="/dashboard/documents/mode-operation/gestion-personnel">
-                              Gestion du personnel
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  </Collapsible>
-                </SidebarMenuItem>
+                      {isOpen && (
+                        <SidebarMenuSub>
+                          {group.subfolders.map((subfolder) => (
+                            <SidebarMenuSubItem key={subfolder.value}>
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={isFolderActive(subfolder.value)}
+                              >
+                                <Link
+                                  to={`/dashboard/documents/${encodeURIComponent(
+                                    subfolder.value
+                                  )}`}
+                                >
+                                  <span>{subfolder.label}</span>
+                                </Link>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      )}
+                    </SidebarMenuItem>
+                  )
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

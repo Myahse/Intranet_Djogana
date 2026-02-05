@@ -38,6 +38,14 @@ async function initDb() {
   `)
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS folders (
+      id uuid PRIMARY KEY,
+      name text UNIQUE NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `)
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS files (
       id uuid PRIMARY KEY,
       name text NOT NULL,
@@ -58,6 +66,19 @@ async function initDb() {
 const upload = multer({ storage: multer.memoryStorage() })
 
 // ---------- Auth ----------
+
+app.get('/api/users', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, identifiant, role, created_at FROM users ORDER BY created_at DESC'
+    )
+    return res.json(result.rows)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('list users error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs.' })
+  }
+})
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -163,6 +184,18 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
     const uploadedBy = (req.body && req.body.uploadedBy) || null
 
     const id = uuidv4()
+    const folderId = uuidv4()
+
+    // Ensure the folder/group exists in folders table
+    await pool.query(
+      `
+        INSERT INTO folders (id, name)
+        VALUES ($1, $2)
+        ON CONFLICT (name) DO NOTHING
+      `,
+      [folderId, folder]
+    )
+
     await pool.query(
       `
         INSERT INTO files (id, name, mime_type, size, folder, uploaded_by, data)
@@ -194,6 +227,78 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
   }
 })
 
+// Explicit folders / groups
+app.get('/api/folders', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT name, created_at FROM folders ORDER BY created_at DESC'
+    )
+    return res.json(result.rows.map((row) => ({ name: row.name, createdAt: row.created_at })))
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('folders list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des dossiers.' })
+  }
+})
+
+app.post('/api/folders', async (req, res) => {
+  try {
+    const { folder } = req.body || {}
+    const name = (folder || '').trim()
+    if (!name) {
+      return res.status(400).json({ error: 'Nom de dossier requis.' })
+    }
+
+    const id = uuidv4()
+    await pool.query(
+      `
+        INSERT INTO folders (id, name)
+        VALUES ($1, $2)
+        ON CONFLICT (name) DO NOTHING
+      `,
+      [id, name]
+    )
+
+    return res.status(201).json({ name })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('folder create error', err)
+    return res.status(500).json({ error: 'Erreur lors de la création du dossier.' })
+  }
+})
+
+app.get('/api/files', async (req, res) => {
+  try {
+    const { folder } = req.query
+
+    const params = []
+    let sql = 'SELECT id, name, mime_type, size, folder, created_at FROM files'
+
+    if (folder) {
+      sql += ' WHERE folder = $1'
+      params.push(folder)
+    }
+
+    sql += ' ORDER BY created_at DESC'
+
+    const result = await pool.query(sql, params)
+
+    const rows = result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      size: Number(row.size) || 0,
+      folder: row.folder,
+      url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+    }))
+
+    return res.json(rows)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('files list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des fichiers.' })
+  }
+})
+
 app.get('/files/:id', async (req, res) => {
   try {
     const { id } = req.params
@@ -216,6 +321,31 @@ app.get('/files/:id', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('file fetch error', err)
     return res.status(500).send('Error fetching file')
+  }
+})
+
+app.delete('/api/files/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    await pool.query('DELETE FROM files WHERE id = $1', [id])
+    return res.status(204).send()
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('file delete error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression du fichier.' })
+  }
+})
+
+app.delete('/api/folders/:folder', async (req, res) => {
+  try {
+    const { folder } = req.params
+    await pool.query('DELETE FROM files WHERE folder = $1', [folder])
+    await pool.query('DELETE FROM folders WHERE name = $1', [folder])
+    return res.status(204).send()
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('folder delete error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression du dossier.' })
   }
 })
 

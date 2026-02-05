@@ -2,22 +2,16 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
 
-const DOCUMENTS_STORAGE_KEY =
-  import.meta.env.VITE_DOCUMENTS_STORAGE_KEY ?? 'intranet_djogana_documents'
-const CUSTOM_FOLDERS_STORAGE_KEY =
-  import.meta.env.VITE_CUSTOM_FOLDERS_STORAGE_KEY ?? 'intranet_djogana_custom_folders'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 export type FolderKey =
-  | 'formation'
-  | 'gestion-projet'
-  | 'reglement-interieur'
-  | 'gestion-personnel'
+  string
 
 export type FolderOption = { value: string; label: string }
 
@@ -34,54 +28,18 @@ type DocumentsContextValue = {
   getFiles: (folderKey: string) => DocumentItem[]
   addFile: (folderKey: string, file: File) => Promise<void>
   addFolder: (folderName: string, file: File) => Promise<void>
-  removeFile: (id: string) => void
+  // Create a folder/group without requiring an initial file
+  addFolderMeta: (folderName: string) => Promise<void>
+  removeFile: (id: string) => Promise<void>
+  removeFolder: (folderKey: string) => Promise<void>
   folderOptions: FolderOption[]
-  customFolderNames: string[]
 }
 
 const DocumentsContext = createContext<DocumentsContextValue | null>(null)
 
-const FIXED_OPTIONS: FolderOption[] = [
-  { value: 'formation', label: 'Documents de formation' },
-  { value: 'gestion-projet', label: 'Gestion de projet' },
-  { value: 'reglement-interieur', label: 'Règlement intérieur' },
-  { value: 'gestion-personnel', label: 'Gestion du personnel' },
-]
-
-function isWordName(fileName: string): boolean {
+function isOfficeDoc(fileName: string): boolean {
   const ext = fileName.split('.').pop()?.toLowerCase()
-  return ext === 'doc' || ext === 'docx'
-}
-
-function loadStoredDocuments(): DocumentItem[] {
-  try {
-    const raw = localStorage.getItem(DOCUMENTS_STORAGE_KEY)
-    if (!raw) return []
-    const data = JSON.parse(raw) as Array<
-      Omit<DocumentItem, 'url' | 'viewerUrl'> & { url?: string; viewerUrl?: string }
-    >
-    return data
-      .filter((x) => x.id && x.name != null && x.folderKey)
-      .map((x) => ({
-        ...x,
-        url: x.url || '',
-        viewerUrl: x.viewerUrl,
-        size: x.size ?? 0,
-      }))
-  } catch {
-    return []
-  }
-}
-
-function loadCustomFolders(): string[] {
-  try {
-    const raw = localStorage.getItem(CUSTOM_FOLDERS_STORAGE_KEY)
-    if (!raw) return []
-    const data = JSON.parse(raw) as string[]
-    return Array.isArray(data) ? data : []
-  } catch {
-    return []
-  }
+  return ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx'
 }
 
 async function uploadToServer(file: File, folderKey: string) {
@@ -105,33 +63,65 @@ function buildOfficeViewerUrl(fileUrl: string) {
 }
 
 export function DocumentsProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<DocumentItem[]>(loadStoredDocuments)
-  const [customFolderNames, setCustomFolderNames] = useState<string[]>(loadCustomFolders)
+  const [items, setItems] = useState<DocumentItem[]>([])
+  const [folderNames, setFolderNames] = useState<string[]>([])
 
-  const persistItems = useCallback((next: DocumentItem[]) => {
-    setItems(next)
-    const toStore = next.map(({ id, name, size, folderKey, url, viewerUrl }) => ({
-      id,
-      name,
-      size,
-      folderKey,
-      url,
-      viewerUrl,
-    }))
-    localStorage.setItem(DOCUMENTS_STORAGE_KEY, JSON.stringify(toStore))
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/files`)
+        if (!res.ok) return
+
+        const data = (await res.json()) as Array<{
+          id: string
+          name: string
+          size: number
+          url: string
+          folder: string
+        }>
+
+        const loaded: DocumentItem[] = data.map((row) => {
+          const viewerUrl = isOfficeDoc(row.name)
+            ? buildOfficeViewerUrl(row.url)
+            : undefined
+
+          return {
+            id: row.id,
+            name: row.name,
+            size: row.size ?? 0,
+            url: row.url,
+            viewerUrl,
+            folderKey: row.folder,
+          }
+        })
+
+        setItems(loaded)
+
+        // Try to load explicit folders/groups from API, otherwise derive from files
+        try {
+          const foldersRes = await fetch(`${API_BASE_URL}/api/folders`)
+          if (foldersRes.ok) {
+            const foldersData = (await foldersRes.json()) as Array<{ name: string }>
+            setFolderNames(foldersData.map((f) => f.name))
+          } else {
+            setFolderNames(
+              Array.from(new Set(data.map((row) => row.folder).filter(Boolean)))
+            )
+          }
+        } catch {
+          setFolderNames(
+            Array.from(new Set(data.map((row) => row.folder).filter(Boolean)))
+          )
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('failed to load documents from API', err)
+      }
+    })()
   }, [])
-
-  const persistCustomFolders = useCallback((names: string[]) => {
-    setCustomFolderNames(names)
-    localStorage.setItem(CUSTOM_FOLDERS_STORAGE_KEY, JSON.stringify(names))
-  }, [])
-
   const folderOptions = useMemo<FolderOption[]>(
-    () => [
-      ...FIXED_OPTIONS,
-      ...customFolderNames.map((name) => ({ value: name, label: name })),
-    ],
-    [customFolderNames]
+    () => folderNames.map((name) => ({ value: name, label: name })),
+    [folderNames]
   )
 
   const getFiles = useCallback(
@@ -142,7 +132,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const addFile = useCallback(
     async (folderKey: string, file: File) => {
       const uploaded = await uploadToServer(file, folderKey)
-      const viewerUrl = isWordName(uploaded.name)
+      const viewerUrl = isOfficeDoc(uploaded.name)
         ? buildOfficeViewerUrl(uploaded.url)
         : undefined
 
@@ -154,9 +144,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         viewerUrl,
         folderKey,
       }
-      persistItems([...items, newItem])
+      setItems((prev) => [...prev, newItem])
     },
-    [items, persistItems]
+    [items]
   )
 
   const addFolder = useCallback(
@@ -164,13 +154,8 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       const name = folderName.trim()
       if (!name) return
 
-      const nextCustom = customFolderNames.includes(name)
-        ? customFolderNames
-        : [...customFolderNames, name]
-      persistCustomFolders(nextCustom)
-
       const uploaded = await uploadToServer(file, name)
-      const viewerUrl = isWordName(uploaded.name)
+      const viewerUrl = isOfficeDoc(uploaded.name)
         ? buildOfficeViewerUrl(uploaded.url)
         : undefined
 
@@ -182,16 +167,60 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         viewerUrl,
         folderKey: name,
       }
-      persistItems([...items, newItem])
+      setItems((prev) => [...prev, newItem])
     },
-    [items, customFolderNames, persistItems, persistCustomFolders]
+    [items]
+  )
+
+  const addFolderMeta = useCallback(
+    async (folderName: string) => {
+      const name = folderName.trim()
+      if (!name) return
+
+      const res = await fetch(`${API_BASE_URL}/api/folders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ folder: name }),
+      })
+      if (!res.ok) {
+        throw new Error('Échec de la création du dossier')
+      }
+
+      setFolderNames((prev) => (prev.includes(name) ? prev : [...prev, name]))
+    },
+    []
   )
 
   const removeFile = useCallback(
-    (id: string) => {
-      persistItems(items.filter((f) => f.id !== id))
+    async (id: string) => {
+      const res = await fetch(`${API_BASE_URL}/api/files/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        throw new Error('Échec de la suppression du fichier')
+      }
+      setItems((prev) => prev.filter((f) => f.id !== id))
     },
-    [items, persistItems]
+    [items]
+  )
+
+  const removeFolder = useCallback(
+    async (folderKey: string) => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/folders/${encodeURIComponent(folderKey)}`,
+        {
+          method: 'DELETE',
+        }
+      )
+      if (!res.ok) {
+        throw new Error('Échec de la suppression du dossier')
+      }
+      setItems((prev) => prev.filter((f) => f.folderKey !== folderKey))
+      setFolderNames((prev) => prev.filter((name) => name !== folderKey))
+    },
+    [items]
   )
 
   const value = useMemo<DocumentsContextValue>(
@@ -199,11 +228,12 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       getFiles,
       addFile,
       addFolder,
+      addFolderMeta,
       removeFile,
+      removeFolder,
       folderOptions,
-      customFolderNames,
     }),
-    [getFiles, addFile, addFolder, removeFile, folderOptions, customFolderNames]
+    [getFiles, addFile, addFolder, addFolderMeta, removeFile, removeFolder, folderOptions]
   )
 
   return (
