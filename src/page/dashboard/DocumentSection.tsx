@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
@@ -5,10 +6,15 @@ import wordIcon from '@/assets/svgs/Group 57.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import { useDocuments } from '@/contexts/DocumentsContext'
 import type { DocumentItem } from '@/contexts/DocumentsContext'
-import { FileText, Download, Trash2 } from 'lucide-react'
+import { FileText, Download, Trash2, X } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable'
 import { toast } from 'sonner'
 
 function getFileIconSrc(fileName: string): string {
@@ -22,35 +28,83 @@ function isPdf(fileName: string): boolean {
   return fileName.split('.').pop()?.toLowerCase() === 'pdf'
 }
 
+function FilePreviewContent({
+  file,
+  formatSize,
+  canPreviewPdf,
+  canPreviewOffice,
+  className,
+}: {
+  file: DocumentItem
+  formatSize: (bytes: number) => string
+  canPreviewPdf: boolean
+  canPreviewOffice: boolean
+  className?: string
+}) {
+  return (
+    <div className={className}>
+      {canPreviewOffice ? (
+        <iframe
+          src={file.viewerUrl}
+          title={file.name}
+          className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
+        />
+      ) : canPreviewPdf ? (
+        <iframe
+          src={file.url}
+          title={file.name}
+          className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
+        />
+      ) : (
+        <div className="p-4">
+          <p className="font-medium truncate">{file.name}</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {formatSize(file.size)}
+          </p>
+          <p className="text-muted-foreground text-sm mt-2">
+            Aperçu non disponible pour ce type de fichier.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FileCard({
   file,
   formatSize,
   isAdmin,
   onDelete,
+  onSelect,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
   isAdmin: boolean
   onDelete?: (id: string) => void
+  onSelect?: (file: DocumentItem) => void
 }) {
   const iconSrc = getFileIconSrc(file.name)
-  const canPreviewPdf = isPdf(file.name) && file.url
+  const canPreviewPdf = isPdf(file.name) && !!file.url
   const canPreviewOffice = !canPreviewPdf && !!file.viewerUrl
+
+  const handleClick = () => {
+    if (onSelect) {
+      onSelect(file)
+    } else if (canPreviewPdf && file.url) {
+      window.open(file.url, '_blank', 'noopener,noreferrer')
+    } else if (canPreviewOffice && file.viewerUrl) {
+      window.open(file.viewerUrl, '_blank', 'noopener,noreferrer')
+    } else if (file.url) {
+      window.open(file.url, '_blank', 'noopener,noreferrer')
+    }
+  }
 
   return (
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
         <div
           className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer"
-          onClick={() => {
-            if (canPreviewPdf && file.url) {
-              window.open(file.url, '_blank', 'noopener,noreferrer')
-            } else if (canPreviewOffice && file.viewerUrl) {
-              window.open(file.viewerUrl, '_blank', 'noopener,noreferrer')
-            } else if (file.url) {
-              window.open(file.url, '_blank', 'noopener,noreferrer')
-            }
-          }}
+          onClick={handleClick}
         >
           {file.url && (
             <a
@@ -95,29 +149,13 @@ function FileCard({
         align="start"
         className="w-[min(90vw,400px)] p-0 overflow-hidden"
       >
-        {canPreviewOffice ? (
-          <iframe
-            src={file.viewerUrl}
-            title={file.name}
-            className="w-full h-[min(70vh,500px)] border-0 bg-white"
-          />
-        ) : canPreviewPdf ? (
-          <iframe
-            src={file.url}
-            title={file.name}
-            className="w-full h-[min(70vh,500px)] border-0 bg-white"
-          />
-        ) : (
-          <div className="p-4">
-            <p className="font-medium truncate">{file.name}</p>
-            <p className="text-muted-foreground text-sm mt-1">
-              {formatSize(file.size)}
-            </p>
-            <p className="text-muted-foreground text-sm mt-2">
-              Aperçu non disponible pour ce type de fichier.
-            </p>
-          </div>
-        )}
+        <FilePreviewContent
+          file={file}
+          formatSize={formatSize}
+          canPreviewPdf={canPreviewPdf}
+          canPreviewOffice={canPreviewOffice}
+          className="w-full h-[min(70vh,500px)]"
+        />
       </HoverCardContent>
     </HoverCard>
   )
@@ -138,6 +176,11 @@ const DocumentSection = () => {
   const folderKey = !isRoot ? decodeURIComponent(lastSegment) : null
   const { getFiles, removeFile, removeFolder, folderOptions } = useDocuments()
   const { isAdmin } = useAuth()
+  const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
+
+  useEffect(() => {
+    setSelectedFile(null)
+  }, [folderKey])
 
   // Detect if current non-root segment is a "group" (e.g. "Module 1") that
   // has subfolders like "Module 1::Cours" but no direct files.
@@ -157,64 +200,117 @@ const DocumentSection = () => {
   // Leaf folder: show files and delete actions
   if (!isRoot && folderKey && !isGroupRoute) {
     const files = getFiles(folderKey)
+
     return (
-      <div className="p-6">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold">{folderKey}</h1>
-          {isAdmin && (
-            <Button
-              variant="outline"
-              className="border-destructive text-destructive hover:bg-destructive/10"
-              onClick={async () => {
-                if (
-                  // eslint-disable-next-line no-alert
-                  window.confirm(
-                    'Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?'
-                  )
-                ) {
-                  try {
-                    await removeFolder(folderKey)
-                    toast.success('Dossier supprimé')
-                  } catch (err) {
-                    // eslint-disable-next-line no-console
-                    console.error(err)
-                    toast.error('Erreur lors de la suppression du dossier')
-                  }
-                }
-              }}
-            >
-              <Trash2 className="size-4 mr-2" />
-              Supprimer le dossier
-            </Button>
-          )}
-        </div>
-        {files.length > 0 ? (
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {files.map((file) => (
-              <FileCard
-                key={file.id}
-                file={file}
-                formatSize={formatSize}
-                isAdmin={isAdmin}
-                onDelete={async (id) => {
-                  try {
-                    await removeFile(id)
-                    toast.success('Fichier supprimé')
-                  } catch (err) {
-                    // eslint-disable-next-line no-console
-                    console.error(err)
-                    toast.error('Erreur lors de la suppression du fichier')
-                  }
-                }}
-              />
-            ))}
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="h-full min-h-0 w-full flex-1"
+        key={selectedFile ? 'preview-open' : 'preview-closed'}
+      >
+        <ResizablePanel
+          defaultSize={selectedFile ? 45 : 100}
+          minSize={5}
+          maxSize={95}
+          className="flex flex-col min-w-0"
+        >
+          <div className="flex flex-1 flex-col overflow-auto p-6">
+            <div className="mb-8 flex items-center justify-between gap-4">
+              <h1 className="text-2xl font-semibold">{folderKey}</h1>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  className="border-destructive text-destructive hover:bg-destructive/10"
+                  onClick={async () => {
+                    if (
+                      // eslint-disable-next-line no-alert
+                      window.confirm(
+                        'Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?'
+                      )
+                    ) {
+                      try {
+                        await removeFolder(folderKey)
+                        toast.success('Dossier supprimé')
+                      } catch (err) {
+                        // eslint-disable-next-line no-console
+                        console.error(err)
+                        toast.error('Erreur lors de la suppression du dossier')
+                      }
+                    }
+                  }}
+                >
+                  <Trash2 className="size-4 mr-2" />
+                  Supprimer le dossier
+                </Button>
+              )}
+            </div>
+            {files.length > 0 ? (
+              <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                {files.map((file) => (
+                  <FileCard
+                    key={file.id}
+                    file={file}
+                    formatSize={formatSize}
+                    isAdmin={isAdmin}
+                    onSelect={setSelectedFile}
+                    onDelete={async (id) => {
+                      try {
+                        await removeFile(id)
+                        if (selectedFile?.id === id) setSelectedFile(null)
+                        toast.success('Fichier supprimé')
+                      } catch (err) {
+                        // eslint-disable-next-line no-console
+                        console.error(err)
+                        toast.error('Erreur lors de la suppression du fichier')
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground">
+                Aucun fichier dans ce dossier. Les administrateurs peuvent en ajouter depuis le profil.
+              </p>
+            )}
           </div>
-        ) : (
-          <p className="text-muted-foreground">
-            Aucun fichier dans ce dossier. Les administrateurs peuvent en ajouter depuis le profil.
-          </p>
+        </ResizablePanel>
+        {selectedFile && (
+          <>
+            <ResizableHandle withHandle className="shrink-0 w-2 bg-border hover:bg-border/80 cursor-col-resize" />
+            <ResizablePanel
+              defaultSize={55}
+              minSize={25}
+              maxSize={95}
+              className="flex min-w-0 flex-col bg-muted/30"
+            >
+              <div className="flex items-center justify-between gap-2 border-b bg-background px-3 py-2">
+                <p className="min-w-0 truncate text-sm font-medium" title={selectedFile.name}>
+                  {selectedFile.name}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={() => setSelectedFile(null)}
+                  aria-label="Fermer l'aperçu"
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-auto">
+                <FilePreviewContent
+                  file={selectedFile}
+                  formatSize={formatSize}
+                  canPreviewPdf={isPdf(selectedFile.name) && !!selectedFile.url}
+                  canPreviewOffice={
+                    !isPdf(selectedFile.name) && !!selectedFile.viewerUrl
+                  }
+                  className="h-full min-h-[min(70vh,500px)]"
+                />
+              </div>
+            </ResizablePanel>
+          </>
         )}
-      </div>
+      </ResizablePanelGroup>
     )
   }
 

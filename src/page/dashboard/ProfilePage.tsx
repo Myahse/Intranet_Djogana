@@ -433,7 +433,7 @@ const ProfilePage = () => {
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <FolderPlus className="size-5" />
-                Ajouter un dossier de formation (groupe + sous-dossier)
+                Ajouter un sous-dossier (groupe + sous-dossier)
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -493,9 +493,12 @@ const ProfilePage = () => {
                   className={fileInputClass}
                 />
               </div>
-              <Button onClick={handleAddFormationFolder}>
-                <FolderPlus className="size-4 mr-2" />
-                Créer le sous-dossier de formation et ajouter le fichier
+              <Button
+                onClick={handleAddFormationFolder}
+                className="min-w-0 whitespace-normal text-left sm:whitespace-nowrap sm:text-center"
+              >
+                <FolderPlus className="size-4 shrink-0 mr-2" />
+                <span>Créer le sous-dossier et ajouter le fichier</span>
               </Button>
             </CardContent>
           </Card>

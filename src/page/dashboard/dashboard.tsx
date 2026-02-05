@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import {
   Sidebar,
@@ -8,6 +8,7 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
+  SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -15,7 +16,8 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarProvider,
-  SidebarInset,
+  SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { ChevronDown, ChevronRight, FolderOpen, User } from 'lucide-react'
@@ -23,11 +25,22 @@ import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
 import { useDocuments } from '@/contexts/DocumentsContext'
 
-const Dashboard = () => {
+const Dashboard = () => (
+  <SidebarProvider>
+    <DashboardLayout />
+  </SidebarProvider>
+)
+
+function DashboardLayout() {
   const location = useLocation()
   const [profileOpen, setProfileOpen] = useState(false)
   const { folderOptions } = useDocuments()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+
+  const { setOpenMobile } = useSidebar()
+  useEffect(() => {
+    setOpenMobile(false)
+  }, [location.pathname, setOpenMobile])
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
@@ -58,7 +71,7 @@ const Dashboard = () => {
   })
 
   return (
-    <SidebarProvider>
+    <>
       <Sidebar>
         <SidebarHeader>
           <Link to="/dashboard" className="text-sidebar-foreground font-semibold">
@@ -161,15 +174,21 @@ const Dashboard = () => {
       <Sheet open={profileOpen} onOpenChange={setProfileOpen}>
         <SheetContent
           side="bottom"
-          className="inset-x-0 max-h-[85vh] w-full overflow-y-auto rounded-t-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-300"
+          className="inset-x-0 max-h-[85vh] w-full overflow-y-auto rounded-t-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-300 flex flex-col"
         >
-          <ProfilePage />
+          <div className="flex-1 overflow-y-auto min-h-0 pb-8">
+            <ProfilePage />
+          </div>
         </SheetContent>
       </Sheet>
       <SidebarInset>
+        <header className="sticky top-0 z-10 flex md:hidden items-center gap-2 border-b bg-background px-4 py-2">
+          <SidebarTrigger aria-label="Ouvrir le menu" />
+          <span className="text-sm font-semibold">Menu</span>
+        </header>
         <Outlet />
       </SidebarInset>
-    </SidebarProvider>
+    </>
   )
 }
 
