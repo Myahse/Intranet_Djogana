@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -42,6 +43,19 @@ const ProfilePage = () => {
   const formationFolderFileInputRef = useRef<HTMLInputElement>(null)
   const [users, setUsers] = useState<Array<{ id: string; identifiant: string; role: string }>>([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+  const [roles, setRoles] = useState<
+    Array<{
+      id: string
+      name: string
+      can_create_folder?: boolean
+      can_upload_file?: boolean
+      can_delete_file?: boolean
+      can_delete_folder?: boolean
+    }>
+  >([])
+  const [selectedRole, setSelectedRole] = useState<string>('user')
+  const [newRoleName, setNewRoleName] = useState('')
+  const [isCreatingRole, setIsCreatingRole] = useState(false)
 
   // Existing formation groups derived from folder keys using "group::subfolder" convention
   const formationGroupOptions = useMemo(
@@ -140,13 +154,30 @@ const ProfilePage = () => {
       try {
         setIsLoadingUsers(true)
         const res = await fetch(`${API_BASE_URL}/api/users`)
-        if (!res.ok) return
-        const data = (await res.json()) as Array<{
-          id: string
-          identifiant: string
-          role: string
-        }>
-        setUsers(data)
+        if (res.ok) {
+          const data = (await res.json()) as Array<{
+            id: string
+            identifiant: string
+            role: string
+          }>
+          setUsers(data)
+        }
+
+        const rolesRes = await fetch(`${API_BASE_URL}/api/roles`)
+        if (rolesRes.ok) {
+          const rolesData = (await rolesRes.json()) as Array<{
+            id: string
+            name: string
+            can_create_folder?: boolean
+            can_upload_file?: boolean
+            can_delete_file?: boolean
+            can_delete_folder?: boolean
+          }>
+          setRoles(rolesData)
+          const defaultRole =
+            rolesData.find((r) => r.name === 'user')?.name ?? rolesData[0]?.name ?? 'user'
+          setSelectedRole(defaultRole)
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(err)
@@ -155,6 +186,96 @@ const ProfilePage = () => {
       }
     })()
   }, [isAdmin])
+
+  const handleCreateRole = async () => {
+    const name = newRoleName.trim()
+    if (!name) {
+      toast.error('Veuillez saisir un nom de rôle')
+      return
+    }
+    try {
+      setIsCreatingRole(true)
+      const res = await fetch(`${API_BASE_URL}/api/roles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name }),
+      })
+      if (!res.ok) {
+        toast.error('Impossible de créer le rôle')
+        return
+      }
+      const created = (await res.json()) as {
+        id: string
+        name: string
+        can_create_folder?: boolean
+        can_upload_file?: boolean
+        can_delete_file?: boolean
+        can_delete_folder?: boolean
+      }
+      setRoles((prev) =>
+        prev.some((r) => r.id === created.id)
+          ? prev
+          : [...prev, { ...created, can_create_folder: false, can_upload_file: false, can_delete_file: false, can_delete_folder: false }]
+      )
+      setNewRoleName('')
+      toast.success('Rôle créé')
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err)
+      toast.error('Erreur lors de la création du rôle')
+    } finally {
+      setIsCreatingRole(false)
+    }
+  }
+
+  const handleTogglePermission = async (
+    roleId: string,
+    field:
+      | 'can_create_folder'
+      | 'can_upload_file'
+      | 'can_delete_file'
+      | 'can_delete_folder',
+    value: boolean
+  ) => {
+    try {
+      const payload: Record<string, boolean> = {}
+      if (field === 'can_create_folder') payload.canCreateFolder = value
+      if (field === 'can_upload_file') payload.canUploadFile = value
+      if (field === 'can_delete_file') payload.canDeleteFile = value
+      if (field === 'can_delete_folder') payload.canDeleteFolder = value
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/roles/${encodeURIComponent(roleId)}/permissions`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      )
+      if (!res.ok) {
+        toast.error('Impossible de mettre à jour les permissions')
+        return
+      }
+      const updated = (await res.json()) as {
+        id: string
+        name: string
+        can_create_folder: boolean
+        can_upload_file: boolean
+        can_delete_file: boolean
+        can_delete_folder: boolean
+      }
+      setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      toast.success('Permissions mises à jour')
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err)
+      toast.error('Erreur lors de la mise à jour des permissions')
+    }
+  }
 
   const handleCreateUser = async () => {
     const phone = newUserPhone.trim()
@@ -165,7 +286,7 @@ const ProfilePage = () => {
 
     try {
       setIsCreatingUser(true)
-      const ok = await registerUser(phone, phone)
+      const ok = await registerUser(phone, phone, selectedRole)
       if (ok) {
         toast.success(
           "Utilisateur créé. Le numéro de téléphone est utilisé comme identifiant et mot de passe initial."
@@ -396,6 +517,100 @@ const ProfilePage = () => {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
+                Rôles &amp; permissions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm">
+                  Créez des rôles et définissez leurs permissions globales.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 max-w-md">
+                  <div className="flex-1">
+                    <Label htmlFor="new-role-name">Nom du rôle</Label>
+                    <Input
+                      id="new-role-name"
+                      value={newRoleName}
+                      onChange={(e) => setNewRoleName(e.target.value)}
+                      placeholder='Ex. "manager"'
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={handleCreateRole} disabled={isCreatingRole}>
+                      {isCreatingRole ? 'Création...' : 'Créer le rôle'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {roles.length > 0 ? (
+                <div className="overflow-x-auto border rounded-md">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Rôle</th>
+                        <th className="px-3 py-2 text-center font-medium">Créer dossier</th>
+                        <th className="px-3 py-2 text-center font-medium">Uploader fichier</th>
+                        <th className="px-3 py-2 text-center font-medium">Supprimer fichier</th>
+                        <th className="px-3 py-2 text-center font-medium">Supprimer dossier</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {roles.map((r) => (
+                        <tr key={r.id} className="border-t">
+                          <td className="px-3 py-2 capitalize">{r.name}</td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_create_folder)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_create_folder', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à créer des dossiers`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_upload_file)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_upload_file', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à uploader des fichiers`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_delete_file)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_delete_file', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à supprimer des fichiers`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_delete_folder)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_delete_folder', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à supprimer des dossiers`}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Aucun rôle défini pour le moment.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
                 <UserPlus className="size-5" />
                 Utilisateurs
               </CardTitle>
@@ -427,6 +642,21 @@ const ProfilePage = () => {
                   inputMode="numeric"
                   pattern="[0-9]*"
                 />
+              </div>
+              <div className="grid gap-2 max-w-xs">
+                <Label htmlFor="new-user-role">Rôle</Label>
+                <Select value={selectedRole} onValueChange={setSelectedRole}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Sélectionner un rôle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map((r) => (
+                      <SelectItem key={r.id} value={r.name}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <Button onClick={handleCreateUser} disabled={isCreatingUser}>
                 <UserPlus className="size-4 mr-2" />
