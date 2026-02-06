@@ -34,23 +34,74 @@ const pool = new Pool({
 })
 
 async function initDb() {
+  // Directions: admin creates directions; users and folders belong to one direction
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS directions (
+      id uuid PRIMARY KEY,
+      name text UNIQUE NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `)
+
+  // Seed default direction for migration (existing folders/files get this)
+  const defaultDirId = uuidv4()
+  await pool.query(
+    `
+      INSERT INTO directions (id, name)
+      VALUES ($1, 'Default')
+      ON CONFLICT (name) DO NOTHING
+    `,
+    [defaultDirId]
+  )
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id uuid PRIMARY KEY,
       identifiant text UNIQUE NOT NULL,
       password_hash text NOT NULL,
       role text NOT NULL DEFAULT 'user',
+      direction_id uuid REFERENCES directions(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `)
 
+  // Add direction_id to users if missing (migration)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE SET NULL;
+    `)
+  } catch (_) { /* column may already exist */ }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS folders (
       id uuid PRIMARY KEY,
-      name text UNIQUE NOT NULL,
+      name text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `)
+  try {
+    await pool.query(`
+      ALTER TABLE folders ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE CASCADE;
+    `)
+  } catch (_) { /* ignore */ }
+  // Backfill folders without direction_id to default direction
+  const defaultDir = await pool.query("SELECT id FROM directions WHERE name = 'Default' LIMIT 1")
+  if (defaultDir.rows.length > 0) {
+    await pool.query('UPDATE folders SET direction_id = $1 WHERE direction_id IS NULL', [
+      defaultDir.rows[0].id,
+    ])
+    try {
+      await pool.query('ALTER TABLE folders ALTER COLUMN direction_id SET NOT NULL')
+    } catch (_) { /* already not null or constraint */ }
+    try {
+      await pool.query('ALTER TABLE folders DROP CONSTRAINT IF EXISTS folders_name_key')
+    } catch (_) { /* ignore */ }
+    try {
+      await pool.query(
+        'ALTER TABLE folders ADD CONSTRAINT folders_direction_name_key UNIQUE (direction_id, name)'
+      )
+    } catch (_) { /* ignore if exists */ }
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS files (
@@ -59,6 +110,7 @@ async function initDb() {
       mime_type text NOT NULL,
       size bigint NOT NULL,
       folder text NOT NULL,
+      direction_id uuid REFERENCES directions(id) ON DELETE CASCADE,
       uploaded_by uuid,
       data bytea NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
@@ -68,6 +120,12 @@ async function initDb() {
         ON DELETE SET NULL
     );
   `)
+
+  try {
+    await pool.query(`
+      ALTER TABLE files ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE CASCADE;
+    `)
+  } catch (_) { /* column may already exist */ }
 
   // ---- Roles & permissions (RBAC) ----
   await pool.query(`
@@ -84,9 +142,19 @@ async function initDb() {
       can_create_folder boolean NOT NULL DEFAULT false,
       can_upload_file boolean NOT NULL DEFAULT false,
       can_delete_file boolean NOT NULL DEFAULT false,
-      can_delete_folder boolean NOT NULL DEFAULT false
+      can_delete_folder boolean NOT NULL DEFAULT false,
+      can_create_user boolean NOT NULL DEFAULT false,
+      can_delete_user boolean NOT NULL DEFAULT false,
+      can_create_direction boolean NOT NULL DEFAULT false,
+      can_delete_direction boolean NOT NULL DEFAULT false
     );
   `)
+  try {
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_create_user boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_user boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_create_direction boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_direction boolean NOT NULL DEFAULT false')
+  } catch (_) { /* ignore */ }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS folder_role_visibility (
@@ -121,8 +189,8 @@ async function initDb() {
   // Give admin full permissions by default
   await pool.query(
     `
-      INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder)
-      SELECT id, true, true, true, true
+      INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction)
+      SELECT id, true, true, true, true, true, true, true, true
       FROM roles
       WHERE name = 'admin'
       ON CONFLICT (role_id)
@@ -130,7 +198,11 @@ async function initDb() {
         can_create_folder = EXCLUDED.can_create_folder,
         can_upload_file = EXCLUDED.can_upload_file,
         can_delete_file = EXCLUDED.can_delete_file,
-        can_delete_folder = EXCLUDED.can_delete_folder
+        can_delete_folder = EXCLUDED.can_delete_folder,
+        can_create_user = EXCLUDED.can_create_user,
+        can_delete_user = EXCLUDED.can_delete_user,
+        can_create_direction = EXCLUDED.can_create_direction,
+        can_delete_direction = EXCLUDED.can_delete_direction
     `
   )
 
@@ -150,12 +222,92 @@ const upload = multer({ storage: multer.memoryStorage() })
 
 // ---------- Auth ----------
 
-app.get('/api/users', async (_req, res) => {
+// ---------- Directions (admin creates; users/folders belong to one) ----------
+
+app.get('/api/directions', async (_req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, identifiant, role, created_at FROM users ORDER BY created_at DESC'
+      'SELECT id, name, created_at FROM directions ORDER BY name'
     )
     return res.json(result.rows)
+  } catch (err) {
+    console.error('list directions error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des directions.' })
+  }
+})
+
+app.post('/api/directions', async (req, res) => {
+  try {
+    const { name, identifiant } = req.body || {}
+    const trimmed = (name || '').trim()
+    if (!trimmed) {
+      return res.status(400).json({ error: 'Nom de la direction requis.' })
+    }
+    if (identifiant) {
+      const perms = await getPermissionsForIdentifiant(identifiant)
+      if (perms && !perms.can_create_direction) {
+        return res.status(403).json({ error: 'Vous n’avez pas le droit de créer des directions.' })
+      }
+    }
+    const id = uuidv4()
+    await pool.query(
+      'INSERT INTO directions (id, name) VALUES ($1, $2)',
+      [id, trimmed]
+    )
+    return res.status(201).json({ id, name: trimmed })
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'Une direction avec ce nom existe déjà.' })
+    }
+    console.error('create direction error', err)
+    return res.status(500).json({ error: 'Erreur lors de la création de la direction.' })
+  }
+})
+
+app.delete('/api/directions/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const callerIdentifiant = req.query.identifiant || req.body?.identifiant
+    if (callerIdentifiant) {
+      const perms = await getPermissionsForIdentifiant(callerIdentifiant)
+      if (perms && !perms.can_delete_direction) {
+        return res.status(403).json({ error: 'Vous n’avez pas le droit de supprimer des directions.' })
+      }
+    }
+
+    const result = await pool.query('DELETE FROM directions WHERE id = $1 RETURNING id', [id])
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Direction introuvable.' })
+    }
+    return res.status(204).send()
+  } catch (err) {
+    if (err && err.code === '23503') {
+      return res.status(400).json({ error: 'Impossible de supprimer : des utilisateurs ou dossiers utilisent cette direction.' })
+    }
+    console.error('delete direction error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression de la direction.' })
+  }
+})
+
+app.get('/api/users', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT u.id, u.identifiant, u.role, u.direction_id, u.created_at,
+             d.name AS direction_name
+      FROM users u
+      LEFT JOIN directions d ON d.id = u.direction_id
+      ORDER BY u.created_at DESC
+    `)
+    return res.json(
+      result.rows.map((r) => ({
+        id: r.id,
+        identifiant: r.identifiant,
+        role: r.role,
+        direction_id: r.direction_id,
+        direction_name: r.direction_name,
+        created_at: r.created_at,
+      }))
+    )
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('list users error', err)
@@ -166,6 +318,14 @@ app.get('/api/users', async (_req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const { id } = req.params
+    const callerIdentifiant = req.query.identifiant || req.body?.identifiant
+    if (callerIdentifiant) {
+      const perms = await getPermissionsForIdentifiant(callerIdentifiant)
+      if (perms && !perms.can_delete_user) {
+        return res.status(403).json({ error: 'Vous n’avez pas le droit de supprimer des utilisateurs.' })
+      }
+    }
+
     const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id])
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable.' })
@@ -180,16 +340,21 @@ app.delete('/api/users/:id', async (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { identifiant, password, role } = req.body || {}
+    const { identifiant, password, role, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
     if (!identifiant || !password) {
       return res.status(400).json({ error: 'Identifiant et mot de passe sont requis.' })
+    }
+
+    if (callerIdentifiant) {
+      const perms = await getPermissionsForIdentifiant(callerIdentifiant)
+      if (perms && !perms.can_create_user) {
+        return res.status(403).json({ error: 'Vous n’avez pas le droit de créer des utilisateurs.' })
+      }
     }
 
     const hashed = await bcrypt.hash(password, 10)
     const id = uuidv4()
 
-    // If a role is provided and exists in the roles table, use it.
-    // Otherwise, fall back to the simple rule: identifiant '1234567890' => admin, others => user.
     let finalRole
     if (role && typeof role === 'string' && role.trim()) {
       const trimmed = role.trim()
@@ -202,12 +367,26 @@ app.post('/api/auth/register', async (req, res) => {
       finalRole = identifiant === '1234567890' ? 'admin' : 'user'
     }
 
+    // Non-admin users must be assigned to a direction
+    if (finalRole !== 'admin' && (!directionId || typeof directionId !== 'string')) {
+      return res.status(400).json({
+        error: 'Une direction doit être sélectionnée pour cet utilisateur.',
+      })
+    }
+    if (finalRole !== 'admin' && directionId) {
+      const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+      if (dirRes.rows.length === 0) {
+        return res.status(400).json({ error: 'Direction invalide.' })
+      }
+    }
+
     await pool.query(
-      'INSERT INTO users (id, identifiant, password_hash, role) VALUES ($1, $2, $3, $4)',
-      [id, identifiant, hashed, finalRole]
+      `INSERT INTO users (id, identifiant, password_hash, role, direction_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, identifiant, hashed, finalRole, finalRole === 'admin' ? null : directionId]
     )
 
-    return res.status(201).json({ id, identifiant, role: finalRole })
+    return res.status(201).json({ id, identifiant, role: finalRole, direction_id: finalRole === 'admin' ? null : directionId })
   } catch (err) {
     if (err && err.code === '23505') {
       return res.status(409).json({ error: 'Identifiant déjà utilisé.' })
@@ -226,7 +405,10 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, identifiant, password_hash, role FROM users WHERE identifiant = $1',
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, d.name AS direction_name
+       FROM users u
+       LEFT JOIN directions d ON d.id = u.direction_id
+       WHERE u.identifiant = $1`,
       [identifiant]
     )
     if (result.rows.length === 0) {
@@ -239,7 +421,16 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides.' })
     }
 
-    return res.json({ id: user.id, identifiant: user.identifiant, role: user.role })
+    const permissions = await getPermissionsForIdentifiant(user.identifiant)
+
+    return res.json({
+      id: user.id,
+      identifiant: user.identifiant,
+      role: user.role,
+      direction_id: user.direction_id,
+      direction_name: user.direction_name || null,
+      permissions: permissions || undefined,
+    })
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('login error', err)
@@ -283,6 +474,61 @@ app.post('/api/auth/change-password', async (req, res) => {
 
 // ---------- Roles & permissions (RBAC) ----------
 
+// Helper: get permissions for a user by identifiant (admin => all true)
+async function getPermissionsForIdentifiant(identifiant) {
+  const userRes = await pool.query(
+    'SELECT role FROM users WHERE identifiant = $1',
+    [identifiant]
+  )
+  if (userRes.rows.length === 0) return null
+  const roleName = userRes.rows[0].role
+  if (roleName === 'admin') {
+    return {
+      can_create_folder: true,
+      can_upload_file: true,
+      can_delete_file: true,
+      can_delete_folder: true,
+      can_create_user: true,
+      can_delete_user: true,
+      can_create_direction: true,
+      can_delete_direction: true,
+    }
+  }
+  const permRes = await pool.query(
+    `
+      SELECT p.can_create_folder, p.can_upload_file, p.can_delete_file, p.can_delete_folder,
+             p.can_create_user, p.can_delete_user, p.can_create_direction, p.can_delete_direction
+      FROM roles r
+      JOIN role_permissions p ON p.role_id = r.id
+      WHERE r.name = $1
+    `,
+    [roleName]
+  )
+  if (permRes.rows.length === 0) {
+    return {
+      can_create_folder: false,
+      can_upload_file: false,
+      can_delete_file: false,
+      can_delete_folder: false,
+      can_create_user: false,
+      can_delete_user: false,
+      can_create_direction: false,
+      can_delete_direction: false,
+    }
+  }
+  const row = permRes.rows[0]
+  return {
+    can_create_folder: !!row.can_create_folder,
+    can_upload_file: !!row.can_upload_file,
+    can_delete_file: !!row.can_delete_file,
+    can_delete_folder: !!row.can_delete_folder,
+    can_create_user: !!row.can_create_user,
+    can_delete_user: !!row.can_delete_user,
+    can_create_direction: !!row.can_create_direction,
+    can_delete_direction: !!row.can_delete_direction,
+  }
+}
+
 // List roles with their global permissions
 app.get('/api/roles', async (_req, res) => {
   try {
@@ -293,7 +539,11 @@ app.get('/api/roles', async (_req, res) => {
         COALESCE(p.can_create_folder, false) AS can_create_folder,
         COALESCE(p.can_upload_file, false) AS can_upload_file,
         COALESCE(p.can_delete_file, false) AS can_delete_file,
-        COALESCE(p.can_delete_folder, false) AS can_delete_folder
+        COALESCE(p.can_delete_folder, false) AS can_delete_folder,
+        COALESCE(p.can_create_user, false) AS can_create_user,
+        COALESCE(p.can_delete_user, false) AS can_delete_user,
+        COALESCE(p.can_create_direction, false) AS can_create_direction,
+        COALESCE(p.can_delete_direction, false) AS can_delete_direction
       FROM roles r
       LEFT JOIN role_permissions p ON p.role_id = r.id
       ORDER BY r.created_at DESC
@@ -362,6 +612,10 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       canUploadFile,
       canDeleteFile,
       canDeleteFolder,
+      canCreateUser,
+      canDeleteUser,
+      canCreateDirection,
+      canDeleteDirection,
     } = req.body || {}
 
     // Ensure the role exists
@@ -373,16 +627,20 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
     // Upsert permissions row
     await pool.query(
       `
-        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder)
-        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false))
+        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction)
+        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false))
         ON CONFLICT (role_id)
         DO UPDATE SET
           can_create_folder = COALESCE($2, role_permissions.can_create_folder),
           can_upload_file = COALESCE($3, role_permissions.can_upload_file),
           can_delete_file = COALESCE($4, role_permissions.can_delete_file),
-          can_delete_folder = COALESCE($5, role_permissions.can_delete_folder)
+          can_delete_folder = COALESCE($5, role_permissions.can_delete_folder),
+          can_create_user = COALESCE($6, role_permissions.can_create_user),
+          can_delete_user = COALESCE($7, role_permissions.can_delete_user),
+          can_create_direction = COALESCE($8, role_permissions.can_create_direction),
+          can_delete_direction = COALESCE($9, role_permissions.can_delete_direction)
       `,
-      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder]
+      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection]
     )
 
     const updated = await pool.query(
@@ -393,7 +651,11 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           p.can_create_folder,
           p.can_upload_file,
           p.can_delete_file,
-          p.can_delete_folder
+          p.can_delete_folder,
+          p.can_create_user,
+          p.can_delete_user,
+          p.can_create_direction,
+          p.can_delete_direction
         FROM roles r
         JOIN role_permissions p ON p.role_id = r.id
         WHERE r.id = $1
@@ -497,6 +759,7 @@ app.post('/api/folder-permissions', async (req, res) => {
 
 // ---------- Files ----------
 
+// Accepts any file type: APK, images, video, MP3, Excel, documents, etc. (no fileFilter)
 app.post('/api/files', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -504,25 +767,51 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
     }
 
     const folder = (req.body && req.body.folder) || 'default'
+    const directionId = (req.body && req.body.direction_id) || null
     const uploadedBy = (req.body && req.body.uploadedBy) || null
+    const identifiant = (req.body && req.body.identifiant) || null
+
+    if (!directionId) {
+      return res.status(400).json({ error: 'Direction requise pour l’upload.' })
+    }
+
+    // Permission: admin or user's direction must match folder's direction
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+    if (dirRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Direction invalide.' })
+    }
 
     const id = uuidv4()
     const folderId = uuidv4()
 
-    // Ensure the folder/group exists in folders table
     await pool.query(
       `
-        INSERT INTO folders (id, name)
-        VALUES ($1, $2)
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO folders (id, name, direction_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (direction_id, name) DO NOTHING
       `,
-      [folderId, folder]
+      [folderId, folder, directionId]
     )
 
     await pool.query(
       `
-        INSERT INTO files (id, name, mime_type, size, folder, uploaded_by, data)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, data)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         id,
@@ -530,6 +819,7 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
         req.file.mimetype,
         req.file.size,
         folder,
+        directionId,
         uploadedBy,
         req.file.buffer,
       ]
@@ -542,6 +832,7 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       name: req.file.originalname,
       size: req.file.size,
       url: publicUrl,
+      direction_id: directionId,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -550,41 +841,48 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
   }
 })
 
-// Explicit folders / groups
+// Explicit folders / groups (each folder belongs to a direction)
 app.get('/api/folders', async (_req, res) => {
   try {
     const { role } = _req.query
 
-    let sql = 'SELECT name, created_at FROM folders'
+    let sql = `
+      SELECT f.id, f.name, f.direction_id, f.created_at, d.name AS direction_name
+      FROM folders f
+      JOIN directions d ON d.id = f.direction_id
+    `
     const params = []
 
     if (role && role !== 'admin') {
-      // Rule:
-      // - If a folder has no explicit visibility rows, it is visible to all roles
-      // - If it has visibility rows, only roles with can_view = true can see it
       sql += `
-        WHERE NOT EXISTS (
-          SELECT 1
-          FROM folder_role_visibility v
-          JOIN roles r ON r.id = v.role_id
-          WHERE v.folder_name = folders.name
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM folder_role_visibility v
-          JOIN roles r ON r.id = v.role_id
-          WHERE v.folder_name = folders.name
-            AND r.name = $1
-            AND v.can_view = true
+        WHERE (
+          NOT EXISTS (
+            SELECT 1 FROM folder_role_visibility v
+            JOIN roles r ON r.id = v.role_id
+            WHERE v.folder_name = f.name
+          )
+          OR EXISTS (
+            SELECT 1 FROM folder_role_visibility v
+            JOIN roles r ON r.id = v.role_id
+            WHERE v.folder_name = f.name AND r.name = $1 AND v.can_view = true
+          )
         )
       `
       params.push(role)
     }
 
-    sql += ' ORDER BY created_at DESC'
+    sql += ' ORDER BY d.name, f.created_at DESC'
 
     const result = await pool.query(sql, params)
-    return res.json(result.rows.map((row) => ({ name: row.name, createdAt: row.created_at })))
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        direction_id: row.direction_id,
+        direction_name: row.direction_name,
+        createdAt: row.created_at,
+      }))
+    )
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('folders list error', err)
@@ -594,24 +892,51 @@ app.get('/api/folders', async (_req, res) => {
 
 app.post('/api/folders', async (req, res) => {
   try {
-    const { folder } = req.body || {}
+    const { folder, direction_id: directionId, identifiant } = req.body || {}
     const name = (folder || '').trim()
     if (!name) {
       return res.status(400).json({ error: 'Nom de dossier requis.' })
+    }
+    if (!directionId) {
+      return res.status(400).json({ error: 'Direction requise pour créer un dossier.' })
+    }
+
+    // Permission: admin can create in any direction; others only in their own direction
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez créer des dossiers que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+    if (dirRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Direction invalide.' })
     }
 
     const id = uuidv4()
     await pool.query(
       `
-        INSERT INTO folders (id, name)
-        VALUES ($1, $2)
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO folders (id, name, direction_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (direction_id, name) DO NOTHING
       `,
-      [id, name]
+      [id, name, directionId]
     )
 
-    return res.status(201).json({ name })
+    return res.status(201).json({ id, name, direction_id: directionId })
   } catch (err) {
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'Un dossier avec ce nom existe déjà dans cette direction.' })
+    }
     // eslint-disable-next-line no-console
     console.error('folder create error', err)
     return res.status(500).json({ error: 'Erreur lors de la création du dossier.' })
@@ -623,13 +948,13 @@ app.get('/api/files', async (req, res) => {
     const { folder, role } = req.query
 
     const params = []
-    let sql = 'SELECT id, name, mime_type, size, folder, created_at FROM files'
+    let sql = 'SELECT id, name, mime_type, size, folder, direction_id, created_at FROM files'
 
     const conditions = []
 
     if (folder) {
       params.push(folder)
-      conditions.push(`folder = $${params.length}`)
+      conditions.push(`files.folder = $${params.length}`)
     }
 
     if (role && role !== 'admin') {
@@ -658,7 +983,7 @@ app.get('/api/files', async (req, res) => {
       sql += ' WHERE ' + conditions.join(' AND ')
     }
 
-    sql += ' ORDER BY created_at DESC'
+    sql += ' ORDER BY files.created_at DESC'
 
     const result = await pool.query(sql, params)
 
@@ -667,6 +992,7 @@ app.get('/api/files', async (req, res) => {
       name: row.name,
       size: Number(row.size) || 0,
       folder: row.folder,
+      direction_id: row.direction_id,
       url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
     }))
 
@@ -706,6 +1032,31 @@ app.get('/files/:id', async (req, res) => {
 app.delete('/api/files/:id', async (req, res) => {
   try {
     const { id } = req.params
+    const identifiant = req.query.identifiant || req.body?.identifiant
+
+    if (identifiant) {
+      const fileRes = await pool.query(
+        'SELECT direction_id FROM files WHERE id = $1',
+        [id]
+      )
+      if (fileRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Fichier introuvable.' })
+      }
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        const fileDir = fileRes.rows[0].direction_id
+        if (u.role !== 'admin' && u.direction_id !== fileDir) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez supprimer que les fichiers de votre direction.',
+          })
+        }
+      }
+    }
+
     await pool.query('DELETE FROM files WHERE id = $1', [id])
     return res.status(204).send()
   } catch (err) {
@@ -718,8 +1069,37 @@ app.delete('/api/files/:id', async (req, res) => {
 app.delete('/api/folders/:folder', async (req, res) => {
   try {
     const { folder } = req.params
-    await pool.query('DELETE FROM files WHERE folder = $1', [folder])
-    await pool.query('DELETE FROM folders WHERE name = $1', [folder])
+    const directionId = req.query.direction_id || req.body?.direction_id
+    const identifiant = req.query.identifiant || req.body?.identifiant
+
+    if (identifiant && directionId) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez supprimer que les dossiers de votre direction.',
+          })
+        }
+      }
+    }
+
+    if (directionId) {
+      await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [
+        folder,
+        directionId,
+      ])
+      await pool.query('DELETE FROM folders WHERE name = $1 AND direction_id = $2', [
+        folder,
+        directionId,
+      ])
+    } else {
+      await pool.query('DELETE FROM files WHERE folder = $1', [folder])
+      await pool.query('DELETE FROM folders WHERE name = $1', [folder])
+    }
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console

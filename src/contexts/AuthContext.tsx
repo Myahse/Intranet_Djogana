@@ -10,10 +10,23 @@ import {
 const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
+export type UserPermissions = {
+  can_create_folder: boolean
+  can_upload_file: boolean
+  can_delete_file: boolean
+  can_delete_folder: boolean
+  can_create_user: boolean
+  can_delete_user: boolean
+  can_create_direction: boolean
+  can_delete_direction: boolean
+}
+
 export type User = {
   identifiant: string
-  // Role is now dynamic: 'admin', 'user', or any custom role name
   role: string
+  direction_id?: string | null
+  direction_name?: string | null
+  permissions?: UserPermissions | null
 }
 
 type AuthContextValue = {
@@ -22,7 +35,12 @@ type AuthContextValue = {
   setUser: (user: User | null) => void
   login: (identifiant: string, motDePasse: string) => Promise<boolean>
   logout: () => void
-  registerUser: (identifiant: string, password: string, role?: string) => Promise<boolean>
+  registerUser: (
+    identifiant: string,
+    password: string,
+    role?: string,
+    directionId?: string
+  ) => Promise<boolean>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
 }
 
@@ -33,10 +51,28 @@ function loadStoredUser(): User | null {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY)
     if (!raw) return null
     const data = JSON.parse(raw) as User
-    return data.identifiant && data.role ? data : null
+    return data.identifiant && data.role
+      ? {
+          ...data,
+          direction_id: data.direction_id ?? null,
+          direction_name: data.direction_name ?? null,
+          permissions: data.permissions ?? null,
+        }
+      : null
   } catch {
     return null
   }
+}
+
+const adminPermissions: UserPermissions = {
+  can_create_folder: true,
+  can_upload_file: true,
+  can_delete_file: true,
+  can_delete_folder: true,
+  can_create_user: true,
+  can_delete_user: true,
+  can_create_direction: true,
+  can_delete_direction: true,
 }
 
 function localFallbackLogin(
@@ -45,11 +81,23 @@ function localFallbackLogin(
   setUser: (user: User | null) => void
 ): boolean {
   if (identifiant === '1234567890' && motDePasse === '1234567890') {
-    setUser({ identifiant, role: 'admin' })
+    setUser({
+      identifiant,
+      role: 'admin',
+      direction_id: null,
+      direction_name: null,
+      permissions: adminPermissions,
+    })
     return true
   }
   if (identifiant?.trim() && motDePasse) {
-    setUser({ identifiant: identifiant.trim(), role: 'user' })
+    setUser({
+      identifiant: identifiant.trim(),
+      role: 'user',
+      direction_id: null,
+      direction_name: null,
+      permissions: null,
+    })
     return true
   }
   return false
@@ -82,12 +130,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return false
         }
 
-        const data = (await res.json()) as { identifiant: string; role: string }
+        const data = (await res.json()) as {
+          identifiant: string
+          role: string
+          direction_id?: string | null
+          direction_name?: string | null
+          permissions?: UserPermissions | null
+        }
         if (!data.identifiant || !data.role) {
           return false
         }
 
-        setUser({ identifiant: data.identifiant, role: data.role })
+        setUser({
+          identifiant: data.identifiant,
+          role: data.role,
+          direction_id: data.direction_id ?? null,
+          direction_name: data.direction_name ?? null,
+          permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+        })
         return true
       } catch {
         // fallback to previous in-memory logic if backend is unreachable
@@ -102,14 +162,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setUser])
 
   const registerUser = useCallback(
-    async (identifiant: string, password: string, role?: string): Promise<boolean> => {
+    async (
+      identifiant: string,
+      password: string,
+      role?: string,
+      directionId?: string
+    ): Promise<boolean> => {
       try {
-        const payload: { identifiant: string; password: string; role?: string } = {
+        const payload: {
+          identifiant: string
+          password: string
+          role?: string
+          direction_id?: string
+          caller_identifiant?: string
+        } = {
           identifiant,
           password,
         }
         if (role && role.trim()) {
           payload.role = role.trim()
+        }
+        if (directionId && directionId.trim()) {
+          payload.direction_id = directionId.trim()
+        }
+        if (user?.identifiant) {
+          payload.caller_identifiant = user.identifiant
         }
 
         const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
