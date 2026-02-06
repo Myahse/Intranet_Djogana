@@ -4,7 +4,7 @@ import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
 import wordIcon from '@/assets/svgs/Group 57.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
-import { useDocuments } from '@/contexts/DocumentsContext'
+import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem } from '@/contexts/DocumentsContext'
 import { FileText, Download, Trash2, X } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -96,13 +96,13 @@ function FilePreviewContent({
 function FileCard({
   file,
   formatSize,
-  isAdmin,
+  canEdit,
   onDelete,
   onSelect,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
-  isAdmin: boolean
+  canEdit: boolean
   onDelete?: (id: string) => void
   onSelect?: (file: DocumentItem) => void
 }) {
@@ -137,7 +137,7 @@ function FileCard({
               <Download className="size-5" />
             </a>
           )}
-          {isAdmin && onDelete && (
+          {canEdit && onDelete && (
             <button
               type="button"
               className="absolute top-2 left-2 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
@@ -195,8 +195,24 @@ const DocumentSection = () => {
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot ? decodeURIComponent(lastSegment) : null
   const { getFiles, removeFile, removeFolder, folderOptions } = useDocuments()
-  const { isAdmin } = useAuth()
+  const { user, isAdmin } = useAuth()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
+
+  // User can edit (delete/upload) only in their direction; view-only in other directions
+  const canEditFolder = (key: string) => {
+    if (isAdmin) return true
+    const { direction_id } = parseFolderKey(key)
+    return user?.direction_id != null && direction_id === user.direction_id
+  }
+  const canEditFile = (file: DocumentItem) => {
+    if (isAdmin) return true
+    return user?.direction_id != null && file.direction_id === user.direction_id
+  }
+  const currentFolderLabel = folderKey ? (() => {
+    const opt = folderOptions.find((f) => f.value === folderKey)
+    if (opt?.direction_name) return `${parseFolderKey(folderKey).name} (${opt.direction_name})`
+    return parseFolderKey(folderKey).name
+  })() : ''
 
   useEffect(() => {
     setSelectedFile(null)
@@ -220,6 +236,9 @@ const DocumentSection = () => {
   // Leaf folder: show files and delete actions
   if (!isRoot && folderKey && !isGroupRoute) {
     const files = getFiles(folderKey)
+    const canEdit = canEditFolder(folderKey)
+    const folderOpt = folderOptions.find((f) => f.value === folderKey)
+    const directionLabel = folderOpt?.direction_name ?? ''
 
     return (
       <ResizablePanelGroup
@@ -234,9 +253,21 @@ const DocumentSection = () => {
           className="flex flex-col min-w-0"
         >
           <div className="flex flex-1 flex-col overflow-auto p-6">
-            <div className="mb-8 flex items-center justify-between gap-4">
-              <h1 className="text-2xl font-semibold">{folderKey}</h1>
-              {isAdmin && (
+            <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-semibold">{currentFolderLabel || parseFolderKey(folderKey).name}</h1>
+                {directionLabel && (
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    {directionLabel}
+                  </span>
+                )}
+                {!canEdit && (
+                  <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    Lecture seule
+                  </span>
+                )}
+              </div>
+              {canEdit && (
                 <Button
                   variant="outline"
                   className="border-destructive text-destructive hover:bg-destructive/10"
@@ -270,7 +301,7 @@ const DocumentSection = () => {
                     key={file.id}
                     file={file}
                     formatSize={formatSize}
-                    isAdmin={isAdmin}
+                    canEdit={canEditFile(file)}
                     onSelect={setSelectedFile}
                     onDelete={async (id) => {
                       try {
@@ -288,7 +319,7 @@ const DocumentSection = () => {
               </div>
             ) : (
               <p className="text-muted-foreground">
-                Aucun fichier dans ce dossier. Les administrateurs peuvent en ajouter depuis le profil.
+                Aucun fichier dans ce dossier.{canEdit ? ' Vous pouvez en ajouter depuis le profil.' : ' Consultation uniquement (autre direction).'}
               </p>
             )}
           </div>
@@ -334,7 +365,7 @@ const DocumentSection = () => {
     )
   }
 
-  // Root or "group" view: build folder / group structure
+  // Root or "group" view: build folder / group structure (folderKey = direction_id::name, name can be "Group::Sub")
   const folderHasFiles: { [key: string]: boolean } = {}
   folderOptions.forEach((folder) => {
     folderHasFiles[folder.value] = getFiles(folder.value).length > 0
@@ -344,7 +375,9 @@ const DocumentSection = () => {
   const groups: Record<string, { name: string; subfolders: string[] }> = {}
 
   folderOptions.forEach((folder) => {
-    const [group, sub] = folder.value.split('::')
+    const { name } = parseFolderKey(folder.value)
+    const [group, ...subParts] = name.split('::')
+    const sub = subParts.join('::')
     if (!sub) {
       rootFolders.push(folder)
       return
