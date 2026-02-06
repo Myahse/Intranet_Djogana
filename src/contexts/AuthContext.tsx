@@ -12,7 +12,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000
 
 export type User = {
   identifiant: string
-  role: 'admin' | 'user'
+  // Role is now dynamic: 'admin', 'user', or any custom role name
+  role: string
 }
 
 type AuthContextValue = {
@@ -21,7 +22,7 @@ type AuthContextValue = {
   setUser: (user: User | null) => void
   login: (identifiant: string, motDePasse: string) => Promise<boolean>
   logout: () => void
-  registerUser: (identifiant: string, password: string) => Promise<boolean>
+  registerUser: (identifiant: string, password: string, role?: string) => Promise<boolean>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
 }
 
@@ -81,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return false
         }
 
-        const data = (await res.json()) as { identifiant: string; role: 'admin' | 'user' }
+        const data = (await res.json()) as { identifiant: string; role: string }
         if (!data.identifiant || !data.role) {
           return false
         }
@@ -101,14 +102,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setUser])
 
   const registerUser = useCallback(
-    async (identifiant: string, password: string): Promise<boolean> => {
+    async (identifiant: string, password: string, role?: string): Promise<boolean> => {
       try {
+        const payload: { identifiant: string; password: string; role?: string } = {
+          identifiant,
+          password,
+        }
+        if (role && role.trim()) {
+          payload.role = role.trim()
+        }
+
         const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ identifiant, password }),
+          body: JSON.stringify(payload),
         })
 
         if (!res.ok) {

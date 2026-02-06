@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useAuth } from '@/contexts/AuthContext'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -66,10 +67,17 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<DocumentItem[]>([])
   const [folderNames, setFolderNames] = useState<string[]>([])
 
+  const { user, isAdmin } = useAuth()
+
   useEffect(() => {
     ;(async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/files`)
+        const roleParam =
+          user && !isAdmin && user.role
+            ? `?role=${encodeURIComponent(user.role)}`
+            : ''
+
+        const res = await fetch(`${API_BASE_URL}/api/files${roleParam}`)
         if (!res.ok) return
 
         const data = (await res.json()) as Array<{
@@ -97,9 +105,12 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
 
         setItems(loaded)
 
-        // Try to load explicit folders/groups from API, otherwise derive from files
+        // Try to load explicit folders/groups from API, otherwise derive from files.
+        // We also pass the current role so the backend can filter visible folders.
         try {
-          const foldersRes = await fetch(`${API_BASE_URL}/api/folders`)
+          const foldersRes = await fetch(
+            `${API_BASE_URL}/api/folders${roleParam}`
+          )
           if (foldersRes.ok) {
             const foldersData = (await foldersRes.json()) as Array<{ name: string }>
             setFolderNames(foldersData.map((f) => f.name))
@@ -118,7 +129,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         console.error('failed to load documents from API', err)
       }
     })()
-  }, [])
+  }, [user, isAdmin])
   const folderOptions = useMemo<FolderOption[]>(
     () => folderNames.map((name) => ({ value: name, label: name })),
     [folderNames]

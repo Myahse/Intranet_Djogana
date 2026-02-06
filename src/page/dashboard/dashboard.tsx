@@ -19,7 +19,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { Sheet, SheetContent } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { ChevronDown, ChevronRight, FolderOpen, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
@@ -195,8 +195,14 @@ function DashboardLayout() {
       <Sheet open={profileOpen} onOpenChange={setProfileOpen}>
         <SheetContent
           side="bottom"
-          className="inset-x-0 max-h-[85vh] w-full overflow-y-auto rounded-t-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-300 flex flex-col"
+          className="inset-x-0 inset-y-0 h-screen max-h-screen w-full overflow-y-auto data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-300 flex flex-col"
         >
+          <SheetHeader className="px-6 pt-4 pb-2">
+            <SheetTitle>Profil</SheetTitle>
+            <SheetDescription>
+              Gérez votre compte, les utilisateurs et les droits d&apos;accès.
+            </SheetDescription>
+          </SheetHeader>
           <div className="flex-1 overflow-y-auto min-h-0 pb-8">
             <ProfilePage />
           </div>
