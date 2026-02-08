@@ -4,12 +4,19 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+// In dev, use '' so Vite proxies /api and /files to the backend (see vite.config.ts). Backend should run on port 3000.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
+    ? import.meta.env.VITE_API_BASE_URL
+    : import.meta.env.DEV
+      ? ''
+      : 'http://localhost:3000'
 
 export type FolderKey = string
 
@@ -30,6 +37,14 @@ export type DocumentItem = {
   direction_id?: string | null
 }
 
+export type LinkItem = {
+  id: string
+  url: string
+  label: string
+  folderKey: string
+  direction_id?: string | null
+}
+
 /** Parse folderKey (direction_id::name) into direction_id and name */
 export function parseFolderKey(folderKey: string): { direction_id: string; name: string } {
   const idx = folderKey.indexOf('::')
@@ -42,10 +57,14 @@ export function parseFolderKey(folderKey: string): { direction_id: string; name:
 
 type DocumentsContextValue = {
   getFiles: (folderKey: string) => DocumentItem[]
-  addFile: (folderKey: string, file: File) => Promise<void>
+  getLinks: (folderKey: string) => LinkItem[]
+  addFile: (folderKey: string, file: File, customName?: string) => Promise<void>
+  addLink: (folderKey: string, url: string, label: string) => Promise<void>
   addFolder: (folderName: string, file: File, directionId: string) => Promise<void>
   addFolderMeta: (folderName: string, directionId: string) => Promise<void>
   removeFile: (id: string) => Promise<void>
+  removeLink: (id: string) => Promise<void>
+  renameFile: (id: string, name: string) => Promise<string>
   removeFolder: (folderKey: string) => Promise<void>
   folderOptions: FolderOption[]
 }
@@ -61,13 +80,15 @@ async function uploadToServer(
   file: File,
   folderName: string,
   directionId: string,
-  identifiant: string
+  identifiant: string,
+  customName?: string
 ) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('folder', folderName)
   formData.append('direction_id', directionId)
   formData.append('identifiant', identifiant)
+  if (customName?.trim()) formData.append('name', customName.trim())
 
   const res = await fetch(`${API_BASE_URL}/api/files`, {
     method: 'POST',
@@ -95,9 +116,15 @@ type FolderMeta = {
 
 export function DocumentsProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<DocumentItem[]>([])
+  const [linkItems, setLinkItems] = useState<LinkItem[]>([])
   const [folderList, setFolderList] = useState<FolderMeta[]>([])
+  const linksApiUnavailableRef = useRef(false)
 
   const { user, isAdmin } = useAuth()
+
+  useEffect(() => {
+    linksApiUnavailableRef.current = false
+  }, [user?.identifiant, isAdmin])
 
   useEffect(() => {
     ;(async () => {
@@ -138,6 +165,39 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         })
 
         setItems(loaded)
+
+        if (!linksApiUnavailableRef.current) {
+          try {
+            const linksRes = await fetch(`${API_BASE_URL}/api/links${roleParam}`)
+            if (linksRes.status === 404) {
+              linksApiUnavailableRef.current = true
+            } else if (linksRes.ok) {
+              const linksData = (await linksRes.json()) as Array<{
+                id: string
+                folder: string
+                direction_id?: string | null
+                url: string
+                label: string
+              }>
+              const loadedLinks: LinkItem[] = linksData.map((row) => {
+                const dirId = row.direction_id ?? ''
+                const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
+                return {
+                  id: row.id,
+                  url: row.url,
+                  label: row.label,
+                  folderKey,
+                  direction_id: row.direction_id,
+                }
+              })
+              setLinkItems(loadedLinks)
+            }
+          } catch (linksErr) {
+            linksApiUnavailableRef.current = true
+            // eslint-disable-next-line no-console
+            console.warn('Links could not be loaded:', linksErr)
+          }
+        }
 
         try {
           const foldersRes = await fetch(
@@ -218,13 +278,18 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     [items]
   )
 
+  const getLinks = useCallback(
+    (folderKey: string) => linkItems.filter((l) => l.folderKey === folderKey),
+    [linkItems]
+  )
+
   const addFile = useCallback(
-    async (folderKey: string, file: File) => {
+    async (folderKey: string, file: File, customName?: string) => {
       const { direction_id, name } = parseFolderKey(folderKey)
       if (!user?.identifiant || !direction_id) {
         throw new Error('Connexion ou direction requise pour l’upload.')
       }
-      const uploaded = await uploadToServer(file, name, direction_id, user.identifiant)
+      const uploaded = await uploadToServer(file, name, direction_id, user.identifiant, customName)
       const viewerUrl = isOfficeDoc(uploaded.name)
         ? buildOfficeViewerUrl(uploaded.url)
         : undefined
@@ -241,6 +306,40 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       setItems((prev) => [...prev, newItem])
     },
     [items, user?.identifiant]
+  )
+
+  const addLink = useCallback(
+    async (folderKey: string, url: string, label: string) => {
+      const { direction_id, name } = parseFolderKey(folderKey)
+      if (!user?.identifiant || !direction_id) {
+        throw new Error('Connexion ou direction requise pour ajouter un lien.')
+      }
+      const res = await fetch(`${API_BASE_URL}/api/links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder: name,
+          direction_id,
+          url: url.trim(),
+          label: (label || url).trim(),
+          identifiant: user.identifiant,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de l’ajout du lien')
+      }
+      const created = (await res.json()) as { id: string; url: string; label: string }
+      const newItem: LinkItem = {
+        id: created.id,
+        url: created.url,
+        label: created.label,
+        folderKey,
+        direction_id,
+      }
+      setLinkItems((prev) => [...prev, newItem])
+    },
+    [user?.identifiant]
   )
 
   const addFolder = useCallback(
@@ -328,6 +427,46 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     [items, user?.identifiant]
   )
 
+  const removeLink = useCallback(
+    async (id: string) => {
+      const identifiant = user?.identifiant ?? ''
+      const res = await fetch(
+        `${API_BASE_URL}/api/links/${encodeURIComponent(id)}?identifiant=${encodeURIComponent(identifiant)}`,
+        { method: 'DELETE' }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de la suppression du lien')
+      }
+      setLinkItems((prev) => prev.filter((l) => l.id !== id))
+    },
+    [user?.identifiant]
+  )
+
+  const renameFile = useCallback(
+    async (id: string, name: string): Promise<string> => {
+      const identifiant = user?.identifiant ?? ''
+      const res = await fetch(
+        `${API_BASE_URL}/api/files/${encodeURIComponent(id)}?identifiant=${encodeURIComponent(identifiant)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name.trim() }),
+        }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec du renommage du fichier')
+      }
+      const data = (await res.json()) as { id: string; name: string }
+      setItems((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, name: data.name } : f))
+      )
+      return data.name
+    },
+    [user?.identifiant]
+  )
+
   const removeFolder = useCallback(
     async (folderKey: string) => {
       const { direction_id, name } = parseFolderKey(folderKey)
@@ -342,6 +481,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         throw new Error(err?.error ?? 'Échec de la suppression du dossier')
       }
       setItems((prev) => prev.filter((f) => f.folderKey !== folderKey))
+      setLinkItems((prev) => prev.filter((l) => l.folderKey !== folderKey))
       setFolderList((prev) => prev.filter((f) => f.value !== folderKey))
     },
     [items, user?.identifiant]
@@ -350,14 +490,18 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const value = useMemo<DocumentsContextValue>(
     () => ({
       getFiles,
+      getLinks,
       addFile,
+      addLink,
       addFolder,
       addFolderMeta,
       removeFile,
+      removeLink,
+      renameFile,
       removeFolder,
       folderOptions,
     }),
-    [getFiles, addFile, addFolder, addFolderMeta, removeFile, removeFolder, folderOptions]
+    [getFiles, getLinks, addFile, addLink, addFolder, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, folderOptions]
   )
 
   return (

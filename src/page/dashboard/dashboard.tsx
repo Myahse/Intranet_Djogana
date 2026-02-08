@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import {
   Sidebar,
@@ -20,21 +20,34 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
-import { ChevronDown, ChevronRight, FolderOpen, User } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { ChevronDown, ChevronRight, Filter, FolderOpen, Home, Search, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
-import { useDocuments } from '@/contexts/DocumentsContext'
+import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
+import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
 
 const Dashboard = () => (
   <SidebarProvider>
-    <DashboardLayout />
+    <DashboardFilterProvider>
+      <DashboardLayout />
+    </DashboardFilterProvider>
   </SidebarProvider>
 )
 
 function DashboardLayout() {
   const location = useLocation()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [sidebarSearch, setSidebarSearch] = useState('')
+  const { contentFilter, setContentFilter } = useDashboardFilter()
   const { folderOptions } = useDocuments()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
@@ -46,8 +59,9 @@ function DashboardLayout() {
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
+  const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
 
-  // Group folders by "group::subfolder" convention.
+  // Group folders by "group::subfolder" convention. folder.value is "direction_id::name"; only split the name part.
   const rootFolders: typeof folderOptions = []
   const groupedFolders: Record<
     string,
@@ -55,7 +69,9 @@ function DashboardLayout() {
   > = {}
 
   folderOptions.forEach((folder) => {
-    const [group, sub] = folder.value.split('::')
+    const { name } = parseFolderKey(folder.value)
+    const [group, ...subParts] = name.split('::')
+    const sub = subParts.join('::')
     if (!sub) {
       rootFolders.push(folder)
       return
@@ -71,21 +87,60 @@ function DashboardLayout() {
     })
   })
 
+  const searchLower = sidebarSearch.trim().toLowerCase()
+  const filteredRootFolders = useMemo(
+    () =>
+      searchLower
+        ? rootFolders.filter((f) => f.label.toLowerCase().includes(searchLower))
+        : rootFolders,
+    [rootFolders, searchLower]
+  )
+  const filteredGroupedFolders = useMemo(() => {
+    if (!searchLower) return groupedFolders
+    const out: Record<string, { groupLabel: string; subfolders: { value: string; label: string }[] }> = {}
+    for (const [key, group] of Object.entries(groupedFolders)) {
+      const matchGroup = group.groupLabel.toLowerCase().includes(searchLower)
+      const subfolders = group.subfolders.filter(
+        (s) => matchGroup || s.label.toLowerCase().includes(searchLower)
+      )
+      if (subfolders.length > 0) out[key] = { groupLabel: group.groupLabel, subfolders }
+    }
+    return out
+  }, [groupedFolders, searchLower])
+
   return (
     <>
       <div className="dashboard-with-top-nav flex flex-1 flex-col min-h-0 w-full">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 w-full">
-          <SidebarTrigger
-            aria-label="Ouvrir le menu"
-            className="md:hidden shrink-0"
-          />
-          <Link to="/" className="flex items-center gap-2 shrink-0">
-            <img
-              src={logoDjogana}
-              alt="Djogana"
-              className="h-14 w-auto"
+        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 w-full">
+          <div className="flex items-center gap-3 min-w-0">
+            <SidebarTrigger
+              aria-label="Ouvrir le menu"
+              className="md:hidden shrink-0"
             />
-          </Link>
+            <Link to="/" className="flex items-center gap-2 shrink-0">
+              <img
+                src={logoDjogana}
+                alt="Djogana"
+                className="h-14 w-auto"
+              />
+            </Link>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Filter className="size-4 text-muted-foreground" aria-hidden />
+            <Select
+              value={contentFilter}
+              onValueChange={(v) => setContentFilter(v as ContentFilterType)}
+            >
+              <SelectTrigger className="w-[130px] h-9 border-muted bg-muted/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous</SelectItem>
+                <SelectItem value="files">Fichiers</SelectItem>
+                <SelectItem value="links">Liens</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </header>
         <div className="flex flex-1 min-h-0 min-w-0">
           <Sidebar>
@@ -95,6 +150,41 @@ function DashboardLayout() {
               </Link>
             </SidebarHeader>
             <SidebarContent>
+              <div className="px-2 pb-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    type="search"
+                    placeholder="Rechercher un dossier..."
+                    value={sidebarSearch}
+                    onChange={(e) => setSidebarSearch(e.target.value)}
+                    className="pl-8 h-9 bg-sidebar-accent/50 border-sidebar-border"
+                  />
+                </div>
+              </div>
+              <SidebarGroup>
+                <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={isDashboardHome}>
+                        <Link to="/dashboard">
+                          <Home className="size-4" />
+                          <span>Accueil</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={isDocumentsRoot}>
+                        <Link to="/dashboard/documents">
+                          <FolderOpen className="size-4" />
+                          <span>Documents</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
               <SidebarGroup>
                 <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
                 <SidebarGroupContent>
@@ -102,12 +192,11 @@ function DashboardLayout() {
                     <SidebarMenuItem>
                       <SidebarMenuButton asChild isActive={isDocumentsRoot}>
                         <Link to="/dashboard/documents">
-                          <FolderOpen className="size-4" />
                           <span>Tous les dossiers</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    {rootFolders.map((folder) => (
+                    {filteredRootFolders.map((folder) => (
                       <SidebarMenuItem key={folder.value}>
                         <SidebarMenuButton
                           asChild
@@ -119,7 +208,7 @@ function DashboardLayout() {
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     ))}
-                    {Object.entries(groupedFolders).map(([groupKey, group]) => {
+                    {Object.entries(filteredGroupedFolders).map(([groupKey, group]) => {
                       const groupHasActive = group.subfolders.some((sf) =>
                         isFolderActive(sf.value)
                       )

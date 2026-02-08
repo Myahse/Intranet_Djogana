@@ -7,6 +7,14 @@ const cors = require('cors')
 const { Pool } = require('pg')
 const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
+const jwt = require('jsonwebtoken')
+
+const JWT_SECRET = process.env.JWT_SECRET
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is not set')
+}
+const DEVICE_REQUEST_EXPIRY_MINUTES = 15
+const DEVICE_CODE_LENGTH = 6
 
 const app = express()
 app.use(
@@ -19,14 +27,14 @@ app.use(
 )
 app.use(express.json())
 
-const BASE_URL = process.env.PUBLIC_BASE_URL || 'http://localhost:3000'
+const BASE_URL = process.env.PUBLIC_BASE_URL
+if (!BASE_URL) {
+  throw new Error('PUBLIC_BASE_URL is not set')
+}
 const DATABASE_URL = process.env.DATABASE_URL
 
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    'DATABASE_URL is not set. Backend will not be able to connect to Neon/Postgres.'
-  )
+  throw new Error('DATABASE_URL is not set')
 }
 
 const pool = new Pool({
@@ -34,25 +42,40 @@ const pool = new Pool({
 })
 
 async function initDb() {
-  // Directions: admin creates directions; users and folders belong to one direction
+  // Directions: admin creates directions; each has a code (3-4 chars, uppercase) for file naming
   await pool.query(`
     CREATE TABLE IF NOT EXISTS directions (
       id uuid PRIMARY KEY,
       name text UNIQUE NOT NULL,
+      code text UNIQUE NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `)
+  try {
+    await pool.query(`
+      ALTER TABLE directions ADD COLUMN IF NOT EXISTS code text UNIQUE;
+    `)
+  } catch (_) { /* ignore */ }
 
   // Seed default direction for migration (existing folders/files get this)
   const defaultDirId = uuidv4()
   await pool.query(
     `
-      INSERT INTO directions (id, name)
-      VALUES ($1, 'Default')
+      INSERT INTO directions (id, name, code)
+      VALUES ($1, 'Default', 'DEF')
       ON CONFLICT (name) DO NOTHING
     `,
     [defaultDirId]
   )
+  await pool.query(
+    `UPDATE directions SET code = 'DEF' WHERE code IS NULL AND name = 'Default'`
+  )
+  await pool.query(
+    `UPDATE directions SET code = COALESCE(code, UPPER(LEFT(name, 4))) WHERE code IS NULL`
+  )
+  try {
+    await pool.query(`ALTER TABLE directions ALTER COLUMN code SET NOT NULL`)
+  } catch (_) { /* ignore */ }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -71,6 +94,25 @@ async function initDb() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE SET NULL;
     `)
   } catch (_) { /* column may already exist */ }
+
+  // Device login requests (GitHub-style: request access → approve on mobile → grant session)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS login_requests (
+      id uuid PRIMARY KEY,
+      user_identifiant text NOT NULL,
+      code text NOT NULL,
+      status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'consumed')),
+      session_payload jsonb,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      expires_at timestamptz NOT NULL,
+      approved_at timestamptz
+    );
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_login_requests_user_status
+    ON login_requests (user_identifiant, status)
+    WHERE status = 'pending';
+  `)
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS folders (
@@ -126,6 +168,18 @@ async function initDb() {
       ALTER TABLE files ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE CASCADE;
     `)
   } catch (_) { /* column may already exist */ }
+
+  // Links (URLs: websites, GitHub repos, etc.) per folder/direction
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS links (
+      id uuid PRIMARY KEY,
+      folder text NOT NULL,
+      direction_id uuid NOT NULL REFERENCES directions(id) ON DELETE CASCADE,
+      url text NOT NULL,
+      label text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `)
 
   // ---- Roles & permissions (RBAC) ----
   await pool.query(`
@@ -220,14 +274,60 @@ async function initDb() {
 
 const upload = multer({ storage: multer.memoryStorage() })
 
+// ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
+function signToken(identifiant) {
+  return jwt.sign(
+    { identifiant, type: 'auth' },
+    JWT_SECRET,
+    { expiresIn: '7d', algorithm: 'HS256' }
+  )
+}
+
+function getOptionalAuthUser(req) {
+  const authHeader = req.headers && req.headers.authorization
+  if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+    return null
+  }
+  const token = authHeader.slice(7)
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] })
+    return decoded && decoded.identifiant ? decoded.identifiant : null
+  } catch (_) {
+    return null
+  }
+}
+
+function requireAuth(req, res, next) {
+  const identifiant = getOptionalAuthUser(req)
+  if (!identifiant) {
+    return res.status(401).json({ error: 'Authentification requise.' })
+  }
+  req.authIdentifiant = identifiant
+  next()
+}
+
+function randomCode(len) {
+  const digits = '0123456789'
+  let s = ''
+  for (let i = 0; i < len; i++) s += digits[Math.floor(Math.random() * digits.length)]
+  return s
+}
+
 // ---------- Auth ----------
 
 // ---------- Directions (admin creates; users/folders belong to one) ----------
 
+// Direction code: 3–4 letters or digits, uppercase (used as prefix for file names, e.g. SUM_)
+function validateDirectionCode(raw) {
+  const s = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (s.length < 3 || s.length > 4) return null
+  return s
+}
+
 app.get('/api/directions', async (_req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, created_at FROM directions ORDER BY name'
+      'SELECT id, name, code, created_at FROM directions ORDER BY name'
     )
     return res.json(result.rows)
   } catch (err) {
@@ -238,10 +338,16 @@ app.get('/api/directions', async (_req, res) => {
 
 app.post('/api/directions', async (req, res) => {
   try {
-    const { name, identifiant } = req.body || {}
+    const { name, code: rawCode, identifiant } = req.body || {}
     const trimmed = (name || '').trim()
     if (!trimmed) {
       return res.status(400).json({ error: 'Nom de la direction requis.' })
+    }
+    const code = validateDirectionCode(rawCode)
+    if (!code) {
+      return res.status(400).json({
+        error: 'Code requis : 3 à 4 caractères (lettres ou chiffres), ex. 02 ou SUM.',
+      })
     }
     if (identifiant) {
       const perms = await getPermissionsForIdentifiant(identifiant)
@@ -251,13 +357,13 @@ app.post('/api/directions', async (req, res) => {
     }
     const id = uuidv4()
     await pool.query(
-      'INSERT INTO directions (id, name) VALUES ($1, $2)',
-      [id, trimmed]
+      'INSERT INTO directions (id, name, code) VALUES ($1, $2, $3)',
+      [id, trimmed, code]
     )
-    return res.status(201).json({ id, name: trimmed })
+    return res.status(201).json({ id, name: trimmed, code })
   } catch (err) {
     if (err && err.code === '23505') {
-      return res.status(409).json({ error: 'Une direction avec ce nom existe déjà.' })
+      return res.status(409).json({ error: 'Une direction avec ce nom ou ce code existe déjà.' })
     }
     console.error('create direction error', err)
     return res.status(500).json({ error: 'Erreur lors de la création de la direction.' })
@@ -422,6 +528,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const permissions = await getPermissionsForIdentifiant(user.identifiant)
+    const token = signToken(user.identifiant)
 
     return res.json({
       id: user.id,
@@ -430,6 +537,7 @@ app.post('/api/auth/login', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       permissions: permissions || undefined,
+      token,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -469,6 +577,238 @@ app.post('/api/auth/change-password', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('change-password error', err)
     return res.status(500).json({ error: 'Erreur lors du changement de mot de passe.' })
+  }
+})
+
+// ---------- Device approval flow (GitHub-style: request on web → approve on mobile) ----------
+
+// Create a login request: user enters identifiant (and optionally password); returns requestId + code to show
+app.post('/api/auth/device/request', async (req, res) => {
+  try {
+    const { identifiant, password } = req.body || {}
+    const ident = (identifiant || '').trim()
+    if (!ident) {
+      return res.status(400).json({ error: 'Identifiant requis.' })
+    }
+
+    const result = await pool.query(
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, d.name AS direction_name
+       FROM users u
+       LEFT JOIN directions d ON d.id = u.direction_id
+       WHERE u.identifiant = $1`,
+      [ident]
+    )
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Aucun compte avec cet identifiant.' })
+    }
+
+    if (password) {
+      const ok = await bcrypt.compare(password, result.rows[0].password_hash)
+      if (!ok) {
+        return res.status(401).json({ error: 'Mot de passe incorrect.' })
+      }
+    }
+
+    const requestId = uuidv4()
+    const code = randomCode(DEVICE_CODE_LENGTH)
+    const expiresAt = new Date(Date.now() + DEVICE_REQUEST_EXPIRY_MINUTES * 60 * 1000)
+
+    await pool.query(
+      `INSERT INTO login_requests (id, user_identifiant, code, status, expires_at)
+       VALUES ($1, $2, $3, 'pending', $4)`,
+      [requestId, ident, code, expiresAt]
+    )
+
+    return res.status(201).json({
+      requestId,
+      code,
+      expiresAt: expiresAt.toISOString(),
+      expiresIn: DEVICE_REQUEST_EXPIRY_MINUTES * 60,
+      message: 'Ouvrez l’application Djogana sur votre téléphone et validez cette connexion.',
+    })
+  } catch (err) {
+    console.error('device request error', err)
+    return res.status(500).json({ error: 'Erreur lors de la demande de connexion.' })
+  }
+})
+
+// List pending login requests for the authenticated user (mobile app with JWT)
+app.get('/api/auth/device/requests', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const result = await pool.query(
+      `SELECT id, code, status, created_at, expires_at
+       FROM login_requests
+       WHERE user_identifiant = $1 AND status = 'pending' AND expires_at > now()
+       ORDER BY created_at DESC`,
+      [identifiant]
+    )
+    return res.json(
+      result.rows.map((r) => ({
+        id: r.id,
+        code: r.code,
+        status: r.status,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+      }))
+    )
+  } catch (err) {
+    console.error('device requests list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des demandes.' })
+  }
+})
+
+// Get a single pending request by code (mobile: type the code from the web modal)
+app.get('/api/auth/device/request-by-code', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const code = (req.query.code || '').trim()
+    if (!code) {
+      return res.status(400).json({ error: 'Code requis.' })
+    }
+    const result = await pool.query(
+      `SELECT id, code, status, created_at, expires_at
+       FROM login_requests
+       WHERE user_identifiant = $1 AND code = $2 AND status = 'pending' AND expires_at > now()`,
+      [identifiant, code]
+    )
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Aucune demande avec ce code.' })
+    }
+    const r = result.rows[0]
+    return res.json({
+      id: r.id,
+      code: r.code,
+      status: r.status,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+    })
+  } catch (err) {
+    console.error('device request-by-code error', err)
+    return res.status(500).json({ error: 'Erreur lors de la recherche.' })
+  }
+})
+
+// Approve a login request (mobile app with JWT)
+app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const { requestId } = req.body || {}
+    if (!requestId) {
+      return res.status(400).json({ error: 'requestId requis.' })
+    }
+
+    const reqRow = await pool.query(
+      `SELECT id, user_identifiant, status FROM login_requests WHERE id = $1`,
+      [requestId]
+    )
+    if (reqRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Demande introuvable.' })
+    }
+    if (reqRow.rows[0].user_identifiant !== identifiant) {
+      return res.status(403).json({ error: 'Vous ne pouvez approuver que vos propres demandes.' })
+    }
+    if (reqRow.rows[0].status !== 'pending') {
+      return res.status(400).json({ error: 'Cette demande a déjà été traitée.' })
+    }
+
+    const userRes = await pool.query(
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, d.name AS direction_name
+       FROM users u
+       LEFT JOIN directions d ON d.id = u.direction_id
+       WHERE u.identifiant = $1`,
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(500).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = userRes.rows[0]
+    const permissions = await getPermissionsForIdentifiant(identifiant)
+    const sessionPayload = {
+      identifiant: user.identifiant,
+      role: user.role,
+      direction_id: user.direction_id || null,
+      direction_name: user.direction_name || null,
+      permissions: permissions || undefined,
+    }
+
+    await pool.query(
+      `UPDATE login_requests SET status = 'approved', session_payload = $1, approved_at = now() WHERE id = $2`,
+      [JSON.stringify(sessionPayload), requestId]
+    )
+
+    return res.json({ success: true, requestId })
+  } catch (err) {
+    console.error('device approve error', err)
+    return res.status(500).json({ error: 'Erreur lors de l’approbation.' })
+  }
+})
+
+// Deny a login request (mobile app with JWT)
+app.post('/api/auth/device/deny', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const { requestId } = req.body || {}
+    if (!requestId) {
+      return res.status(400).json({ error: 'requestId requis.' })
+    }
+
+    const reqRow = await pool.query(
+      `SELECT id, user_identifiant, status FROM login_requests WHERE id = $1`,
+      [requestId]
+    )
+    if (reqRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Demande introuvable.' })
+    }
+    if (reqRow.rows[0].user_identifiant !== identifiant) {
+      return res.status(403).json({ error: 'Vous ne pouvez refuser que vos propres demandes.' })
+    }
+    if (reqRow.rows[0].status !== 'pending') {
+      return res.status(400).json({ error: 'Cette demande a déjà été traitée.' })
+    }
+
+    await pool.query(`UPDATE login_requests SET status = 'denied' WHERE id = $1`, [requestId])
+    return res.json({ success: true, requestId })
+  } catch (err) {
+    console.error('device deny error', err)
+    return res.status(500).json({ error: 'Erreur lors du refus.' })
+  }
+})
+
+// Poll for login request status (web: no auth; returns user when approved)
+app.get('/api/auth/device/poll/:requestId', async (req, res) => {
+  try {
+    const { requestId } = req.params
+    const result = await pool.query(
+      `SELECT status, session_payload, expires_at FROM login_requests WHERE id = $1`,
+      [requestId]
+    )
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Demande introuvable.', status: 'not_found' })
+    }
+
+    const row = result.rows[0]
+    if (row.status === 'pending') {
+      if (new Date(row.expires_at) < new Date()) {
+        await pool.query(`UPDATE login_requests SET status = 'denied' WHERE id = $1`, [requestId])
+        return res.json({ status: 'expired', message: 'Demande expirée.' })
+      }
+      return res.json({ status: 'pending' })
+    }
+
+    if (row.status === 'denied') {
+      return res.json({ status: 'denied', message: 'Connexion refusée.' })
+    }
+
+    if (row.status === 'approved' && row.session_payload) {
+      await pool.query(`UPDATE login_requests SET status = 'consumed' WHERE id = $1`, [requestId])
+      return res.json({ status: 'approved', user: row.session_payload })
+    }
+
+    return res.json({ status: row.status })
+  } catch (err) {
+    console.error('device poll error', err)
+    return res.status(500).json({ error: 'Erreur lors de la vérification.' })
   }
 })
 
@@ -766,23 +1106,28 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' })
     }
 
+    const fileBuffer = req.file.buffer
+    if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+      return res.status(400).json({ error: 'Fichier invalide ou trop volumineux.' })
+    }
+
     const folder = (req.body && req.body.folder) || 'default'
     const directionId = (req.body && req.body.direction_id) || null
-    const uploadedBy = (req.body && req.body.uploadedBy) || null
     const identifiant = (req.body && req.body.identifiant) || null
 
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour l’upload.' })
     }
 
-    // Permission: admin or user's direction must match folder's direction
+    let uploadedBy = null
     if (identifiant) {
       const userRes = await pool.query(
-        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
         [identifiant]
       )
       if (userRes.rows.length > 0) {
         const u = userRes.rows[0]
+        uploadedBy = u.id
         if (u.role !== 'admin' && u.direction_id !== directionId) {
           return res.status(403).json({
             error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
@@ -791,10 +1136,24 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       }
     }
 
-    const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+    const dirRes = await pool.query(
+      'SELECT id, code FROM directions WHERE id = $1',
+      [directionId]
+    )
     if (dirRes.rows.length === 0) {
       return res.status(400).json({ error: 'Direction invalide.' })
     }
+    const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
+
+    const mimeType = (req.file.mimetype && String(req.file.mimetype).trim()) || 'application/octet-stream'
+
+    // File name: always CODE_baseName (e.g. SUM_rapport.pdf)
+    let baseName = (req.body && req.body.name) || req.file.originalname || 'document'
+    baseName = baseName.replace(/^.*[/\\]/, '').trim() || 'document'
+    if (baseName.toUpperCase().startsWith(directionCode + '_')) {
+      baseName = baseName.slice(directionCode.length + 1)
+    }
+    const storedFileName = directionCode + '_' + baseName
 
     const id = uuidv4()
     const folderId = uuidv4()
@@ -815,13 +1174,13 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       `,
       [
         id,
-        req.file.originalname,
-        req.file.mimetype,
-        req.file.size,
+        storedFileName,
+        mimeType,
+        Number(req.file.size) || 0,
         folder,
         directionId,
         uploadedBy,
-        req.file.buffer,
+        fileBuffer,
       ]
     )
 
@@ -829,14 +1188,14 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
 
     return res.json({
       id,
-      name: req.file.originalname,
+      name: storedFileName,
       size: req.file.size,
       url: publicUrl,
       direction_id: directionId,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('file upload error', err)
+    console.error('file upload error', err?.message || err, err?.code)
     return res.status(500).json({ error: 'Erreur lors de l’upload du fichier.' })
   }
 })
@@ -999,7 +1358,7 @@ app.get('/api/files', async (req, res) => {
     return res.json(rows)
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('files list error', err)
+    console.error('files list error', err?.message || err, err?.code)
     return res.status(500).json({ error: 'Erreur lors de la récupération des fichiers.' })
   }
 })
@@ -1026,6 +1385,63 @@ app.get('/files/:id', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('file fetch error', err)
     return res.status(500).send('Error fetching file')
+  }
+})
+
+app.patch('/api/files/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { name: rawName } = req.body || {}
+    const identifiant = req.query.identifiant || req.body?.identifiant
+
+    const name = (rawName || '').trim()
+    if (!name) {
+      return res.status(400).json({ error: 'Nom du fichier requis pour renommer.' })
+    }
+
+    const fileRes = await pool.query(
+      'SELECT direction_id FROM files WHERE id = $1',
+      [id]
+    )
+    if (fileRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Fichier introuvable.' })
+    }
+
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        const fileDir = fileRes.rows[0].direction_id
+        if (u.role !== 'admin' && u.direction_id !== fileDir) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez renommer que les fichiers de votre direction.',
+          })
+        }
+      }
+    }
+
+    const directionId = fileRes.rows[0].direction_id
+    const dirRes = await pool.query(
+      'SELECT code FROM directions WHERE id = $1',
+      [directionId]
+    )
+    const directionCode = (dirRes.rows[0] && dirRes.rows[0].code) ? dirRes.rows[0].code.toString().toUpperCase() : 'DEF'
+    let baseName = name.replace(/^.*[/\\]/, '').trim() || 'document'
+    if (baseName.toUpperCase().startsWith(directionCode + '_')) {
+      baseName = baseName.slice(directionCode.length + 1)
+    }
+    const storedFileName = directionCode + '_' + baseName
+
+    await pool.query('UPDATE files SET name = $1 WHERE id = $2', [storedFileName, id])
+
+    return res.json({ id, name: storedFileName })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('file rename error', err)
+    return res.status(500).json({ error: 'Erreur lors du renommage du fichier.' })
   }
 })
 
@@ -1088,6 +1504,10 @@ app.delete('/api/folders/:folder', async (req, res) => {
     }
 
     if (directionId) {
+      await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [
+        folder,
+        directionId,
+      ])
       await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [
         folder,
         directionId,
@@ -1097,6 +1517,7 @@ app.delete('/api/folders/:folder', async (req, res) => {
         directionId,
       ])
     } else {
+      await pool.query('DELETE FROM links WHERE folder = $1', [folder])
       await pool.query('DELETE FROM files WHERE folder = $1', [folder])
       await pool.query('DELETE FROM folders WHERE name = $1', [folder])
     }
@@ -1105,6 +1526,218 @@ app.delete('/api/folders/:folder', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('folder delete error', err)
     return res.status(500).json({ error: 'Erreur lors de la suppression du dossier.' })
+  }
+})
+
+// ---------- Links (URLs: websites, GitHub repos, etc.) ----------
+
+function isValidUrl(str) {
+  try {
+    const u = new URL(str)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch (_) {
+    return false
+  }
+}
+
+app.post('/api/links', async (req, res) => {
+  try {
+    const { folder, direction_id: directionId, url, label, identifiant } = req.body || {}
+    const name = (folder || '').trim()
+    const linkUrl = (url || '').trim()
+    const linkLabel = (label || '').trim() || linkUrl
+
+    if (!name) {
+      return res.status(400).json({ error: 'Dossier requis pour ajouter un lien.' })
+    }
+    if (!directionId) {
+      return res.status(400).json({ error: 'Direction requise.' })
+    }
+    if (!linkUrl) {
+      return res.status(400).json({ error: 'URL requise.' })
+    }
+    if (!isValidUrl(linkUrl)) {
+      return res.status(400).json({ error: 'URL invalide. Utilisez http:// ou https://.' })
+    }
+
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez ajouter des liens que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+    if (dirRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Direction invalide.' })
+    }
+
+    const id = uuidv4()
+    await pool.query(
+      `INSERT INTO links (id, folder, direction_id, url, label) VALUES ($1, $2, $3, $4, $5)`,
+      [id, name, directionId, linkUrl, linkLabel]
+    )
+
+    return res.status(201).json({
+      id,
+      folder: name,
+      direction_id: directionId,
+      url: linkUrl,
+      label: linkLabel,
+    })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('link create error', err)
+    return res.status(500).json({ error: 'Erreur lors de l’ajout du lien.' })
+  }
+})
+
+app.get('/api/links', async (req, res) => {
+  try {
+    const { folder, role } = req.query
+    const params = []
+    let sql = `
+      SELECT l.id, l.folder, l.direction_id, l.url, l.label, l.created_at
+      FROM links l
+    `
+    const conditions = []
+
+    if (folder) {
+      params.push(folder)
+      conditions.push(`l.folder = $${params.length}`)
+    }
+
+    if (role && role !== 'admin') {
+      params.push(role)
+      conditions.push(`
+        (
+          NOT EXISTS (
+            SELECT 1 FROM folder_role_visibility v
+            JOIN roles r ON r.id = v.role_id
+            WHERE v.folder_name = l.folder
+          )
+          OR EXISTS (
+            SELECT 1 FROM folder_role_visibility v
+            JOIN roles r ON r.id = v.role_id
+            WHERE v.folder_name = l.folder
+              AND r.name = $${params.length}
+              AND v.can_view = true
+          )
+        )
+      `)
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ')
+    }
+    sql += ' ORDER BY l.created_at DESC'
+
+    const result = await pool.query(sql, params)
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        folder: row.folder,
+        direction_id: row.direction_id,
+        url: row.url,
+        label: row.label,
+        created_at: row.created_at,
+      }))
+    )
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('links list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des liens.' })
+  }
+})
+
+app.patch('/api/links/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { url, label } = req.body || {}
+    const identifiant = req.query.identifiant || req.body?.identifiant
+
+    const linkRes = await pool.query(
+      'SELECT direction_id, url, label FROM links WHERE id = $1',
+      [id]
+    )
+    if (linkRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Lien introuvable.' })
+    }
+
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== linkRes.rows[0].direction_id) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez modifier que les liens de votre direction.',
+          })
+        }
+      }
+    }
+
+    const newUrl = (url !== undefined && url !== null ? String(url).trim() : null) || linkRes.rows[0].url
+    const newLabel = (label !== undefined && label !== null ? String(label).trim() : null) || linkRes.rows[0].label
+    if (newUrl && !isValidUrl(newUrl)) {
+      return res.status(400).json({ error: 'URL invalide. Utilisez http:// ou https://.' })
+    }
+
+    await pool.query(
+      'UPDATE links SET url = $1, label = $2 WHERE id = $3',
+      [newUrl, newLabel, id]
+    )
+    return res.json({ id, url: newUrl, label: newLabel })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('link update error', err)
+    return res.status(500).json({ error: 'Erreur lors de la mise à jour du lien.' })
+  }
+})
+
+app.delete('/api/links/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const identifiant = req.query.identifiant || req.body?.identifiant
+
+    if (identifiant) {
+      const linkRes = await pool.query(
+        'SELECT direction_id FROM links WHERE id = $1',
+        [id]
+      )
+      if (linkRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Lien introuvable.' })
+      }
+      const userRes = await pool.query(
+        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        if (u.role !== 'admin' && u.direction_id !== linkRes.rows[0].direction_id) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez supprimer que les liens de votre direction.',
+          })
+        }
+      }
+    }
+
+    await pool.query('DELETE FROM links WHERE id = $1', [id])
+    return res.status(204).send()
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('link delete error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression du lien.' })
   }
 })
 

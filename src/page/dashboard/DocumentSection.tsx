@@ -5,17 +5,34 @@ import folderFilledSvg from '@/assets/svgs/Group 55.svg'
 import wordIcon from '@/assets/svgs/Group 57.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
-import type { DocumentItem } from '@/contexts/DocumentsContext'
-import { FileText, Download, Trash2, X } from 'lucide-react'
+import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
+import { FileText, Download, Trash2, X, Pencil, ExternalLink } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
+import { useDashboardFilter } from '@/contexts/DashboardFilterContext'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
+
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])
+
+function isImageFile(fileName: string): boolean {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  return !!ext && IMAGE_EXTENSIONS.has(ext)
+}
 
 function getFileIconSrc(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase()
@@ -28,10 +45,12 @@ function isPdf(fileName: string): boolean {
   return fileName.split('.').pop()?.toLowerCase() === 'pdf'
 }
 
-function getOfficeDocType(fileName: string): 'docx' | 'doc' | null {
+function getOfficeDocType(fileName: string): 'docx' | 'doc' | 'pptx' | 'ppt' | null {
   const ext = fileName.split('.').pop()?.toLowerCase()
   if (ext === 'docx') return 'docx'
   if (ext === 'doc') return 'doc'
+  if (ext === 'pptx') return 'pptx'
+  if (ext === 'ppt') return 'ppt'
   return null
 }
 
@@ -43,12 +62,14 @@ function FilePreviewContent({
   file,
   formatSize,
   canPreviewPdf,
+  canPreviewImage,
   canPreviewOffice,
   className,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
   canPreviewPdf: boolean
+  canPreviewImage: boolean
   canPreviewOffice: boolean
   className?: string
 }) {
@@ -60,9 +81,15 @@ function FilePreviewContent({
           title={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
         />
+      ) : canPreviewImage ? (
+        <img
+          src={file.url}
+          alt={file.name}
+          className="w-full h-full min-h-[min(70vh,500px)] object-contain bg-muted"
+        />
       ) : canPreviewOffice ? (
         <iframe
-          src={`/preview?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(file.name)}`}
+          src={file.viewerUrl ?? `/preview?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(file.name)}`}
           title={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
         />
@@ -98,15 +125,22 @@ function FileCard({
   formatSize,
   canEdit,
   onDelete,
+  onRename,
   onSelect,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
   canEdit: boolean
   onDelete?: (id: string) => void
+  onRename?: (id: string, newName: string) => Promise<void>
   onSelect?: (file: DocumentItem) => void
 }) {
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState(file.name)
+  const [isRenaming, setIsRenaming] = useState(false)
+
   const iconSrc = getFileIconSrc(file.name)
+  const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
   const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
 
@@ -119,65 +153,135 @@ function FileCard({
     }
   }
 
+  const openRename = () => {
+    setRenameValue(file.name)
+    setRenameOpen(true)
+  }
+
+  const submitRename = async () => {
+    const name = renameValue.trim()
+    if (!name || !onRename) return
+    setIsRenaming(true)
+    try {
+      await onRename(file.id, name)
+      setRenameOpen(false)
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
   return (
-    <HoverCard openDelay={300} closeDelay={100}>
-      <HoverCardTrigger asChild>
-        <div
-          className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer"
-          onClick={handleClick}
+    <>
+      <HoverCard openDelay={300} closeDelay={100}>
+        <HoverCardTrigger asChild>
+          <div
+            className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer"
+            onClick={handleClick}
+          >
+            {file.url && (
+              <a
+                href={file.url}
+                download={file.name}
+                className="absolute top-2 right-2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Télécharger"
+              >
+                <Download className="size-5" />
+              </a>
+            )}
+            {canEdit && (onDelete || onRename) && (
+              <div className="absolute top-2 left-2 flex gap-0.5">
+                {onRename && (
+                  <button
+                    type="button"
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openRename()
+                    }}
+                    aria-label="Renommer le fichier"
+                  >
+                    <Pencil className="size-5" />
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onDelete(file.id)
+                    }}
+                    aria-label="Supprimer le fichier"
+                  >
+                    <Trash2 className="size-5" />
+                  </button>
+                )}
+              </div>
+            )}
+            {isImage ? (
+              <img
+                src={file.url}
+                alt=""
+                className="h-24 w-24 sm:h-28 sm:w-28 rounded-md border bg-muted object-cover"
+              />
+            ) : iconSrc ? (
+              <img
+                src={iconSrc}
+                alt=""
+                className="h-24 w-auto max-w-full sm:h-28 object-contain"
+              />
+            ) : (
+              <FileText className="size-24 text-muted-foreground sm:size-28" />
+            )}
+            <span className="text-center text-sm font-medium line-clamp-2">
+              {file.name}
+            </span>
+          </div>
+        </HoverCardTrigger>
+        <HoverCardContent
+          side="right"
+          align="start"
+          className="w-[min(90vw,400px)] p-0 overflow-hidden"
         >
-          {file.url && (
-            <a
-              href={file.url}
-              download={file.name}
-              className="absolute top-2 right-2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-              onClick={(e) => e.stopPropagation()}
-              aria-label="Télécharger"
-            >
-              <Download className="size-5" />
-            </a>
-          )}
-          {canEdit && onDelete && (
-            <button
-              type="button"
-              className="absolute top-2 left-2 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDelete(file.id)
-              }}
-              aria-label="Supprimer le fichier"
-            >
-              <Trash2 className="size-5" />
-            </button>
-          )}
-          {iconSrc ? (
-            <img
-              src={iconSrc}
-              alt=""
-              className="h-24 w-auto max-w-full sm:h-28 object-contain"
+          <FilePreviewContent
+            file={file}
+            formatSize={formatSize}
+            canPreviewPdf={canPreviewPdf}
+            canPreviewImage={isImage}
+            canPreviewOffice={canPreviewOffice}
+            className="w-full h-[min(70vh,500px)]"
+          />
+        </HoverCardContent>
+      </HoverCard>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renommer le fichier</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement.
+          </p>
+          <div className="grid gap-2">
+            <Label htmlFor="rename-file-input">Nom du fichier</Label>
+            <Input
+              id="rename-file-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="rapport.pdf"
             />
-          ) : (
-            <FileText className="size-24 text-muted-foreground sm:size-28" />
-          )}
-          <span className="text-center text-sm font-medium line-clamp-2">
-            {file.name}
-          </span>
-        </div>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="right"
-        align="start"
-        className="w-[min(90vw,400px)] p-0 overflow-hidden"
-      >
-        <FilePreviewContent
-          file={file}
-          formatSize={formatSize}
-          canPreviewPdf={canPreviewPdf}
-          canPreviewOffice={canPreviewOffice}
-          className="w-full h-[min(70vh,500px)]"
-        />
-      </HoverCardContent>
-    </HoverCard>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Annuler
+            </Button>
+            <Button onClick={submitRename} disabled={!renameValue.trim() || isRenaming}>
+              {isRenaming ? 'Enregistrement...' : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -187,6 +291,57 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`
 }
 
+function LinkCard({
+  link,
+  canEdit,
+  onDelete,
+}: {
+  link: LinkItem
+  canEdit: boolean
+  onDelete?: (id: string) => void
+}) {
+  const displayLabel = link.label && link.label !== link.url ? link.label : (() => {
+    try {
+      const u = new URL(link.url)
+      return u.hostname.replace(/^www\./, '') || link.url
+    } catch {
+      return link.url
+    }
+  })()
+
+  return (
+    <div className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50">
+      <a
+        href={link.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={displayLabel}
+        className="flex flex-col items-center gap-3 w-full min-w-0"
+      >
+        <div className="rounded-lg border bg-muted/30 p-4 flex items-center justify-center">
+          <ExternalLink className="size-12 text-primary" />
+        </div>
+        <span className="text-center text-sm font-medium line-clamp-2" title={displayLabel}>
+          {displayLabel}
+        </span>
+      </a>
+      {canEdit && onDelete && (
+        <button
+          type="button"
+          className="absolute top-2 right-2 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          onClick={(e) => {
+            e.preventDefault()
+            onDelete(link.id)
+          }}
+          aria-label="Supprimer le lien"
+        >
+          <Trash2 className="size-5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 const DocumentSection = () => {
   const location = useLocation()
   const pathname = location.pathname
@@ -194,8 +349,9 @@ const DocumentSection = () => {
   const lastSegment = segments[segments.length - 1] ?? ''
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot ? decodeURIComponent(lastSegment) : null
-  const { getFiles, removeFile, removeFolder, folderOptions } = useDocuments()
+  const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
   const { user, isAdmin } = useAuth()
+  const { contentFilter } = useDashboardFilter()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
 
   // User can edit (delete/upload) only in their direction; view-only in other directions
@@ -207,6 +363,10 @@ const DocumentSection = () => {
   const canEditFile = (file: DocumentItem) => {
     if (isAdmin) return true
     return user?.direction_id != null && file.direction_id === user.direction_id
+  }
+  const canEditLink = (link: LinkItem) => {
+    if (isAdmin) return true
+    return user?.direction_id != null && link.direction_id === user.direction_id
   }
   const currentFolderLabel = folderKey ? (() => {
     const opt = folderOptions.find((f) => f.value === folderKey)
@@ -233,9 +393,14 @@ const DocumentSection = () => {
       ? folderKey || 'Documents'
       : folderKey || 'Documents'
 
-  // Leaf folder: show files and delete actions
+  // Leaf folder: show files, links and delete actions
   if (!isRoot && folderKey && !isGroupRoute) {
-    const files = getFiles(folderKey)
+    const allFiles = getFiles(folderKey)
+    const allLinks = getLinks(folderKey)
+    const files =
+      contentFilter === 'links' ? [] : allFiles
+    const links =
+      contentFilter === 'files' ? [] : allLinks
     const canEdit = canEditFolder(folderKey)
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
@@ -294,8 +459,25 @@ const DocumentSection = () => {
                 </Button>
               )}
             </div>
-            {files.length > 0 ? (
+            {(files.length > 0 || links.length > 0) ? (
               <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                {links.map((link) => (
+                  <LinkCard
+                    key={link.id}
+                    link={link}
+                    canEdit={canEditLink(link)}
+                    onDelete={async (id) => {
+                      try {
+                        await removeLink(id)
+                        toast.success('Lien supprimé')
+                      } catch (err) {
+                        // eslint-disable-next-line no-console
+                        console.error(err)
+                        toast.error('Erreur lors de la suppression du lien')
+                      }
+                    }}
+                  />
+                ))}
                 {files.map((file) => (
                   <FileCard
                     key={file.id}
@@ -314,12 +496,23 @@ const DocumentSection = () => {
                         toast.error('Erreur lors de la suppression du fichier')
                       }
                     }}
+                    onRename={async (id, name) => {
+                      try {
+                        const newName = await renameFile(id, name)
+                        toast.success('Fichier renommé')
+                        if (selectedFile?.id === id) setSelectedFile((f) => (f ? { ...f, name: newName } : null))
+                      } catch (err) {
+                        // eslint-disable-next-line no-console
+                        console.error(err)
+                        toast.error('Erreur lors du renommage')
+                      }
+                    }}
                   />
                 ))}
               </div>
             ) : (
               <p className="text-muted-foreground">
-                Aucun fichier dans ce dossier.{canEdit ? ' Vous pouvez en ajouter depuis le profil.' : ' Consultation uniquement (autre direction).'}
+                Aucun fichier ni lien dans ce dossier.{canEdit ? ' Vous pouvez en ajouter depuis le profil.' : ' Consultation uniquement (autre direction).'}
               </p>
             )}
           </div>
@@ -352,6 +545,7 @@ const DocumentSection = () => {
                   file={selectedFile}
                   formatSize={formatSize}
                   canPreviewPdf={isPdf(selectedFile.name) && !!selectedFile.url}
+                  canPreviewImage={isImageFile(selectedFile.name) && !!selectedFile.url}
                   canPreviewOffice={
                     isOfficeDocPreviewable(selectedFile.name) && !!selectedFile.url
                   }
@@ -400,7 +594,8 @@ const DocumentSection = () => {
         {subfolderKeys.length > 0 ? (
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {subfolderKeys.map((value) => {
-              const [, sub] = value.split('::')
+              const { name } = parseFolderKey(value)
+              const subLabel = name.includes('::') ? name.split('::').slice(1).join('::') : name
               return (
                 <Link
                   key={value}
@@ -412,7 +607,7 @@ const DocumentSection = () => {
                     alt=""
                     className="h-24 w-auto max-w-full sm:h-28"
                   />
-                  <span className="text-center text-sm font-medium">{sub}</span>
+                  <span className="text-center text-sm font-medium">{subLabel}</span>
                 </Link>
               )
             })}

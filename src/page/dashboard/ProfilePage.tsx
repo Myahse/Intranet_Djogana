@@ -16,7 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { FileText, FolderPlus, LogOut, Trash2, Upload, UserPlus, KeyRound, Building2 } from 'lucide-react'
+import { FileText, FolderPlus, LogOut, Trash2, Upload, UserPlus, KeyRound, Building2, Link2 } from 'lucide-react'
 import { parseFolderKey } from '@/contexts/DocumentsContext'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -37,12 +37,16 @@ const FILE_UPLOAD_ACCEPT =
 const ProfilePage = (): ReactNode => {
   const navigate = useNavigate()
   const { user, isAdmin, logout, registerUser, changePassword } = useAuth()
-  const { folderOptions, addFile, addFolder, addFolderMeta } = useDocuments()
+  const { folderOptions, addFile, addLink, addFolder, addFolderMeta } = useDocuments()
   const canCreateUser = isAdmin || !!user?.permissions?.can_create_user
   const canDeleteUser = isAdmin || !!user?.permissions?.can_delete_user
   const canCreateDirection = isAdmin || !!user?.permissions?.can_create_direction
   const canDeleteDirection = isAdmin || !!user?.permissions?.can_delete_direction
   const [selectedFolder, setSelectedFolder] = useState<string>('')
+  const [selectedFolderLink, setSelectedFolderLink] = useState<string>('')
+  const [linkUrl, setLinkUrl] = useState<string>('')
+  const [linkLabel, setLinkLabel] = useState<string>('')
+  const [uploadFileName, setUploadFileName] = useState<string>('')
   const [newFolderName, setNewFolderName] = useState('')
   const [formationGroupName, setFormationGroupName] = useState('')
   const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
@@ -77,8 +81,9 @@ const ProfilePage = (): ReactNode => {
   const [selectedRole, setSelectedRole] = useState<string>('user')
   const [newRoleName, setNewRoleName] = useState('')
   const [isCreatingRole, setIsCreatingRole] = useState<boolean>(false)
-  const [directions, setDirections] = useState<Array<{ id: string; name: string }>>([])
+  const [directions, setDirections] = useState<Array<{ id: string; name: string; code?: string }>>([])
   const [newDirectionName, setNewDirectionName] = useState('')
+  const [newDirectionCode, setNewDirectionCode] = useState('')
   const [isCreatingDirection, setIsCreatingDirection] = useState(false)
   const [selectedDirection, setSelectedDirection] = useState<string>('')
   const [selectedDirectionFolder, setSelectedDirectionFolder] = useState<string>('')
@@ -141,12 +146,38 @@ const ProfilePage = (): ReactNode => {
       return
     }
     try {
-      await addFile(selectedFolder, file)
-      setSelectedFolder('')
+      await addFile(selectedFolder, file, uploadFileName.trim() || undefined)
+      setUploadFileName('')
       if (uploadFileInputRef.current) uploadFileInputRef.current.value = ''
-      toast.success('Fichier ajouté')
+      toast.success('Fichier ajouté (le code de la direction est appliqué automatiquement)')
     } catch (err) {
       toast.error("Erreur lors de l'upload du fichier")
+      // eslint-disable-next-line no-console
+      console.error(err)
+    }
+  }
+
+  const handleAddLink = async () => {
+    if (!selectedFolderLink) {
+      toast.error('Veuillez sélectionner un dossier')
+      return
+    }
+    const url = linkUrl.trim()
+    if (!url) {
+      toast.error('Veuillez saisir une URL (ex. https://github.com/...)')
+      return
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      toast.error('L’URL doit commencer par http:// ou https://')
+      return
+    }
+    try {
+      await addLink(selectedFolderLink, url, linkLabel.trim() || url)
+      setLinkUrl('')
+      setLinkLabel('')
+      toast.success('Lien ajouté')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur lors de l'ajout du lien")
       // eslint-disable-next-line no-console
       console.error(err)
     }
@@ -230,7 +261,7 @@ const ProfilePage = (): ReactNode => {
         if (canLoadDirections) {
           const dirRes = await fetch(`${API_BASE_URL}/api/directions`)
           if (dirRes.ok) {
-            const dirData = (await dirRes.json()) as Array<{ id: string; name: string }>
+            const dirData = (await dirRes.json()) as Array<{ id: string; name: string; code?: string }>
             setDirections(dirData)
             if (dirData.length > 0 && !selectedDirection) {
               setSelectedDirection(dirData[0].id)
@@ -251,8 +282,13 @@ const ProfilePage = (): ReactNode => {
 
   const handleCreateDirection = async () => {
     const name = newDirectionName.trim()
+    const codeRaw = newDirectionCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
     if (!name) {
       toast.error('Veuillez saisir un nom de direction')
+      return
+    }
+    if (codeRaw.length < 3 || codeRaw.length > 4) {
+      toast.error('Le code doit faire 3 à 4 caractères (lettres ou chiffres), ex. 02 ou SUM')
       return
     }
     try {
@@ -260,16 +296,17 @@ const ProfilePage = (): ReactNode => {
       const res = await fetch(`${API_BASE_URL}/api/directions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, identifiant: user?.identifiant ?? '' }),
+        body: JSON.stringify({ name, code: codeRaw, identifiant: user?.identifiant ?? '' }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         toast.error(data?.error ?? 'Impossible de créer la direction')
         return
       }
-      const created = (await res.json()) as { id: string; name: string }
+      const created = (await res.json()) as { id: string; name: string; code: string }
       setDirections((prev) => [...prev, created])
       setNewDirectionName('')
+      setNewDirectionCode('')
       toast.success('Direction créée')
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -678,21 +715,31 @@ const ProfilePage = (): ReactNode => {
                 Créez des directions. Chaque utilisateur (non admin) est rattaché à une direction et ne peut modifier que les dossiers de sa direction.
               </p>
               {canCreateDirection && (
-              <div className="flex flex-col sm:flex-row gap-2 max-w-md">
-                <div className="flex-1">
-                  <Label htmlFor="new-direction-name">Nom de la direction</Label>
-                  <Input
-                    id="new-direction-name"
-                    value={newDirectionName}
-                    onChange={(e) => setNewDirectionName(e.target.value)}
-                    placeholder='Ex. "Ressources humaines"'
-                  />
+              <div className="space-y-4 max-w-md">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="new-direction-name">Nom de la direction</Label>
+                    <Input
+                      id="new-direction-name"
+                      value={newDirectionName}
+                      onChange={(e) => setNewDirectionName(e.target.value)}
+                      placeholder='Ex. "Ressources humaines"'
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="new-direction-code">Code (3–4 car., ex. 02 ou SUM)</Label>
+                    <Input
+                      id="new-direction-code"
+                      value={newDirectionCode}
+                      onChange={(e) => setNewDirectionCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                      placeholder="SUM"
+                      maxLength={4}
+                    />
+                  </div>
                 </div>
-                <div className="flex items-end">
-                  <Button onClick={handleCreateDirection} disabled={isCreatingDirection}>
-                    {isCreatingDirection ? 'Création...' : 'Créer la direction'}
-                  </Button>
-                </div>
+                <Button onClick={handleCreateDirection} disabled={isCreatingDirection}>
+                  {isCreatingDirection ? 'Création...' : 'Créer la direction'}
+                </Button>
               </div>
               )}
               {directions.length > 0 && (
@@ -700,10 +747,18 @@ const ProfilePage = (): ReactNode => {
                   <p className="text-sm font-medium">Liste des directions</p>
                   <div className="max-h-48 overflow-y-auto border rounded-md">
                     <table className="w-full text-sm">
+                      <thead className="bg-muted">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">Nom</th>
+                          <th className="px-3 py-2 text-left font-medium">Code</th>
+                          <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
+                        </tr>
+                      </thead>
                       <tbody>
                         {directions.map((d) => (
                           <tr key={d.id} className="border-t">
                             <td className="px-3 py-2">{d.name}</td>
+                            <td className="px-3 py-2 font-mono text-muted-foreground">{d.code ?? '—'}</td>
                             <td className="px-3 py-2 text-right w-12">
                               {canDeleteDirection && (
                                 <Button
@@ -1090,6 +1145,58 @@ const ProfilePage = (): ReactNode => {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
+                <Link2 className="size-5" />
+                Ajouter un lien
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                Ajoutez un lien (site web, dépôt GitHub, documentation, etc.) dans un dossier. Le lien s’ouvrira dans un nouvel onglet.
+              </p>
+              <div className="grid gap-2">
+                <Label>Sélectionner un dossier</Label>
+                <Select value={selectedFolderLink} onValueChange={setSelectedFolderLink}>
+                  <SelectTrigger className="w-full max-w-xs">
+                    <SelectValue placeholder="Sélectionner un dossier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {folderOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2 max-w-md">
+                <Label htmlFor="link-url">URL</Label>
+                <Input
+                  id="link-url"
+                  type="url"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  placeholder="https://github.com/... ou https://example.com"
+                />
+              </div>
+              <div className="grid gap-2 max-w-md">
+                <Label htmlFor="link-label">Libellé (optionnel)</Label>
+                <Input
+                  id="link-label"
+                  value={linkLabel}
+                  onChange={(e) => setLinkLabel(e.target.value)}
+                  placeholder="Ex. Dépôt GitHub du projet"
+                />
+              </div>
+              <Button onClick={handleAddLink}>
+                <Link2 className="size-4 mr-2" />
+                Ajouter le lien
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
                 <Upload className="size-5" />
                 Uploader un fichier
               </CardTitle>
@@ -1121,6 +1228,15 @@ const ProfilePage = (): ReactNode => {
                   type="file"
                   className={fileInputClass}
                   accept={FILE_UPLOAD_ACCEPT}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upload-file-name">Nom du fichier (optionnel)</Label>
+                <Input
+                  id="upload-file-name"
+                  value={uploadFileName}
+                  onChange={(e) => setUploadFileName(e.target.value)}
+                  placeholder="Ex. rapport.pdf (le code direction sera ajouté automatiquement)"
                 />
               </div>
               <Button onClick={handleUploadFile}>
