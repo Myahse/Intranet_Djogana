@@ -7,8 +7,9 @@ import {
   type ReactNode,
 } from 'react'
 
-const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY ?? 'intranet_djogana_user'
+const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_token'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export type UserPermissions = {
   can_create_folder: boolean
@@ -29,6 +30,14 @@ export type User = {
   permissions?: UserPermissions | null
 }
 
+export type DeviceLoginRequest = {
+  id: string
+  code: string
+  status: string
+  createdAt: string
+  expiresAt: string
+}
+
 type AuthContextValue = {
   user: User | null
   isAdmin: boolean
@@ -42,6 +51,21 @@ type AuthContextValue = {
     directionId?: string
   ) => Promise<boolean>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
+  // Device-approval flow (GitHub-style)
+  requestDeviceLogin: (identifiant: string, password?: string) => Promise<{
+    requestId: string
+    code: string
+    expiresAt: string
+    expiresIn: number
+  } | null>
+  pollDeviceRequest: (requestId: string) => Promise<{
+    status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found'
+    user?: User
+    message?: string
+  }>
+  listDeviceRequests: () => Promise<DeviceLoginRequest[]>
+  approveDeviceRequest: (requestId: string) => Promise<boolean>
+  denyDeviceRequest: (requestId: string) => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -136,9 +160,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id?: string | null
           direction_name?: string | null
           permissions?: UserPermissions | null
+          token?: string
         }
         if (!data.identifiant || !data.role) {
           return false
+        }
+
+        if (data.token) {
+          try {
+            localStorage.setItem(AUTH_TOKEN_KEY, data.token)
+          } catch (_) { /* ignore */ }
         }
 
         setUser({
@@ -159,7 +190,166 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     setUser(null)
+    try {
+      localStorage.removeItem(AUTH_TOKEN_KEY)
+    } catch (_) { /* ignore */ }
   }, [setUser])
+
+  const getAuthHeaders = useCallback((): HeadersInit => {
+    try {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY)
+      if (token) {
+        return { Authorization: `Bearer ${token}` }
+      }
+    } catch (_) { /* ignore */ }
+    return {}
+  }, [])
+
+  const requestDeviceLogin = useCallback(
+    async (
+      identifiant: string,
+      password?: string
+    ): Promise<{
+      requestId: string
+      code: string
+      expiresAt: string
+      expiresIn: number
+    } | null> => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/device/request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            password ? { identifiant, password } : { identifiant }
+          ),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          throw new Error((err as { error?: string }).error || 'Request failed')
+        }
+        const data = (await res.json()) as {
+          requestId: string
+          code: string
+          expiresAt: string
+          expiresIn: number
+        }
+        return data
+      } catch {
+        return null
+      }
+    },
+    []
+  )
+
+  const pollDeviceRequest = useCallback(
+    async (
+      requestId: string
+    ): Promise<{
+      status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found'
+      user?: User
+      message?: string
+    }> => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/auth/device/poll/${encodeURIComponent(requestId)}`
+        )
+        const data = (await res.json()) as {
+          status: string
+          user?: User
+          message?: string
+        }
+        const status = data.status as
+          | 'pending'
+          | 'approved'
+          | 'denied'
+          | 'expired'
+          | 'not_found'
+        if (status === 'approved' && data.user) {
+          setUser({
+            identifiant: data.user.identifiant,
+            role: data.user.role,
+            direction_id: data.user.direction_id ?? null,
+            direction_name: data.user.direction_name ?? null,
+            permissions:
+              data.user.role === 'admin'
+                ? adminPermissions
+                : (data.user.permissions ?? null),
+          })
+        }
+        return {
+          status: status || 'pending',
+          user: data.user,
+          message: data.message,
+        }
+      } catch {
+        return { status: 'not_found' }
+      }
+    },
+    [setUser]
+  )
+
+  const listDeviceRequests = useCallback(async (): Promise<DeviceLoginRequest[]> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/device/requests`, {
+        headers: getAuthHeaders(),
+      })
+      if (!res.ok) return []
+      const data = (await res.json()) as Array<{
+        id: string
+        code: string
+        status: string
+        createdAt: string
+        expiresAt: string
+      }>
+      return data.map((r) => ({
+        id: r.id,
+        code: r.code,
+        status: r.status,
+        createdAt: r.createdAt,
+        expiresAt: r.expiresAt,
+      }))
+    } catch {
+      return []
+    }
+  }, [getAuthHeaders])
+
+  const approveDeviceRequest = useCallback(
+    async (requestId: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/device/approve`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
+          body: JSON.stringify({ requestId }),
+        })
+        return res.ok
+      } catch {
+        return false
+      }
+    },
+    [getAuthHeaders]
+  )
+
+  const denyDeviceRequest = useCallback(
+    async (requestId: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/device/deny`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
+          body: JSON.stringify({ requestId }),
+        })
+        return res.ok
+      } catch {
+        return false
+      }
+    },
+    [getAuthHeaders]
+  )
 
   const registerUser = useCallback(
     async (
@@ -249,8 +439,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       registerUser,
       changePassword,
+      requestDeviceLogin,
+      pollDeviceRequest,
+      listDeviceRequests,
+      approveDeviceRequest,
+      denyDeviceRequest,
     }),
-    [user, setUser, login, logout, registerUser, changePassword]
+    [
+      user,
+      setUser,
+      login,
+      logout,
+      registerUser,
+      changePassword,
+      requestDeviceLogin,
+      pollDeviceRequest,
+      listDeviceRequests,
+      approveDeviceRequest,
+      denyDeviceRequest,
+    ]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
