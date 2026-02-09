@@ -46,10 +46,6 @@ const pool = new Pool({
   connectionString,
 })
 
-// In-memory store of Expo push tokens per user identifiant
-// (good enough for first version; can be persisted later if needed)
-const expoPushTokensByIdentifiant = new Map()
-
 async function initDb() {
   // Directions: admin creates directions; each has a code (3-4 chars, uppercase) for file naming
   await pool.query(`
@@ -121,6 +117,16 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_login_requests_user_status
     ON login_requests (user_identifiant, status)
     WHERE status = 'pending';
+  `)
+
+  // Expo push tokens per user (so notifications survive server restarts)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      user_identifiant text NOT NULL,
+      expo_push_token text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_identifiant, expo_push_token)
+    );
   `)
 
   await pool.query(`
@@ -629,10 +635,13 @@ app.post('/api/auth/device/request', async (req, res) => {
     )
 
     // Notify registered mobile devices for this identifiant (fire-and-forget)
-    const tokens = expoPushTokensByIdentifiant.get(ident)
-    if (tokens && tokens.size > 0) {
-      const messages = Array.from(tokens).map((to) => ({
-        to,
+    const tokenRows = await pool.query(
+      'SELECT expo_push_token FROM push_tokens WHERE user_identifiant = $1',
+      [ident]
+    )
+    if (tokenRows.rows.length > 0) {
+      const messages = tokenRows.rows.map((r) => ({
+        to: r.expo_push_token,
         sound: 'default',
         title: 'Nouvelle demande de connexion',
         body: `Code: ${code}`,
@@ -640,11 +649,16 @@ app.post('/api/auth/device/request', async (req, res) => {
       }))
       ;(async () => {
         try {
-          await fetch('https://exp.host/--/api/v2/push/send', {
+          const pushRes = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(messages),
           })
+          if (!pushRes.ok) {
+            const errText = await pushRes.text()
+            // eslint-disable-next-line no-console
+            console.error('expo push send failed', pushRes.status, errText)
+          }
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error('expo push send error', err)
@@ -665,7 +679,7 @@ app.post('/api/auth/device/request', async (req, res) => {
   }
 })
 
-// Register an Expo push token for the authenticated user
+// Register an Expo push token for the authenticated user (persisted in DB)
 app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
   try {
     const identifiant = req.authIdentifiant
@@ -673,12 +687,12 @@ app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
     if (!expoPushToken || typeof expoPushToken !== 'string') {
       return res.status(400).json({ error: 'expoPushToken requis.' })
     }
-    let set = expoPushTokensByIdentifiant.get(identifiant)
-    if (!set) {
-      set = new Set()
-      expoPushTokensByIdentifiant.set(identifiant, set)
-    }
-    set.add(expoPushToken)
+    await pool.query(
+      `INSERT INTO push_tokens (user_identifiant, expo_push_token)
+       VALUES ($1, $2)
+       ON CONFLICT (user_identifiant, expo_push_token) DO UPDATE SET created_at = now()`,
+      [identifiant, expoPushToken]
+    )
     return res.json({ success: true })
   } catch (err) {
     // eslint-disable-next-line no-console
