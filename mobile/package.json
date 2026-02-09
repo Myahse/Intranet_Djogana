@@ -6,13 +6,16 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "ensure-assets": "node scripts/ensure-valid-assets.cjs"
   },
   "dependencies": {
     "expo": "~54.0.0",
     "expo-asset": "~12.0.0",
+    "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.0",
     "expo-linking": "^8.0.11",
+    "expo-local-authentication": "~17.0.0",
     "expo-router": "~6.0.0",
     "expo-secure-store": "~15.0.0",
     "expo-status-bar": "~3.0.0",
