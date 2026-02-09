@@ -27,12 +27,20 @@ export default function LoginScreen() {
       return;
     }
     setLoading(true);
-    const ok = await login(ident, password);
+    const result = await login(ident, password);
     setLoading(false);
-    if (ok) {
+    if (result === true) {
       router.replace("/approve-requests");
+    } else if (result === "network_error") {
+      Alert.alert(
+        "Connexion impossible",
+        "Impossible de contacter le serveur. Vérifiez que le backend est démarré et que l’appareil peut y accéder (sur émulateur Android : 10.0.2.2:3000 ; sur appareil physique : définir EXPO_PUBLIC_API_URL dans .env avec l’IP de votre machine)."
+      );
     } else {
-      Alert.alert("Erreur", "Identifiant ou mot de passe incorrect.");
+      Alert.alert(
+        "Identifiants incorrects",
+        "Les identifiants ne sont pas corrects. Vérifiez votre identifiant et votre mot de passe."
+      );
     }
   };
 
