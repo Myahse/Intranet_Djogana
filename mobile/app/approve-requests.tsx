@@ -20,12 +20,23 @@ export default function ApproveRequestsScreen() {
   const [requests, setRequests] = useState<DeviceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
 
   const load = async () => {
     if (!token) return;
-    const list = await api.listDeviceRequests(token);
-    setRequests(list);
+    setLoadError(null);
+    const result = await api.listDeviceRequests(token);
+    if (result.ok) {
+      setRequests(result.requests);
+    } else {
+      setRequests([]);
+      setLoadError(
+        result.networkError
+          ? "Impossible de charger les demandes. Vérifiez la connexion au serveur et tirez pour réessayer."
+          : "Erreur lors du chargement."
+      );
+    }
   };
 
   useEffect(() => {
@@ -97,8 +108,13 @@ export default function ApproveRequestsScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.hint}>
-        Les demandes d’accès depuis le site apparaissent ici. Approuvez ou refusez.
+        Connectez-vous avec le même identifiant que sur le site. Les demandes en attente apparaissent ici.
       </Text>
+      {loadError ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{loadError}</Text>
+        </View>
+      ) : null}
 
       <FlatList
         data={requests}
@@ -109,7 +125,9 @@ export default function ApproveRequestsScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>
-              Aucune demande en attente.
+              {loadError
+                ? "Tirez pour réessayer."
+                : "Aucune demande en attente. Faites une demande de connexion sur le site puis tirez pour actualiser."}
             </Text>
           </View>
         }
@@ -165,6 +183,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     marginBottom: 16,
+  },
+  errorBanner: {
+    backgroundColor: "#fef2f2",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#b91c1c",
   },
   list: { paddingBottom: 24 },
   emptyList: { flex: 1 },

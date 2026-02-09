@@ -37,8 +37,13 @@ if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is not set')
 }
 
+// Use verify-full to match current pg behavior and silence the sslmode deprecation warning
+const connectionString =
+  DATABASE_URL.replace(/sslmode=require(?=&|$)/i, 'sslmode=verify-full') ||
+  DATABASE_URL
+
 const pool = new Pool({
-  connectionString: DATABASE_URL,
+  connectionString,
 })
 
 async function initDb() {
@@ -1741,13 +1746,14 @@ app.delete('/api/links/:id', async (req, res) => {
   }
 })
 
-const port = process.env.PORT || 3000
+const defaultPort = 3000
+const port = parseInt(process.env.PORT, 10) || defaultPort
 
 initDb()
   .then(() => {
     app.listen(port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
-      console.log(`Server running at ${BASE_URL} (port ${port}) — accessible on LAN`)
+      console.log(`Server running at ${BASE_URL.replace(/:(\d+)$/, ':' + port)} (port ${port}) — accessible on LAN`)
     })
   })
   .catch((err) => {

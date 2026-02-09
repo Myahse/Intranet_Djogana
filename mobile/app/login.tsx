@@ -34,7 +34,7 @@ export default function LoginScreen() {
     } else if (result === "network_error") {
       Alert.alert(
         "Connexion impossible",
-        "Impossible de contacter le serveur. Vérifiez que le backend est démarré et que l’appareil peut y accéder (sur émulateur Android : 10.0.2.2:3000 ; sur appareil physique : définir EXPO_PUBLIC_API_URL dans .env avec l’IP de votre machine)."
+        "Impossible de contacter le serveur. Verifiez que le backend tourne sur le PC (npm run server) et que le telephone est sur le meme Wi-Fi. Vérifiez que le backend est démarré et que l’appareil peut y accéder (sur émulateur Android : 10.0.2.2:3000 ; sur appareil physique : configurer l'URL (optionnel) dans .env avec l’IP de votre machine)."
       );
     } else {
       Alert.alert(
