@@ -44,10 +44,20 @@ function getApiPort(): string {
   return port || "3000";
 }
 
+function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 async function getApiBaseUrl(): Promise<string> {
   if (cachedBaseUrl) return cachedBaseUrl;
+  // URL injectée au build EAS via app.config.js (extra.apiUrl)
+  const extraUrl = (Constants.expoConfig as { extra?: { apiUrl?: string } } | null)?.extra?.apiUrl?.trim();
+  if (extraUrl) {
+    cachedBaseUrl = normalizeBaseUrl(extraUrl);
+    return cachedBaseUrl;
+  }
   if (process.env.EXPO_PUBLIC_API_URL?.trim()) {
-    cachedBaseUrl = process.env.EXPO_PUBLIC_API_URL.trim();
+    cachedBaseUrl = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL.trim());
     return cachedBaseUrl;
   }
   const port = getApiPort();
@@ -79,17 +89,23 @@ export type LoginResult =
   | { success: true; token: string; user: { identifiant: string; role: string } }
   | { success: false; networkError?: boolean };
 
+const API_TIMEOUT_MS = 90000; // 90s pour cold start Render (plan gratuit)
+
 export async function login(
   identifiant: string,
   password: string
 ): Promise<LoginResult> {
   try {
     const base = await getApiBaseUrl();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
     const res = await fetch(`${base}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifiant, password }),
+      signal: ctrl.signal,
     });
+    clearTimeout(t);
     if (!res.ok) return { success: false };
     const data = (await res.json()) as {
       identifiant: string;
@@ -200,5 +216,24 @@ export async function denyDeviceRequest(
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function registerPushToken(
+  token: string,
+  expoPushToken: string
+): Promise<void> {
+  try {
+    const base = await getApiBaseUrl();
+    await fetch(`${base}/api/auth/device/push-token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ expoPushToken }),
+    });
+  } catch {
+    // Non bloquant : on ignore les erreurs de registre push
   }
 }

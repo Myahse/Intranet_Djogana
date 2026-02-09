@@ -13,13 +13,17 @@
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "ios": { "simulator": false },
-      "env": {}
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.onrender.com"
+      }
     },
     "production": {
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
       "ios": {},
-      "env": {}
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.onrender.com"
+      }
     }
   },
   "submit": {
