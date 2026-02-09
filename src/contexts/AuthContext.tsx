@@ -51,13 +51,11 @@ type AuthContextValue = {
     directionId?: string
   ) => Promise<boolean>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
-  // Device-approval flow (GitHub-style)
-  requestDeviceLogin: (identifiant: string, password?: string) => Promise<{
-    requestId: string
-    code: string
-    expiresAt: string
-    expiresIn: number
-  } | null>
+  // Device-approval flow (GitHub-style). Returns data or { error: string }.
+  requestDeviceLogin: (identifiant: string, password?: string) => Promise<
+    | { requestId: string; code: string; expiresAt: string; expiresIn: number }
+    | { error: string }
+  >
   pollDeviceRequest: (requestId: string) => Promise<{
     status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found'
     user?: User
@@ -209,12 +207,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (
       identifiant: string,
       password?: string
-    ): Promise<{
-      requestId: string
-      code: string
-      expiresAt: string
-      expiresIn: number
-    } | null> => {
+    ): Promise<
+      | { requestId: string; code: string; expiresAt: string; expiresIn: number }
+      | { error: string }
+    > => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/auth/device/request`, {
           method: 'POST',
@@ -223,19 +219,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             password ? { identifiant, password } : { identifiant }
           ),
         })
+        const body = await res.json().catch(() => ({}))
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error((err as { error?: string }).error || 'Request failed')
+          const message = (body as { error?: string }).error || 'Demande de connexion impossible.'
+          return { error: message }
         }
-        const data = (await res.json()) as {
+        const data = body as {
           requestId: string
           code: string
           expiresAt: string
           expiresIn: number
         }
         return data
-      } catch {
-        return null
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Demande de connexion impossible.'
+        return { error: message }
       }
     },
     []

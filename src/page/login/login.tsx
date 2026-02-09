@@ -93,8 +93,8 @@ const Login = () => {
       return
     }
     const result = await requestDeviceLogin(ident, password)
-    if (!result) {
-      toast.error("Identifiant ou mot de passe incorrect")
+    if ("error" in result) {
+      toast.error("Identifiants incorrects")
       return
     }
     setDeviceRequestId(result.requestId)

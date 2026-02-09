@@ -1,42 +1,71 @@
 /**
  * API client for Djogana backend.
- * En dev sur appareil physique : on utilise la même machine que le serveur Expo (pas besoin de configurer l'IP).
- * Sinon : EXPO_PUBLIC_API_URL dans .env, ou émulateur Android (10.0.2.2) / simulateur iOS (localhost).
+ * En dev sur le même réseau : l'app utilise la machine du serveur Expo (pas besoin de configurer l'IP).
  */
 
 import { Platform } from "react-native";
 import Constants from "expo-constants";
+import * as Linking from "expo-linking";
 
-function getDevServerHost(): string | null {
-  const manifest = Constants.manifest ?? Constants.expoConfig;
-  if (!manifest) return null;
-  // debuggerHost = "192.168.1.10:8081" (même machine que Metro)
-  const debuggerHost = (manifest as { debuggerHost?: string }).debuggerHost;
-  if (debuggerHost) return debuggerHost.split(":").shift() ?? null;
-  // hostUri = "exp://192.168.1.10:8081"
-  const hostUri = (manifest as { hostUri?: string }).hostUri;
-  if (hostUri) {
-    try {
+function getDevServerHostSync(): string | null {
+  const sources: (Record<string, unknown> | null)[] = [
+    Constants.manifest as Record<string, unknown> | null,
+    Constants.expoConfig as Record<string, unknown> | null,
+    (Constants as { manifest2?: Record<string, unknown> }).manifest2 ?? null,
+  ];
+  for (const manifest of sources) {
+    if (!manifest) continue;
+    const debuggerHost = manifest.debuggerHost as string | undefined;
+    if (debuggerHost) return debuggerHost.split(":").shift() ?? null;
+    const hostUri = manifest.hostUri as string | undefined;
+    if (hostUri) {
       const host = hostUri.replace(/^exp:\/\//, "").split(":")[0];
-      return host || null;
-    } catch {
-      return null;
+      if (host) return host;
     }
   }
   return null;
 }
 
-const getDefaultApiUrl = () => {
-  if (process.env.EXPO_PUBLIC_API_URL?.trim())
-    return process.env.EXPO_PUBLIC_API_URL.trim();
-  const devHost = getDevServerHost();
-  if (devHost) return `http://${devHost}:3000`;
-  return Platform.OS === "android"
-    ? "http://10.0.2.2:3000"
-    : "http://localhost:3000";
-};
+function parseHostFromExpUrl(url: string | null): string | null {
+  if (!url || !url.startsWith("exp://")) return null;
+  try {
+    const withoutScheme = url.replace(/^exp:\/\//, "").split("/")[0];
+    const host = withoutScheme.split(":")[0];
+    return host || null;
+  } catch {
+    return null;
+  }
+}
 
-const API_BASE_URL = getDefaultApiUrl();
+let cachedBaseUrl: string | null = null;
+
+function getApiPort(): string {
+  const port = process.env.EXPO_PUBLIC_API_PORT?.trim();
+  return port || "3000";
+}
+
+async function getApiBaseUrl(): Promise<string> {
+  if (cachedBaseUrl) return cachedBaseUrl;
+  if (process.env.EXPO_PUBLIC_API_URL?.trim()) {
+    cachedBaseUrl = process.env.EXPO_PUBLIC_API_URL.trim();
+    return cachedBaseUrl;
+  }
+  const port = getApiPort();
+  let host = getDevServerHostSync();
+  if (!host) {
+    const initialUrl = await Linking.getInitialURL();
+    host = parseHostFromExpUrl(initialUrl);
+  }
+  if (host) {
+    cachedBaseUrl = `http://${host}:${port}`;
+    return cachedBaseUrl;
+  }
+  cachedBaseUrl =
+    Platform.OS === "android"
+      ? `http://10.0.2.2:${port}`
+      : `http://localhost:${port}`;
+  return cachedBaseUrl;
+}
 
 export type DeviceRequest = {
   id: string;
@@ -55,7 +84,8 @@ export async function login(
   password: string
 ): Promise<LoginResult> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifiant, password }),
@@ -82,21 +112,30 @@ export async function login(
   }
 }
 
+export type ListDeviceRequestsResult =
+  | { ok: true; requests: DeviceRequest[] }
+  | { ok: false; networkError: boolean };
+
 export async function listDeviceRequests(
   token: string
-): Promise<DeviceRequest[]> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/device/requests`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return [];
-  const data = (await res.json()) as Array<{
-    id: string;
-    code: string;
-    status: string;
-    createdAt: string;
-    expiresAt: string;
-  }>;
-  return data;
+): Promise<ListDeviceRequestsResult> {
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/device/requests`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, networkError: false };
+    const data = (await res.json()) as Array<{
+      id: string;
+      code: string;
+      status: string;
+      createdAt: string;
+      expiresAt: string;
+    }>;
+    return { ok: true, requests: data };
+  } catch {
+    return { ok: false, networkError: true };
+  }
 }
 
 /** Get a single pending request by the code shown on the website modal. */
@@ -104,47 +143,62 @@ export async function getDeviceRequestByCode(
   token: string,
   code: string
 ): Promise<DeviceRequest | null> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/auth/device/request-by-code?code=${encodeURIComponent(code.trim())}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (!res.ok) return null;
-  const data = (await res.json()) as {
-    id: string;
-    code: string;
-    status: string;
-    createdAt: string;
-    expiresAt: string;
-  };
-  return data;
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(
+      `${base}/api/auth/device/request-by-code?code=${encodeURIComponent(code.trim())}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      id: string;
+      code: string;
+      status: string;
+      createdAt: string;
+      expiresAt: string;
+    };
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 export async function approveDeviceRequest(
   token: string,
   requestId: string
 ): Promise<boolean> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/device/approve`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ requestId }),
-  });
-  return res.ok;
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/device/approve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ requestId }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function denyDeviceRequest(
   token: string,
   requestId: string
 ): Promise<boolean> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/device/deny`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ requestId }),
-  });
-  return res.ok;
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/device/deny`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ requestId }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }

@@ -1,11 +1,22 @@
 # Assets
 
-Expo needs these image files for prebuild (EAS/Android/iOS). Invalid or corrupt PNGs can cause prebuild to fail with a **Crc error** in `jimp-compact`.
+Expo uses these image files for the app icon, splash screen, and Android adaptive icon. They are copied from the Djogana logo: `src/assets/logo_djogana.png` (at project root).
 
-- **icon.png** – app icon (1024×1024 recommended)
+- **icon.png** – app / launcher icon
 - **splash-icon.png** – splash screen image
-- **adaptive-icon.png** – 1024×1024 Android adaptive icon foreground
+- **adaptive-icon.png** – Android adaptive icon foreground
 - **favicon.png** – web favicon
+
+To refresh from the main project logo (from repo root):
+
+```bash
+cp ../../src/assets/logo_djogana.png ./assets/icon.png
+cp ../../src/assets/logo_djogana.png ./assets/adaptive-icon.png
+cp ../../src/assets/logo_djogana.png ./assets/splash-icon.png
+cp ../../src/assets/logo_djogana.png ./assets/favicon.png
+```
+
+Invalid or corrupt PNGs can cause prebuild to fail with a **Crc error** in `jimp-compact`.
 
 ## Fix prebuild CRC error
 
