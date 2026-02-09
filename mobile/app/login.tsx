@@ -50,7 +50,7 @@ export default function LoginScreen() {
       style={styles.container}
     >
       <View style={styles.content}>
-        <Text style={styles.title}>Djogana Approbation</Text>
+        <Text style={styles.title}>Auth Intranet</Text>
         <Text style={styles.subtitle}>
           Connectez-vous pour gérer les demandes d’accès à la plateforme.
         </Text>
