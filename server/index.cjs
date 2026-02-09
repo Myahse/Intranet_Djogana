@@ -215,7 +215,8 @@ async function initDb() {
       can_create_user boolean NOT NULL DEFAULT false,
       can_delete_user boolean NOT NULL DEFAULT false,
       can_create_direction boolean NOT NULL DEFAULT false,
-      can_delete_direction boolean NOT NULL DEFAULT false
+      can_delete_direction boolean NOT NULL DEFAULT false,
+      can_view_activity_log boolean NOT NULL DEFAULT false
     );
   `)
   try {
@@ -223,7 +224,29 @@ async function initDb() {
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_user boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_create_direction boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_direction boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_view_activity_log boolean NOT NULL DEFAULT false')
   } catch (_) { /* ignore */ }
+
+  // Activity / audit log: who did what, when (per direction for access control)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id uuid PRIMARY KEY,
+      action text NOT NULL,
+      actor_identifiant text,
+      actor_id uuid REFERENCES users(id) ON DELETE SET NULL,
+      direction_id uuid REFERENCES directions(id) ON DELETE SET NULL,
+      entity_type text,
+      entity_id text,
+      details jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log (created_at DESC);
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_direction_id ON activity_log (direction_id);
+  `)
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS folder_role_visibility (
@@ -255,11 +278,11 @@ async function initDb() {
     [userRoleId]
   )
 
-  // Give admin full permissions by default
+  // Give admin full permissions by default (including activity log)
   await pool.query(
     `
-      INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction)
-      SELECT id, true, true, true, true, true, true, true, true
+      INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log)
+      SELECT id, true, true, true, true, true, true, true, true, true
       FROM roles
       WHERE name = 'admin'
       ON CONFLICT (role_id)
@@ -271,7 +294,8 @@ async function initDb() {
         can_create_user = EXCLUDED.can_create_user,
         can_delete_user = EXCLUDED.can_delete_user,
         can_create_direction = EXCLUDED.can_create_direction,
-        can_delete_direction = EXCLUDED.can_delete_direction
+        can_delete_direction = EXCLUDED.can_delete_direction,
+        can_view_activity_log = COALESCE(role_permissions.can_view_activity_log, true)
     `
   )
 
@@ -288,6 +312,35 @@ async function initDb() {
 }
 
 const upload = multer({ storage: multer.memoryStorage() })
+
+// ---------- Activity log (audit trail) ----------
+async function insertActivityLog(pool, opts) {
+  const {
+    action,
+    actorIdentifiant = null,
+    actorId = null,
+    directionId = null,
+    entityType = null,
+    entityId = null,
+    details = null,
+  } = opts || {}
+  if (!action) return
+  const id = uuidv4()
+  await pool.query(
+    `INSERT INTO activity_log (id, action, actor_identifiant, actor_id, direction_id, entity_type, entity_id, details)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      id,
+      String(action),
+      actorIdentifiant || null,
+      actorId || null,
+      directionId || null,
+      entityType || null,
+      entityId != null ? String(entityId) : null,
+      details != null ? JSON.stringify(details) : null,
+    ]
+  )
+}
 
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
@@ -375,6 +428,20 @@ app.post('/api/directions', async (req, res) => {
       'INSERT INTO directions (id, name, code) VALUES ($1, $2, $3)',
       [id, trimmed, code]
     )
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'create_direction',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId: id,
+      entityType: 'direction',
+      entityId: id,
+      details: { name: trimmed, code },
+    })
     return res.status(201).json({ id, name: trimmed, code })
   } catch (err) {
     if (err && err.code === '23505') {
@@ -395,6 +462,25 @@ app.delete('/api/directions/:id', async (req, res) => {
         return res.status(403).json({ error: 'Vous n’avez pas le droit de supprimer des directions.' })
       }
     }
+
+    const dirRow = await pool.query('SELECT id, name, code FROM directions WHERE id = $1', [id])
+    if (dirRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Direction introuvable.' })
+    }
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'delete_direction',
+      actorIdentifiant: callerIdentifiant || null,
+      actorId,
+      directionId: id,
+      entityType: 'direction',
+      entityId: id,
+      details: { name: dirRow.rows[0].name, code: dirRow.rows[0].code },
+    })
 
     const result = await pool.query('DELETE FROM directions WHERE id = $1 RETURNING id', [id])
     if (result.rowCount === 0) {
@@ -447,10 +533,30 @@ app.delete('/api/users/:id', async (req, res) => {
       }
     }
 
-    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id])
-    if (result.rowCount === 0) {
+    const userRow = await pool.query(
+      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      [id]
+    )
+    if (userRow.rows.length === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable.' })
     }
+    const deletedUser = userRow.rows[0]
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'delete_user',
+      actorIdentifiant: callerIdentifiant || null,
+      actorId,
+      directionId: deletedUser.direction_id,
+      entityType: 'user',
+      entityId: id,
+      details: { identifiant: deletedUser.identifiant, role: deletedUser.role },
+    })
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id])
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -506,6 +612,21 @@ app.post('/api/auth/register', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5)`,
       [id, identifiant, hashed, finalRole, finalRole === 'admin' ? null : directionId]
     )
+
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'create_user',
+      actorIdentifiant: callerIdentifiant || null,
+      actorId,
+      directionId: finalRole === 'admin' ? null : directionId,
+      entityType: 'user',
+      entityId: id,
+      details: { identifiant, role: finalRole },
+    })
 
     return res.status(201).json({ id, identifiant, role: finalRole, direction_id: finalRole === 'admin' ? null : directionId })
   } catch (err) {
@@ -639,6 +760,8 @@ app.post('/api/auth/device/request', async (req, res) => {
       'SELECT expo_push_token FROM push_tokens WHERE user_identifiant = $1',
       [ident]
     )
+    // eslint-disable-next-line no-console
+    console.log('[push] device request for', ident, '→', tokenRows.rows.length, 'token(s)')
     if (tokenRows.rows.length > 0) {
       const messages = tokenRows.rows.map((r) => ({
         to: r.expo_push_token,
@@ -646,22 +769,41 @@ app.post('/api/auth/device/request', async (req, res) => {
         title: 'Nouvelle demande de connexion',
         body: `Code: ${code}`,
         data: { requestId, code },
+        channelId: 'default',
       }))
       ;(async () => {
         try {
           const pushRes = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify(messages),
           })
+          const bodyText = await pushRes.text()
           if (!pushRes.ok) {
-            const errText = await pushRes.text()
             // eslint-disable-next-line no-console
-            console.error('expo push send failed', pushRes.status, errText)
+            console.error('[push] expo API error', pushRes.status, bodyText)
+            return
           }
+          let body
+          try {
+            body = JSON.parse(bodyText)
+          } catch (_) {
+            body = bodyText
+          }
+          // Expo returns { data: [ { status: 'ok', id } | { status: 'error', message } ] }
+          if (body.data) {
+            body.data.forEach((item, i) => {
+              if (item.status === 'error') {
+                // eslint-disable-next-line no-console
+                console.error('[push] ticket', i, item.message || item)
+              }
+            })
+          }
+          // eslint-disable-next-line no-console
+          console.log('[push] sent to Expo', pushRes.status, body)
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error('expo push send error', err)
+          console.error('[push] expo send error', err)
         }
       })()
     }
@@ -693,6 +835,8 @@ app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
        ON CONFLICT (user_identifiant, expo_push_token) DO UPDATE SET created_at = now()`,
       [identifiant, expoPushToken]
     )
+    // eslint-disable-next-line no-console
+    console.log('[push] token registered for', identifiant, 'token:', expoPushToken.slice(0, 30) + '...')
     return res.json({ success: true })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -881,6 +1025,68 @@ app.get('/api/auth/device/poll/:requestId', async (req, res) => {
   }
 })
 
+// ---------- Activity log API (audit trail; direction-based access) ----------
+app.get('/api/activity-log', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const { direction_id: filterDirectionId, action: filterAction, limit = 100, offset = 0 } = req.query || {}
+
+    const userRes = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = userRes.rows[0]
+    const perms = await getPermissionsForIdentifiant(identifiant)
+    const canViewLog = user.role === 'admin' || (perms && perms.can_view_activity_log)
+    if (!canViewLog) {
+      return res.status(403).json({ error: 'Vous n’avez pas accès au journal d’activité.' })
+    }
+
+    const params = []
+    let sql = `
+      SELECT a.id, a.action, a.actor_identifiant, a.direction_id, a.entity_type, a.entity_id, a.details, a.created_at,
+             d.name AS direction_name
+      FROM activity_log a
+      LEFT JOIN directions d ON d.id = a.direction_id
+      WHERE 1=1
+    `
+    if (user.role !== 'admin') {
+      params.push(user.direction_id)
+      sql += ` AND a.direction_id = $${params.length}`
+    }
+    if (filterDirectionId && user.role === 'admin') {
+      params.push(filterDirectionId)
+      sql += ` AND a.direction_id = $${params.length}`
+    }
+    if (filterAction) {
+      params.push(String(filterAction).trim())
+      sql += ` AND a.action = $${params.length}`
+    }
+    sql += ` ORDER BY a.created_at DESC LIMIT ${Math.min(parseInt(limit, 10) || 100, 500)} OFFSET ${Math.max(0, parseInt(offset, 10) || 0)}`
+
+    const result = await pool.query(sql, params)
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        action: row.action,
+        actor_identifiant: row.actor_identifiant,
+        direction_id: row.direction_id,
+        direction_name: row.direction_name,
+        entity_type: row.entity_type,
+        entity_id: row.entity_id,
+        details: row.details,
+        created_at: row.created_at,
+      }))
+    )
+  } catch (err) {
+    console.error('activity-log list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération du journal d’activité.' })
+  }
+})
+
 // ---------- Roles & permissions (RBAC) ----------
 
 // Helper: get permissions for a user by identifiant (admin => all true)
@@ -901,12 +1107,14 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_delete_user: true,
       can_create_direction: true,
       can_delete_direction: true,
+      can_view_activity_log: true,
     }
   }
   const permRes = await pool.query(
     `
       SELECT p.can_create_folder, p.can_upload_file, p.can_delete_file, p.can_delete_folder,
-             p.can_create_user, p.can_delete_user, p.can_create_direction, p.can_delete_direction
+             p.can_create_user, p.can_delete_user, p.can_create_direction, p.can_delete_direction,
+             p.can_view_activity_log
       FROM roles r
       JOIN role_permissions p ON p.role_id = r.id
       WHERE r.name = $1
@@ -923,6 +1131,7 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_delete_user: false,
       can_create_direction: false,
       can_delete_direction: false,
+      can_view_activity_log: false,
     }
   }
   const row = permRes.rows[0]
@@ -935,6 +1144,7 @@ async function getPermissionsForIdentifiant(identifiant) {
     can_delete_user: !!row.can_delete_user,
     can_create_direction: !!row.can_create_direction,
     can_delete_direction: !!row.can_delete_direction,
+    can_view_activity_log: !!row.can_view_activity_log,
   }
 }
 
@@ -952,7 +1162,8 @@ app.get('/api/roles', async (_req, res) => {
         COALESCE(p.can_create_user, false) AS can_create_user,
         COALESCE(p.can_delete_user, false) AS can_delete_user,
         COALESCE(p.can_create_direction, false) AS can_create_direction,
-        COALESCE(p.can_delete_direction, false) AS can_delete_direction
+        COALESCE(p.can_delete_direction, false) AS can_delete_direction,
+        COALESCE(p.can_view_activity_log, false) AS can_view_activity_log
       FROM roles r
       LEFT JOIN role_permissions p ON p.role_id = r.id
       ORDER BY r.created_at DESC
@@ -1025,6 +1236,7 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       canDeleteUser,
       canCreateDirection,
       canDeleteDirection,
+      canViewActivityLog,
     } = req.body || {}
 
     // Ensure the role exists
@@ -1036,8 +1248,8 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
     // Upsert permissions row
     await pool.query(
       `
-        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction)
-        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false))
+        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log)
+        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false), COALESCE($10, false))
         ON CONFLICT (role_id)
         DO UPDATE SET
           can_create_folder = COALESCE($2, role_permissions.can_create_folder),
@@ -1047,9 +1259,10 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           can_create_user = COALESCE($6, role_permissions.can_create_user),
           can_delete_user = COALESCE($7, role_permissions.can_delete_user),
           can_create_direction = COALESCE($8, role_permissions.can_create_direction),
-          can_delete_direction = COALESCE($9, role_permissions.can_delete_direction)
+          can_delete_direction = COALESCE($9, role_permissions.can_delete_direction),
+          can_view_activity_log = COALESCE($10, role_permissions.can_view_activity_log)
       `,
-      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection]
+      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection, canViewActivityLog]
     )
 
     const updated = await pool.query(
@@ -1064,7 +1277,8 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           p.can_create_user,
           p.can_delete_user,
           p.can_create_direction,
-          p.can_delete_direction
+          p.can_delete_direction,
+          p.can_view_activity_log
         FROM roles r
         JOIN role_permissions p ON p.role_id = r.id
         WHERE r.id = $1
@@ -1255,6 +1469,16 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
 
     const publicUrl = `${BASE_URL}/files/${encodeURIComponent(id)}`
 
+    await insertActivityLog(pool, {
+      action: 'upload_file',
+      actorIdentifiant: identifiant || null,
+      actorId: uploadedBy,
+      directionId,
+      entityType: 'file',
+      entityId: id,
+      details: { name: storedFileName, folder, size: Number(req.file.size) || 0 },
+    })
+
     return res.json({
       id,
       name: storedFileName,
@@ -1359,6 +1583,21 @@ app.post('/api/folders', async (req, res) => {
       `,
       [id, name, directionId]
     )
+
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'create_folder',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId,
+      entityType: 'folder',
+      entityId: id,
+      details: { name },
+    })
 
     return res.status(201).json({ id, name, direction_id: directionId })
   } catch (err) {
@@ -1506,6 +1745,21 @@ app.patch('/api/files/:id', async (req, res) => {
 
     await pool.query('UPDATE files SET name = $1 WHERE id = $2', [storedFileName, id])
 
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'rename_file',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId,
+      entityType: 'file',
+      entityId: id,
+      details: { name: storedFileName },
+    })
+
     return res.json({ id, name: storedFileName })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1519,21 +1773,23 @@ app.delete('/api/files/:id', async (req, res) => {
     const { id } = req.params
     const identifiant = req.query.identifiant || req.body?.identifiant
 
+    const fileRes = await pool.query(
+      'SELECT name, folder, direction_id FROM files WHERE id = $1',
+      [id]
+    )
+    if (fileRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Fichier introuvable.' })
+    }
+    const fileRow = fileRes.rows[0]
+    const fileDir = fileRow.direction_id
+
     if (identifiant) {
-      const fileRes = await pool.query(
-        'SELECT direction_id FROM files WHERE id = $1',
-        [id]
-      )
-      if (fileRes.rows.length === 0) {
-        return res.status(404).json({ error: 'Fichier introuvable.' })
-      }
       const userRes = await pool.query(
-        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
         [identifiant]
       )
       if (userRes.rows.length > 0) {
         const u = userRes.rows[0]
-        const fileDir = fileRes.rows[0].direction_id
         if (u.role !== 'admin' && u.direction_id !== fileDir) {
           return res.status(403).json({
             error: 'Vous ne pouvez supprimer que les fichiers de votre direction.',
@@ -1541,6 +1797,21 @@ app.delete('/api/files/:id', async (req, res) => {
         }
       }
     }
+
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'delete_file',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId: fileDir,
+      entityType: 'file',
+      entityId: id,
+      details: { name: fileRow.name, folder: fileRow.folder },
+    })
 
     await pool.query('DELETE FROM files WHERE id = $1', [id])
     return res.status(204).send()
@@ -1559,7 +1830,7 @@ app.delete('/api/folders/:folder', async (req, res) => {
 
     if (identifiant && directionId) {
       const userRes = await pool.query(
-        'SELECT role, direction_id FROM users WHERE identifiant = $1',
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
         [identifiant]
       )
       if (userRes.rows.length > 0) {
@@ -1571,6 +1842,21 @@ app.delete('/api/folders/:folder', async (req, res) => {
         }
       }
     }
+
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'delete_folder',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId: directionId || null,
+      entityType: 'folder',
+      entityId: null,
+      details: { folder, direction_id: directionId },
+    })
 
     if (directionId) {
       await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [
@@ -1654,6 +1940,21 @@ app.post('/api/links', async (req, res) => {
       `INSERT INTO links (id, folder, direction_id, url, label) VALUES ($1, $2, $3, $4, $5)`,
       [id, name, directionId, linkUrl, linkLabel]
     )
+
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'create_link',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId,
+      entityType: 'link',
+      entityId: id,
+      details: { folder: name, url: linkUrl, label: linkLabel },
+    })
 
     return res.status(201).json({
       id,
@@ -1766,6 +2067,20 @@ app.patch('/api/links/:id', async (req, res) => {
       'UPDATE links SET url = $1, label = $2 WHERE id = $3',
       [newUrl, newLabel, id]
     )
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'update_link',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId: linkRes.rows[0].direction_id,
+      entityType: 'link',
+      entityId: id,
+      details: { url: newUrl, label: newLabel },
+    })
     return res.json({ id, url: newUrl, label: newLabel })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1779,27 +2094,43 @@ app.delete('/api/links/:id', async (req, res) => {
     const { id } = req.params
     const identifiant = req.query.identifiant || req.body?.identifiant
 
+    const linkRes = await pool.query(
+      'SELECT direction_id, url, label, folder FROM links WHERE id = $1',
+      [id]
+    )
+    if (linkRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Lien introuvable.' })
+    }
+    const linkRow = linkRes.rows[0]
     if (identifiant) {
-      const linkRes = await pool.query(
-        'SELECT direction_id FROM links WHERE id = $1',
-        [id]
-      )
-      if (linkRes.rows.length === 0) {
-        return res.status(404).json({ error: 'Lien introuvable.' })
-      }
       const userRes = await pool.query(
         'SELECT role, direction_id FROM users WHERE identifiant = $1',
         [identifiant]
       )
       if (userRes.rows.length > 0) {
         const u = userRes.rows[0]
-        if (u.role !== 'admin' && u.direction_id !== linkRes.rows[0].direction_id) {
+        if (u.role !== 'admin' && u.direction_id !== linkRow.direction_id) {
           return res.status(403).json({
             error: 'Vous ne pouvez supprimer que les liens de votre direction.',
           })
         }
       }
     }
+
+    let actorId = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'delete_link',
+      actorIdentifiant: identifiant || null,
+      actorId,
+      directionId: linkRow.direction_id,
+      entityType: 'link',
+      entityId: id,
+      details: { folder: linkRow.folder, url: linkRow.url, label: linkRow.label },
+    })
 
     await pool.query('DELETE FROM links WHERE id = $1', [id])
     return res.status(204).send()

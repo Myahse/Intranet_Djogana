@@ -20,6 +20,7 @@ export type UserPermissions = {
   can_delete_user: boolean
   can_create_direction: boolean
   can_delete_direction: boolean
+  can_view_activity_log: boolean
 }
 
 export type User = {
@@ -64,6 +65,7 @@ type AuthContextValue = {
   listDeviceRequests: () => Promise<DeviceLoginRequest[]>
   approveDeviceRequest: (requestId: string) => Promise<boolean>
   denyDeviceRequest: (requestId: string) => Promise<boolean>
+  getAuthHeaders: () => HeadersInit
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -95,6 +97,7 @@ const adminPermissions: UserPermissions = {
   can_delete_user: true,
   can_create_direction: true,
   can_delete_direction: true,
+  can_view_activity_log: true,
 }
 
 function localFallbackLogin(
@@ -442,6 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       listDeviceRequests,
       approveDeviceRequest,
       denyDeviceRequest,
+      getAuthHeaders,
     }),
     [
       user,
@@ -455,6 +459,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       listDeviceRequests,
       approveDeviceRequest,
       denyDeviceRequest,
+      getAuthHeaders,
     ]
   )
 
