@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { registerForPushNotifications } from "@/notifications";
 import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
 
@@ -27,9 +28,11 @@ export default function ApproveRequestsScreen() {
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushRegistered, setPushRegistered] = useState<boolean | null>(null);
+  const pushRetryDone = useRef(false);
 
-  const load = async () => {
+  const load = async (resetPushRetry = false) => {
     if (!token) return;
+    if (resetPushRetry) pushRetryDone.current = false;
     setLoadError(null);
     const result = await api.listDeviceRequests(token);
     if (result.ok) {
@@ -54,9 +57,27 @@ export default function ApproveRequestsScreen() {
     load().finally(() => setLoading(false));
   }, [token]);
 
+  // Si le statut dit "non enregistré", réessayer une fois d'enregistrer le token (au cas où le login n'a pas eu le temps)
+  useEffect(() => {
+    if (!token || pushRegistered !== false || pushRetryDone.current) return;
+    pushRetryDone.current = true;
+    let cancelled = false;
+    (async () => {
+      await registerForPushNotifications(token);
+      if (cancelled) return;
+      await new Promise((r) => setTimeout(r, 1500));
+      if (cancelled) return;
+      const status = await api.getPushTokenStatus(token);
+      if (!cancelled) setPushRegistered(status.registered);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, pushRegistered]);
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await load(true); // allow push registration retry when user pulls to refresh
     setRefreshing(false);
   };
 

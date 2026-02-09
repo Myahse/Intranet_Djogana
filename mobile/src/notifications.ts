@@ -14,6 +14,13 @@ Notifications.setNotificationHandler({
 
 const API_TIMEOUT_MS = 90000;
 
+function devLog(msg: string, ...args: unknown[]) {
+  if (__DEV__) {
+    // eslint-disable-next-line no-console
+    console.log("[push]", msg, ...args);
+  }
+}
+
 export async function registerForPushNotifications(
   token: string
 ): Promise<void> {
@@ -25,6 +32,7 @@ export async function registerForPushNotifications(
       finalStatus = status;
     }
     if (finalStatus !== "granted") {
+      devLog("Registration skipped: notification permission not granted");
       return;
     }
 
@@ -34,14 +42,22 @@ export async function registerForPushNotifications(
     const { data: expoPushToken } = await Notifications.getExpoPushTokenAsync({
       projectId,
     });
-    if (!expoPushToken) return;
+    if (!expoPushToken) {
+      devLog("Registration skipped: no Expo push token (check EAS projectId in app config)");
+      return;
+    }
 
     // Petit timeout de sécurité pour éviter de bloquer indéfiniment
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
     await api.registerPushToken(token, expoPushToken);
     clearTimeout(t);
-  } catch {
+    devLog("Token sent to server successfully");
+  } catch (e) {
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn("[push] Registration error:", e);
+    }
     // On ignore les erreurs pour ne pas casser le login
   }
 }
