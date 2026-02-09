@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import * as api from "./api";
 
 Notifications.setNotificationHandler({
@@ -25,7 +26,12 @@ export async function registerForPushNotifications(
       return;
     }
 
-    const { data: expoPushToken } = await Notifications.getExpoPushTokenAsync();
+    const projectId =
+      (Constants.expoConfig as { extra?: { eas?: { projectId?: string } } } | null)?.extra?.eas
+        ?.projectId ?? undefined;
+    const { data: expoPushToken } = await Notifications.getExpoPushTokenAsync({
+      projectId,
+    });
     if (!expoPushToken) return;
 
     // Petit timeout de sécurité pour éviter de bloquer indéfiniment

@@ -225,7 +225,7 @@ export async function registerPushToken(
 ): Promise<void> {
   try {
     const base = await getApiBaseUrl();
-    await fetch(`${base}/api/auth/device/push-token`, {
+    const res = await fetch(`${base}/api/auth/device/push-token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -233,7 +233,17 @@ export async function registerPushToken(
       },
       body: JSON.stringify({ expoPushToken }),
     });
-  } catch {
-    // Non bloquant : on ignore les erreurs de registre push
+    if (!res.ok) {
+      const err = await res.text();
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn("[push] register failed", res.status, err);
+      }
+    }
+  } catch (e) {
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn("[push] register error", e);
+    }
   }
 }
