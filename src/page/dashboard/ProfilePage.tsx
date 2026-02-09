@@ -87,7 +87,6 @@ const ProfilePage = (): ReactNode => {
   const [isCreatingDirection, setIsCreatingDirection] = useState(false)
   const [selectedDirection, setSelectedDirection] = useState<string>('')
   const [selectedDirectionFolder, setSelectedDirectionFolder] = useState<string>('')
-  const [selectedDirectionUpload, setSelectedDirectionUpload] = useState<string>('')
   const [selectedDirectionFormation, setSelectedDirectionFormation] = useState<string>('')
 
   // Existing formation groups derived from folder keys (name part: "group::subfolder")
@@ -266,7 +265,6 @@ const ProfilePage = (): ReactNode => {
             if (dirData.length > 0 && !selectedDirection) {
               setSelectedDirection(dirData[0].id)
               setSelectedDirectionFolder(dirData[0].id)
-              setSelectedDirectionUpload(dirData[0].id)
               setSelectedDirectionFormation(dirData[0].id)
             }
           }
