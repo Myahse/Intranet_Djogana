@@ -823,10 +823,14 @@ app.post('/api/auth/device/request', async (req, res) => {
 
 // Register an Expo push token for the authenticated user (persisted in DB)
 app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
+  const identifiant = req.authIdentifiant
+  // eslint-disable-next-line no-console
+  console.log('[push] push-token request received for', identifiant)
   try {
-    const identifiant = req.authIdentifiant
     const { expoPushToken } = req.body || {}
     if (!expoPushToken || typeof expoPushToken !== 'string') {
+      // eslint-disable-next-line no-console
+      console.log('[push] push-token rejected: missing or invalid expoPushToken')
       return res.status(400).json({ error: 'expoPushToken requis.' })
     }
     await pool.query(
