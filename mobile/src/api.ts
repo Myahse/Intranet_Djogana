@@ -219,6 +219,22 @@ export async function denyDeviceRequest(
   }
 }
 
+export async function getPushTokenStatus(
+  token: string
+): Promise<{ registered: boolean }> {
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/device/push-token/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { registered: false };
+    const data = (await res.json()) as { registered?: boolean };
+    return { registered: data.registered === true };
+  } catch {
+    return { registered: false };
+  }
+}
+
 export async function registerPushToken(
   token: string,
   expoPushToken: string

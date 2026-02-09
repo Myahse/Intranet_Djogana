@@ -26,6 +26,7 @@ export default function ApproveRequestsScreen() {
   const [actingId, setActingId] = useState<string | null>(null);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [pushRegistered, setPushRegistered] = useState<boolean | null>(null);
 
   const load = async () => {
     if (!token) return;
@@ -41,6 +42,8 @@ export default function ApproveRequestsScreen() {
           : "Erreur lors du chargement."
       );
     }
+    const status = await api.getPushTokenStatus(token);
+    setPushRegistered(status.registered);
   };
 
   useEffect(() => {
@@ -109,6 +112,13 @@ export default function ApproveRequestsScreen() {
       <Text style={styles.hint}>
         Connectez-vous avec le même identifiant que sur le site. Les demandes en attente apparaissent ici.
       </Text>
+      {pushRegistered === false ? (
+        <Text style={styles.pushHint}>
+          Notifications non enregistrées. Déconnectez-vous puis reconnectez-vous en acceptant les notifications pour recevoir une alerte à chaque demande sur le site.
+        </Text>
+      ) : pushRegistered === true ? (
+        <Text style={styles.pushOk}>Notifications activées.</Text>
+      ) : null}
       {loadError ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{loadError}</Text>
@@ -218,6 +228,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     marginBottom: 16,
+  },
+  pushHint: {
+    fontSize: 13,
+    color: "#b45309",
+    marginBottom: 12,
+    backgroundColor: "#fffbeb",
+    padding: 10,
+    borderRadius: 8,
+  },
+  pushOk: {
+    fontSize: 13,
+    color: "#166534",
+    marginBottom: 12,
   },
   errorBanner: {
     backgroundColor: "#fef2f2",
