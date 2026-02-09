@@ -8,6 +8,8 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Modal,
+  Pressable,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -22,6 +24,8 @@ export default function ApproveRequestsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const load = async () => {
     if (!token) return;
@@ -77,22 +81,17 @@ export default function ApproveRequestsScreen() {
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      "Déconnexion",
-      "Voulez-vous vous déconnecter ?",
-      [
-        { text: "Annuler", style: "cancel" },
-        {
-          text: "Déconnexion",
-          style: "destructive",
-          onPress: async () => {
-            await logout();
-            router.replace("/login");
-          },
-        },
-      ]
-    );
+  const openLogoutModal = () => setLogoutModalVisible(true);
+  const closeLogoutModal = () => {
+    if (!loggingOut) setLogoutModalVisible(false);
+  };
+
+  const confirmLogout = async () => {
+    setLoggingOut(true);
+    await logout();
+    setLogoutModalVisible(false);
+    setLoggingOut(false);
+    router.replace("/login");
   };
 
   if (!token) return null;
