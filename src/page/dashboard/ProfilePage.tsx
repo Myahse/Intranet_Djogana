@@ -16,7 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { FileText, FolderPlus, LogOut, Trash2, Upload, UserPlus, KeyRound, Building2, Link2 } from 'lucide-react'
+import { FileText, FolderPlus, History, LogOut, Trash2, Upload, UserPlus, KeyRound, Building2, Link2 } from 'lucide-react'
 import { parseFolderKey } from '@/contexts/DocumentsContext'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -36,12 +36,13 @@ const FILE_UPLOAD_ACCEPT =
 
 const ProfilePage = (): ReactNode => {
   const navigate = useNavigate()
-  const { user, isAdmin, logout, registerUser, changePassword } = useAuth()
+  const { user, isAdmin, logout, registerUser, changePassword, getAuthHeaders } = useAuth()
   const { folderOptions, addFile, addLink, addFolder, addFolderMeta } = useDocuments()
   const canCreateUser = isAdmin || !!user?.permissions?.can_create_user
   const canDeleteUser = isAdmin || !!user?.permissions?.can_delete_user
   const canCreateDirection = isAdmin || !!user?.permissions?.can_create_direction
   const canDeleteDirection = isAdmin || !!user?.permissions?.can_delete_direction
+  const canViewActivityLog = isAdmin || !!user?.permissions?.can_view_activity_log
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [selectedFolderLink, setSelectedFolderLink] = useState<string>('')
   const [linkUrl, setLinkUrl] = useState<string>('')
@@ -76,6 +77,7 @@ const ProfilePage = (): ReactNode => {
       can_delete_user?: boolean
       can_create_direction?: boolean
       can_delete_direction?: boolean
+      can_view_activity_log?: boolean
     }>
   >([])
   const [selectedRole, setSelectedRole] = useState<string>('user')
@@ -88,6 +90,22 @@ const ProfilePage = (): ReactNode => {
   const [selectedDirection, setSelectedDirection] = useState<string>('')
   const [selectedDirectionFolder, setSelectedDirectionFolder] = useState<string>('')
   const [selectedDirectionFormation, setSelectedDirectionFormation] = useState<string>('')
+  const [activityLog, setActivityLog] = useState<
+    Array<{
+      id: string
+      action: string
+      actor_identifiant: string | null
+      direction_id: string | null
+      direction_name: string | null
+      entity_type: string | null
+      entity_id: string | null
+      details: Record<string, unknown> | null
+      created_at: string
+    }>
+  >([])
+  const [activityLogLoading, setActivityLogLoading] = useState(false)
+  const [activityLogDirectionId, setActivityLogDirectionId] = useState<string>('')
+  const [activityLogAction, setActivityLogAction] = useState<string>('')
 
   // Existing formation groups derived from folder keys (name part: "group::subfolder")
   const formationGroupOptions = useMemo(
@@ -278,6 +296,46 @@ const ProfilePage = (): ReactNode => {
     })()
   }, [isAdmin, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection])
 
+  useEffect(() => {
+    if (!canViewActivityLog) return
+    const params = new URLSearchParams()
+    if (activityLogDirectionId) params.set('direction_id', activityLogDirectionId)
+    if (activityLogAction) params.set('action', activityLogAction)
+    const qs = params.toString()
+    ;(async () => {
+      setActivityLogLoading(true)
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/activity-log${qs ? `?${qs}` : ''}`,
+          { headers: getAuthHeaders() }
+        )
+        if (res.ok) {
+          const data = (await res.json()) as Array<{
+            id: string
+            action: string
+            actor_identifiant: string | null
+            direction_id: string | null
+            direction_name: string | null
+            entity_type: string | null
+            entity_id: string | null
+            details: Record<string, unknown> | null
+            created_at: string
+          }>
+          setActivityLog(data)
+        } else {
+          const err = await res.json().catch(() => ({}))
+          toast.error((err as { error?: string }).error ?? 'Impossible de charger le journal')
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(err)
+        toast.error('Erreur lors du chargement du journal d’activité')
+      } finally {
+        setActivityLogLoading(false)
+      }
+    })()
+  }, [canViewActivityLog, activityLogDirectionId, activityLogAction, getAuthHeaders])
+
   const handleCreateDirection = async () => {
     const name = newDirectionName.trim()
     const codeRaw = newDirectionCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
@@ -357,6 +415,7 @@ const ProfilePage = (): ReactNode => {
                 can_delete_user: false,
                 can_create_direction: false,
                 can_delete_direction: false,
+                can_view_activity_log: false,
               },
             ]
       )
@@ -381,7 +440,8 @@ const ProfilePage = (): ReactNode => {
       | 'can_create_user'
       | 'can_delete_user'
       | 'can_create_direction'
-      | 'can_delete_direction',
+      | 'can_delete_direction'
+      | 'can_view_activity_log',
     value: boolean
   ) => {
     try {
@@ -394,6 +454,7 @@ const ProfilePage = (): ReactNode => {
       if (field === 'can_delete_user') payload.canDeleteUser = value
       if (field === 'can_create_direction') payload.canCreateDirection = value
       if (field === 'can_delete_direction') payload.canDeleteDirection = value
+      if (field === 'can_view_activity_log') payload.canViewActivityLog = value
 
       const res = await fetch(
         `${API_BASE_URL}/api/roles/${encodeURIComponent(roleId)}/permissions`,
@@ -420,6 +481,7 @@ const ProfilePage = (): ReactNode => {
         can_delete_user: boolean
         can_create_direction: boolean
         can_delete_direction: boolean
+        can_view_activity_log: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       toast.success('Permissions mises à jour')
@@ -825,6 +887,7 @@ const ProfilePage = (): ReactNode => {
                         <th className="px-3 py-2 text-center font-medium">Supprimer utilisateur</th>
                         <th className="px-3 py-2 text-center font-medium">Créer direction</th>
                         <th className="px-3 py-2 text-center font-medium">Supprimer direction</th>
+                        <th className="px-3 py-2 text-center font-medium">Voir journal</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -903,6 +966,15 @@ const ProfilePage = (): ReactNode => {
                               aria-label={`Autoriser ${r.name} à supprimer des directions`}
                             />
                           </td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_view_activity_log)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_view_activity_log', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à voir le journal d'activité`}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -912,6 +984,125 @@ const ProfilePage = (): ReactNode => {
                 <p className="text-sm text-muted-foreground">
                   Aucun rôle défini pour le moment.
                 </p>
+              )}
+            </CardContent>
+          </Card>
+          )}
+
+          {canViewActivityLog && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <History className="size-5" />
+                Journal d&apos;activité
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                Historique des actions sur la plateforme (upload, suppression, création, etc.). Les non-admins ne voient que les actions de leur direction.
+              </p>
+              <div className="flex flex-wrap gap-2 items-center">
+                {isAdmin && directions.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm whitespace-nowrap">Direction</Label>
+                    <Select value={activityLogDirectionId || 'all'} onValueChange={(v) => setActivityLogDirectionId(v === 'all' ? '' : v)}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Toutes" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Toutes</SelectItem>
+                        {directions.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm whitespace-nowrap">Action</Label>
+                  <Select value={activityLogAction || 'all'} onValueChange={(v) => setActivityLogAction(v === 'all' ? '' : v)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Toutes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Toutes</SelectItem>
+                      <SelectItem value="upload_file">Upload fichier</SelectItem>
+                      <SelectItem value="delete_file">Suppression fichier</SelectItem>
+                      <SelectItem value="rename_file">Renommage fichier</SelectItem>
+                      <SelectItem value="create_folder">Création dossier</SelectItem>
+                      <SelectItem value="delete_folder">Suppression dossier</SelectItem>
+                      <SelectItem value="create_link">Création lien</SelectItem>
+                      <SelectItem value="update_link">Modification lien</SelectItem>
+                      <SelectItem value="delete_link">Suppression lien</SelectItem>
+                      <SelectItem value="create_user">Création utilisateur</SelectItem>
+                      <SelectItem value="delete_user">Suppression utilisateur</SelectItem>
+                      <SelectItem value="create_direction">Création direction</SelectItem>
+                      <SelectItem value="delete_direction">Suppression direction</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {activityLogLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : (
+                <div className="border rounded-md overflow-x-auto max-h-[400px] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Date</th>
+                        <th className="px-3 py-2 text-left font-medium">Utilisateur</th>
+                        <th className="px-3 py-2 text-left font-medium">Action</th>
+                        <th className="px-3 py-2 text-left font-medium">Direction</th>
+                        <th className="px-3 py-2 text-left font-medium">Détails</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activityLog.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                            Aucune entrée.
+                          </td>
+                        </tr>
+                      ) : (
+                        activityLog.map((entry) => (
+                          <tr key={entry.id} className="border-t">
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {new Date(entry.created_at).toLocaleString('fr-FR')}
+                            </td>
+                            <td className="px-3 py-2 font-mono">{entry.actor_identifiant ?? '—'}</td>
+                            <td className="px-3 py-2">
+                              {entry.action === 'upload_file' && 'Upload fichier'}
+                              {entry.action === 'delete_file' && 'Suppression fichier'}
+                              {entry.action === 'rename_file' && 'Renommage fichier'}
+                              {entry.action === 'create_folder' && 'Création dossier'}
+                              {entry.action === 'delete_folder' && 'Suppression dossier'}
+                              {entry.action === 'create_link' && 'Création lien'}
+                              {entry.action === 'update_link' && 'Modification lien'}
+                              {entry.action === 'delete_link' && 'Suppression lien'}
+                              {entry.action === 'create_user' && 'Création utilisateur'}
+                              {entry.action === 'delete_user' && 'Suppression utilisateur'}
+                              {entry.action === 'create_direction' && 'Création direction'}
+                              {entry.action === 'delete_direction' && 'Suppression direction'}
+                              {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','delete_user','create_direction','delete_direction'].includes(entry.action) && entry.action}
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">{entry.direction_name ?? '—'}</td>
+                            <td className="px-3 py-2 max-w-[200px] truncate" title={entry.details ? JSON.stringify(entry.details) : ''}>
+                              {entry.details && typeof entry.details === 'object'
+                                ? (entry.details.name as string) ?? (entry.details.identifiant as string) ?? (entry.details.label as string) ?? (entry.details.folder as string) ?? '—'
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>

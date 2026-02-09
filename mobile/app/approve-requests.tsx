@@ -160,9 +160,45 @@ export default function ApproveRequestsScreen() {
         )}
       />
 
-      <TouchableOpacity style={styles.logout} onPress={handleLogout}>
+      <TouchableOpacity style={styles.logout} onPress={openLogoutModal}>
         <Text style={styles.logoutText}>Se déconnecter</Text>
       </TouchableOpacity>
+
+      <Modal
+        visible={logoutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeLogoutModal}
+      >
+        <Pressable style={styles.modalOverlay} onPress={closeLogoutModal}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Déconnexion</Text>
+            <Text style={styles.modalMessage}>
+              Voulez-vous vous déconnecter ?
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={closeLogoutModal}
+                disabled={loggingOut}
+              >
+                <Text style={styles.modalBtnCancelText}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnConfirm]}
+                onPress={confirmLogout}
+                disabled={loggingOut}
+              >
+                {loggingOut ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.modalBtnConfirmText}>Déconnexion</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -254,5 +290,61 @@ const styles = StyleSheet.create({
   logoutText: {
     fontSize: 15,
     color: "#666",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 24,
+    width: "100%",
+    maxWidth: 320,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0a0a0a",
+    marginBottom: 8,
+  },
+  modalMessage: {
+    fontSize: 15,
+    color: "#666",
+    marginBottom: 20,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  modalBtnCancel: {
+    backgroundColor: "#f0f0f0",
+  },
+  modalBtnCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#333",
+  },
+  modalBtnConfirm: {
+    backgroundColor: "#0a0a0a",
+  },
+  modalBtnConfirmText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
 });
