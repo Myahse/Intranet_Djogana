@@ -845,6 +845,19 @@ app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
   }
 })
 
+// Check if the current user has at least one push token registered (for debugging / UI)
+app.get('/api/auth/device/push-token/status', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT 1 FROM push_tokens WHERE user_identifiant = $1 LIMIT 1',
+      [req.authIdentifiant]
+    )
+    return res.json({ registered: result.rows.length > 0 })
+  } catch (err) {
+    return res.status(500).json({ registered: false })
+  }
+})
+
 // List pending login requests for the authenticated user (mobile app with JWT)
 app.get('/api/auth/device/requests', requireAuth, async (req, res) => {
   try {
