@@ -822,7 +822,11 @@ app.post('/api/auth/device/request', async (req, res) => {
 })
 
 // Register an Expo push token for the authenticated user (persisted in DB)
-app.post('/api/auth/device/push-token', requireAuth, async (req, res) => {
+app.post('/api/auth/device/push-token', (req, _res, next) => {
+  // eslint-disable-next-line no-console
+  console.log('[push] POST /push-token hit (before auth)')
+  next()
+}, requireAuth, async (req, res) => {
   const identifiant = req.authIdentifiant
   // eslint-disable-next-line no-console
   console.log('[push] push-token request received for', identifiant)
