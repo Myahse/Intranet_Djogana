@@ -456,7 +456,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       )
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error ?? 'Échec du renommage du fichier')
+        throw new Error(err?.error ?? 'Échec lors du renommage du fichier')
       }
       const data = (await res.json()) as { id: string; name: string }
       setItems((prev) =>
