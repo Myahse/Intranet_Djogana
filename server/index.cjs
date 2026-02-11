@@ -749,6 +749,13 @@ app.post('/api/auth/device/request', async (req, res) => {
     const code = randomCode(DEVICE_CODE_LENGTH)
     const expiresAt = new Date(Date.now() + DEVICE_REQUEST_EXPIRY_MINUTES * 60 * 1000)
 
+    // Cancel all previous pending requests for this user so only the latest one is active
+    await pool.query(
+      `UPDATE login_requests SET status = 'denied'
+       WHERE user_identifiant = $1 AND status = 'pending'`,
+      [ident]
+    )
+
     await pool.query(
       `INSERT INTO login_requests (id, user_identifiant, code, status, expires_at)
        VALUES ($1, $2, $3, 'pending', $4)`,
