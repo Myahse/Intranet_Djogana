@@ -8,6 +8,37 @@ const { Pool } = require('pg')
 const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
+const admin = require('firebase-admin')
+
+// ---------- Firebase Admin SDK ----------
+// Initialize using a service account JSON key.
+// Set GOOGLE_APPLICATION_CREDENTIALS env var to the path of the JSON file,
+// or set FIREBASE_SERVICE_ACCOUNT_JSON env var to the JSON content as a string.
+;(() => {
+  try {
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    if (raw) {
+      const serviceAccount = JSON.parse(raw)
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      })
+      console.log('[firebase] initialized from FIREBASE_SERVICE_ACCOUNT_JSON')
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+      })
+      console.log('[firebase] initialized from GOOGLE_APPLICATION_CREDENTIALS')
+    } else {
+      console.warn(
+        '[firebase] WARNING: No Firebase credentials found. Push notifications will NOT work.\n' +
+        '  Set FIREBASE_SERVICE_ACCOUNT_JSON (JSON string) or GOOGLE_APPLICATION_CREDENTIALS (file path).'
+      )
+      admin.initializeApp() // no-op init so admin.messaging() doesn't crash
+    }
+  } catch (err) {
+    console.error('[firebase] initialization error:', err.message)
+  }
+})()
 
 const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
@@ -119,7 +150,7 @@ async function initDb() {
     WHERE status = 'pending';
   `)
 
-  // Expo push tokens per user (so notifications survive server restarts)
+  // FCM device push tokens per user (so notifications survive server restarts)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS push_tokens (
       user_identifiant text NOT NULL,
@@ -128,6 +159,10 @@ async function initDb() {
       PRIMARY KEY (user_identifiant, expo_push_token)
     );
   `)
+  // Migration: add fcm_token column for Firebase Cloud Messaging
+  try {
+    await pool.query(`ALTER TABLE push_tokens ADD COLUMN IF NOT EXISTS fcm_token text`)
+  } catch (_) { /* column may already exist */ }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS folders (
@@ -762,55 +797,64 @@ app.post('/api/auth/device/request', async (req, res) => {
       [requestId, ident, code, expiresAt]
     )
 
-    // Notify registered mobile devices for this identifiant (fire-and-forget)
+    // Notify registered mobile devices for this identifiant via Firebase (fire-and-forget)
     const tokenRows = await pool.query(
-      'SELECT expo_push_token FROM push_tokens WHERE user_identifiant = $1',
+      'SELECT expo_push_token, fcm_token FROM push_tokens WHERE user_identifiant = $1',
       [ident]
     )
     // eslint-disable-next-line no-console
     console.log('[push] device request for', ident, '→', tokenRows.rows.length, 'token(s)')
     if (tokenRows.rows.length > 0) {
-      const messages = tokenRows.rows.map((r) => ({
-        to: r.expo_push_token,
-        sound: 'default',
-        title: 'Nouvelle demande de connexion',
-        body: `Code: ${code}`,
-        data: { requestId, code },
-        channelId: 'default',
-      }))
       ;(async () => {
         try {
-          const pushRes = await fetch('https://exp.host/--/api/v2/push/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify(messages),
-          })
-          const bodyText = await pushRes.text()
-          if (!pushRes.ok) {
-            // eslint-disable-next-line no-console
-            console.error('[push] expo API error', pushRes.status, bodyText)
-            return
-          }
-          let body
-          try {
-            body = JSON.parse(bodyText)
-          } catch (_) {
-            body = bodyText
-          }
-          // Expo returns { data: [ { status: 'ok', id } | { status: 'error', message } ] }
-          if (body.data) {
-            body.data.forEach((item, i) => {
-              if (item.status === 'error') {
+          const messaging = admin.messaging()
+          for (const row of tokenRows.rows) {
+            // Prefer fcm_token (direct Firebase), fall back to expo_push_token
+            const deviceToken = row.fcm_token || row.expo_push_token
+            if (!deviceToken) continue
+
+            try {
+              const result = await messaging.send({
+                token: deviceToken,
+                notification: {
+                  title: 'Nouvelle demande de connexion',
+                  body: `Code: ${code}`,
+                },
+                data: {
+                  requestId: String(requestId),
+                  code: String(code),
+                },
+                android: {
+                  priority: 'high',
+                  notification: {
+                    channelId: 'default',
+                    sound: 'default',
+                    priority: 'high',
+                  },
+                },
+              })
+              // eslint-disable-next-line no-console
+              console.log('[push] FCM sent successfully, messageId:', result)
+            } catch (sendErr) {
+              // eslint-disable-next-line no-console
+              console.error('[push] FCM send error for token', deviceToken.slice(0, 20) + '...', sendErr.message)
+              // If the token is invalid/unregistered, clean it up
+              if (
+                sendErr.code === 'messaging/invalid-registration-token' ||
+                sendErr.code === 'messaging/registration-token-not-registered'
+              ) {
+                await pool.query(
+                  'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
+                  [ident, deviceToken]
+                )
                 // eslint-disable-next-line no-console
-                console.error('[push] ticket', i, item.message || item)
+                console.log('[push] removed stale token for', ident)
               }
-            })
+            }
           }
-          // eslint-disable-next-line no-console
-          console.log('[push] sent to Expo', pushRes.status, body)
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error('[push] expo send error', err)
+          console.error('[push] FCM batch error', err)
         }
       })()
     }
@@ -828,7 +872,8 @@ app.post('/api/auth/device/request', async (req, res) => {
   }
 })
 
-// Register an Expo push token for the authenticated user (persisted in DB)
+// Register an FCM device push token for the authenticated user (persisted in DB)
+// Accepts { fcmToken } (new Firebase flow) or { expoPushToken } (legacy Expo flow)
 app.post('/api/auth/device/push-token', (req, _res, next) => {
   // eslint-disable-next-line no-console
   console.log('[push] POST /push-token hit (before auth)')
@@ -838,20 +883,23 @@ app.post('/api/auth/device/push-token', (req, _res, next) => {
   // eslint-disable-next-line no-console
   console.log('[push] push-token request received for', identifiant)
   try {
-    const { expoPushToken } = req.body || {}
-    if (!expoPushToken || typeof expoPushToken !== 'string') {
+    const { fcmToken, expoPushToken } = req.body || {}
+    const token = fcmToken || expoPushToken
+    if (!token || typeof token !== 'string') {
       // eslint-disable-next-line no-console
-      console.log('[push] push-token rejected: missing or invalid expoPushToken')
-      return res.status(400).json({ error: 'expoPushToken requis.' })
+      console.log('[push] push-token rejected: missing or invalid token')
+      return res.status(400).json({ error: 'fcmToken ou expoPushToken requis.' })
     }
+    // Store using the token as the primary key value (expo_push_token column)
+    // and also store the fcm_token separately for Firebase sending
     await pool.query(
-      `INSERT INTO push_tokens (user_identifiant, expo_push_token)
-       VALUES ($1, $2)
-       ON CONFLICT (user_identifiant, expo_push_token) DO UPDATE SET created_at = now()`,
-      [identifiant, expoPushToken]
+      `INSERT INTO push_tokens (user_identifiant, expo_push_token, fcm_token)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_identifiant, expo_push_token) DO UPDATE SET created_at = now(), fcm_token = COALESCE($3, push_tokens.fcm_token)`,
+      [identifiant, token, fcmToken || null]
     )
     // eslint-disable-next-line no-console
-    console.log('[push] token registered for', identifiant, 'token:', expoPushToken.slice(0, 30) + '...')
+    console.log('[push] token registered for', identifiant, 'token:', token.slice(0, 30) + '...', fcmToken ? '(FCM)' : '(Expo)')
     return res.json({ success: true })
   } catch (err) {
     // eslint-disable-next-line no-console

@@ -53,9 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await storage.setToken(result.token);
       setTokenState(result.token);
       setUser(result.user);
-      // Get the Expo push token and register it on the server (non bloquant)
+      // Get the FCM device token and register it on the server (non bloquant)
       registerForPushNotificationsAsync()
-        .then((expoPushToken) => api.registerPushToken(result.token, expoPushToken))
+        .then((fcmToken) => api.registerPushToken(result.token, fcmToken))
         .catch(() => {});
       return true;
     },

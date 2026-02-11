@@ -2,6 +2,7 @@
 export {
   registerForPushNotificationsAsync,
   NOTIFICATION_KEY,
+  FCM_TOKEN_KEY,
 } from "./components/notifications/utils";
 
 export {
