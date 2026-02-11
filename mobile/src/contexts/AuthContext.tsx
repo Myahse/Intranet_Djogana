@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import * as api from "../api";
 import * as storage from "../storage";
-import { registerForPushNotifications } from "../notifications";
+import { registerForPushNotificationsAsync } from "../notifications";
 
 type User = { identifiant: string; role: string };
 
@@ -53,8 +53,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await storage.setToken(result.token);
       setTokenState(result.token);
       setUser(result.user);
-      // Enregistrer le token push pour cet utilisateur (non bloquant)
-      registerForPushNotifications(result.token).catch(() => {});
+      // Get the Expo push token and register it on the server (non bloquant)
+      registerForPushNotificationsAsync()
+        .then((expoPushToken) => api.registerPushToken(result.token, expoPushToken))
+        .catch(() => {});
       return true;
     },
     []

@@ -13,12 +13,13 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
-import { registerForPushNotifications } from "@/notifications";
+import { useNotification } from "@/components/notifications/NotificationContext";
 import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
 
 export default function ApproveRequestsScreen() {
   const { token, logout } = useAuth();
+  const { expoPushToken, error: pushError } = useNotification();
   const router = useRouter();
   const [requests, setRequests] = useState<DeviceRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,11 +29,10 @@ export default function ApproveRequestsScreen() {
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushRegistered, setPushRegistered] = useState<boolean | null>(null);
-  const pushRetryDone = useRef(false);
+  const serverRegDone = useRef(false);
 
-  const load = async (resetPushRetry = false) => {
+  const load = async () => {
     if (!token) return;
-    if (resetPushRetry) pushRetryDone.current = false;
     setLoadError(null);
     const result = await api.listDeviceRequests(token);
     if (result.ok) {
@@ -57,27 +57,28 @@ export default function ApproveRequestsScreen() {
     load().finally(() => setLoading(false));
   }, [token]);
 
-  // Si le statut dit "non enregistré", réessayer une fois d'enregistrer le token (au cas où le login n'a pas eu le temps)
+  // When the NotificationProvider obtains the expoPushToken and the server doesn't
+  // have it yet, register it on the backend automatically.
   useEffect(() => {
-    if (!token || pushRegistered !== false || pushRetryDone.current) return;
-    pushRetryDone.current = true;
-    let cancelled = false;
+    if (!token || !expoPushToken || serverRegDone.current) return;
+    if (pushRegistered !== false) return; // already registered or unknown
+    serverRegDone.current = true;
     (async () => {
-      await registerForPushNotifications(token);
-      if (cancelled) return;
-      await new Promise((r) => setTimeout(r, 1500));
-      if (cancelled) return;
-      const status = await api.getPushTokenStatus(token);
-      if (!cancelled) setPushRegistered(status.registered);
+      try {
+        await api.registerPushToken(token, expoPushToken);
+        await new Promise((r) => setTimeout(r, 1500));
+        const status = await api.getPushTokenStatus(token);
+        setPushRegistered(status.registered);
+      } catch {
+        // Silently ignore
+      }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, pushRegistered]);
+  }, [token, expoPushToken, pushRegistered]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load(true); // allow push registration retry when user pulls to refresh
+    serverRegDone.current = false; // allow another server registration attempt
+    await load();
     setRefreshing(false);
   };
 
@@ -133,7 +134,11 @@ export default function ApproveRequestsScreen() {
       <Text style={styles.hint}>
         Connectez-vous avec le même identifiant que sur le site. Les demandes en attente apparaissent ici.
       </Text>
-      {pushRegistered === false ? (
+      {pushError ? (
+        <Text style={styles.pushHint}>
+          Erreur notifications : {pushError.message}. Déconnectez-vous puis reconnectez-vous en acceptant les notifications.
+        </Text>
+      ) : pushRegistered === false ? (
         <Text style={styles.pushHint}>
           Notifications non enregistrées. Déconnectez-vous puis reconnectez-vous en acceptant les notifications pour recevoir une alerte à chaque demande sur le site.
         </Text>
