@@ -1,11 +1,15 @@
-import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 export const NOTIFICATION_KEY = "notification_token";
+export const FCM_TOKEN_KEY = "fcm_device_token";
 
+/**
+ * Register for push notifications and return the native FCM device token.
+ * This token can be used directly with Firebase Admin SDK to send notifications.
+ */
 export async function registerForPushNotificationsAsync(): Promise<string> {
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
@@ -33,24 +37,15 @@ export async function registerForPushNotificationsAsync(): Promise<string> {
     );
   }
 
-  const projectId =
-    Constants?.expoConfig?.extra?.eas?.projectId ??
-    (Constants as unknown as { easConfig?: { projectId?: string } })
-      ?.easConfig?.projectId;
-  if (!projectId) {
-    throw new Error("Project ID not found");
-  }
-
   try {
-    const pushTokenString = (
-      await Notifications.getExpoPushTokenAsync({
-        projectId,
-      })
-    ).data;
-    console.log("pushTokenString => ", pushTokenString);
-    await SecureStore.setItemAsync(NOTIFICATION_KEY, pushTokenString);
-    return pushTokenString;
+    // Get the native device push token (FCM token on Android, APNs token on iOS)
+    const devicePushToken = await Notifications.getDevicePushTokenAsync();
+    const fcmToken = devicePushToken.data as string;
+    console.log("FCM Device Token => ", fcmToken);
+    await SecureStore.setItemAsync(FCM_TOKEN_KEY, fcmToken);
+
+    return fcmToken;
   } catch (e: unknown) {
-    throw new Error(`${e}`);
+    throw new Error(`Failed to get device push token: ${e}`);
   }
 }

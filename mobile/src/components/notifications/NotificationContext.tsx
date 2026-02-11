@@ -10,7 +10,8 @@ import React, {
 } from "react";
 
 interface NotificationContextType {
-  expoPushToken: string | null;
+  /** Native FCM device token (Android) or APNs token (iOS) */
+  fcmToken: string | null;
   notification: Notifications.Notification | null;
   error: Error | null;
 }
@@ -36,7 +37,7 @@ interface NotificationProviderProps {
 export const NotificationProvider: React.FC<NotificationProviderProps> = ({
   children,
 }) => {
-  const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
+  const [fcmToken, setFcmToken] = useState<string | null>(null);
   const [notification, setNotification] =
     useState<Notifications.Notification | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -46,9 +47,9 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
   );
 
   useEffect(() => {
-    // Obtain the Expo push token (permissions + device token)
+    // Obtain the native FCM device token (permissions + device token)
     registerForPushNotificationsAsync().then(
-      (token) => setExpoPushToken(token),
+      (token) => setFcmToken(token),
       (err) => setError(err)
     );
 
@@ -67,7 +68,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
 
   return (
     <NotificationContext.Provider
-      value={{ expoPushToken, notification, error }}
+      value={{ fcmToken, notification, error }}
     >
       {children}
     </NotificationContext.Provider>

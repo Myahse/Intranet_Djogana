@@ -8,7 +8,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import logoDjogana from "@/assets/logo_djogana.png"
-import { User } from "lucide-react"
+import { User, Eye, EyeOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -29,6 +29,7 @@ const Login = () => {
     },
   })
 
+  const [showPassword, setShowPassword] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [deviceRequestId, setDeviceRequestId] = useState<string | null>(null)
   const [deviceCode, setDeviceCode] = useState("")
@@ -154,11 +155,26 @@ const Login = () => {
                   control={form.control}
                   name="mot_de_passe"
                   render={({ field }) => (
-                    <Input
-                      {...field}
-                      placeholder="Mot de passe"
-                      type="password"
-                    />
+                    <div className="relative">
+                      <Input
+                        {...field}
+                        placeholder="Mot de passe"
+                        type={showPassword ? "text" : "password"}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-0 top-0 h-full px-3 flex items-center text-muted-foreground hover:text-foreground transition-colors"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </button>
+                    </div>
                   )}
                 />
                 <Button type="submit" className="w-full">

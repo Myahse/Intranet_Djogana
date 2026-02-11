@@ -1,7 +1,4 @@
-/**
- * API client for Djogana backend.
- * En dev sur le même réseau : l'app utilise la machine du serveur Expo (pas besoin de configurer l'IP).
- */
+
 
 import { Platform } from "react-native";
 import Constants from "expo-constants";
@@ -235,9 +232,14 @@ export async function getPushTokenStatus(
   }
 }
 
+/**
+ * Register the native FCM device push token with the backend.
+ * The backend should use Firebase Admin SDK to send notifications
+ * to this token directly.
+ */
 export async function registerPushToken(
   token: string,
-  expoPushToken: string
+  fcmToken: string
 ): Promise<void> {
   try {
     const base = await getApiBaseUrl();
@@ -247,7 +249,7 @@ export async function registerPushToken(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ expoPushToken }),
+      body: JSON.stringify({ fcmToken }),
     });
     if (!res.ok) {
       const err = await res.text();

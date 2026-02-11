@@ -19,7 +19,7 @@ import type { DeviceRequest } from "@/api";
 
 export default function ApproveRequestsScreen() {
   const { token, logout } = useAuth();
-  const { expoPushToken, error: pushError } = useNotification();
+  const { fcmToken, error: pushError } = useNotification();
   const router = useRouter();
   const [requests, setRequests] = useState<DeviceRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,15 +57,15 @@ export default function ApproveRequestsScreen() {
     load().finally(() => setLoading(false));
   }, [token]);
 
-  // When the NotificationProvider obtains the expoPushToken and the server doesn't
+  // When the NotificationProvider obtains the FCM token and the server doesn't
   // have it yet, register it on the backend automatically.
   useEffect(() => {
-    if (!token || !expoPushToken || serverRegDone.current) return;
+    if (!token || !fcmToken || serverRegDone.current) return;
     if (pushRegistered !== false) return; // already registered or unknown
     serverRegDone.current = true;
     (async () => {
       try {
-        await api.registerPushToken(token, expoPushToken);
+        await api.registerPushToken(token, fcmToken);
         await new Promise((r) => setTimeout(r, 1500));
         const status = await api.getPushTokenStatus(token);
         setPushRegistered(status.registered);
@@ -73,7 +73,7 @@ export default function ApproveRequestsScreen() {
         // Silently ignore
       }
     })();
-  }, [token, expoPushToken, pushRegistered]);
+  }, [token, fcmToken, pushRegistered]);
 
   const onRefresh = async () => {
     setRefreshing(true);
