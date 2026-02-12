@@ -27,13 +27,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Always clear the stored token on app launch so the user must log in again
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const t = await storage.getToken();
+      await storage.clearToken();
       if (cancelled) return;
-      setTokenState(t);
-      setUser(t ? { identifiant: "", role: "user" } : null);
+      setTokenState(null);
+      setUser(null);
       setIsLoading(false);
     })();
     return () => {

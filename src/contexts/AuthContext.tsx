@@ -72,7 +72,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 function loadStoredUser(): User | null {
   try {
-    const raw = localStorage.getItem(AUTH_STORAGE_KEY)
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY)
     if (!raw) return null
     const data = JSON.parse(raw) as User
     return data.identifiant && data.role
@@ -134,9 +134,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setUser = useCallback((u: User | null) => {
     setUserState(u)
     if (u) {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(u))
+      sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(u))
     } else {
-      localStorage.removeItem(AUTH_STORAGE_KEY)
+      sessionStorage.removeItem(AUTH_STORAGE_KEY)
     }
   }, [])
 
@@ -169,7 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (data.token) {
           try {
-            localStorage.setItem(AUTH_TOKEN_KEY, data.token)
+            sessionStorage.setItem(AUTH_TOKEN_KEY, data.token)
           } catch (_) { /* ignore */ }
         }
 
@@ -192,13 +192,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setUser(null)
     try {
-      localStorage.removeItem(AUTH_TOKEN_KEY)
+      sessionStorage.removeItem(AUTH_TOKEN_KEY)
     } catch (_) { /* ignore */ }
   }, [setUser])
 
   const getAuthHeaders = useCallback((): HeadersInit => {
     try {
-      const token = localStorage.getItem(AUTH_TOKEN_KEY)
+      const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
       if (token) {
         return { Authorization: `Bearer ${token}` }
       }

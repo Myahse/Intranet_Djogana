@@ -142,8 +142,6 @@ export default function ApproveRequestsScreen() {
         <Text style={styles.pushHint}>
           Notifications non enregistrées. Déconnectez-vous puis reconnectez-vous en acceptant les notifications pour recevoir une alerte à chaque demande sur le site.
         </Text>
-      ) : pushRegistered === true ? (
-        <Text style={styles.pushOk}>Notifications activées.</Text>
       ) : null}
       {loadError ? (
         <View style={styles.errorBanner}>
@@ -262,11 +260,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fffbeb",
     padding: 10,
     borderRadius: 8,
-  },
-  pushOk: {
-    fontSize: 13,
-    color: "#166534",
-    marginBottom: 12,
   },
   errorBanner: {
     backgroundColor: "#fef2f2",
