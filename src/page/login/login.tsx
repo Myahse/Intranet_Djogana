@@ -8,8 +8,8 @@ import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import logoDjogana from "@/assets/logo_djogana.png"
-import { User, Eye, EyeOff } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { User, Eye, EyeOff, Clock } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Dialog,
@@ -18,6 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+
+const REQUEST_VALIDITY_SECONDS = 15
+
+/** Format remaining seconds as just "Xs" */
+function formatTime(sec: number): string {
+  return `${sec}s`
+}
 
 const Login = () => {
   const navigate = useNavigate()
@@ -35,6 +42,27 @@ const Login = () => {
   const [deviceCode, setDeviceCode] = useState("")
   const [approvalStatus, setApprovalStatus] = useState<"pending" | "denied" | "expired" | null>(null)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Countdown timer state
+  const [secondsLeft, setSecondsLeft] = useState(0)
+  const [totalSeconds, setTotalSeconds] = useState(0)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Start countdown timer
+  const startCountdown = useCallback((expiresInSec: number) => {
+    setTotalSeconds(expiresInSec)
+    setSecondsLeft(expiresInSec)
+    if (countdownRef.current) clearInterval(countdownRef.current)
+    countdownRef.current = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }, [])
 
   useEffect(() => {
     if (!modalOpen || !deviceRequestId || approvalStatus !== "pending") return
@@ -79,10 +107,16 @@ const Login = () => {
       clearInterval(pollIntervalRef.current)
       pollIntervalRef.current = null
     }
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
     setModalOpen(false)
     setDeviceRequestId(null)
     setDeviceCode("")
     setApprovalStatus(null)
+    setSecondsLeft(0)
+    setTotalSeconds(0)
   }
 
   const handleSubmit = async () => {
@@ -102,7 +136,24 @@ const Login = () => {
     setDeviceCode(result.code)
     setApprovalStatus("pending")
     setModalOpen(true)
+    startCountdown(REQUEST_VALIDITY_SECONDS)
   }
+
+  // Compute progress percentage for the countdown bar
+  const progressPct = totalSeconds > 0 ? (secondsLeft / totalSeconds) * 100 : 0
+  // Color shifts: green > 66%, orange 33-66%, red < 33%
+  const timerColor =
+    progressPct > 66
+      ? "text-emerald-600"
+      : progressPct > 33
+        ? "text-orange-500"
+        : "text-red-500"
+  const barColor =
+    progressPct > 66
+      ? "bg-emerald-500"
+      : progressPct > 33
+        ? "bg-orange-500"
+        : "bg-red-500"
 
   return (
     <div className="min-h-svh flex flex-col bg-gradient-to-b from-background to-muted/30">
@@ -110,7 +161,7 @@ const Login = () => {
         <Link to="/" className="flex items-center gap-2 shrink-0">
           <img src={logoDjogana} alt="Djogana" className="h-20 w-auto" />
         </Link>
-        {user ? (
+        {user && (
           <Link
             to="/dashboard"
             className="flex size-10 items-center justify-center rounded-full border bg-muted hover:bg-muted/80 transition-colors"
@@ -118,10 +169,6 @@ const Login = () => {
           >
             <User className="size-5 text-muted-foreground" />
           </Link>
-        ) : (
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/login">Connexion</Link>
-          </Button>
         )}
       </header>
       <main className="flex-1 flex items-center justify-center px-4">
@@ -129,7 +176,7 @@ const Login = () => {
           <CardHeader className="flex flex-col gap-2 justify-center items-center text-center">
             <CardTitle className="text-2xl font-bold">Connexion</CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
-              Identifiant et mot de passe, puis validation de la connexion sur l’application mobile.
+              Identifiant et mot de passe, puis validation de la connexion sur l'application mobile.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -195,9 +242,9 @@ const Login = () => {
           }}
         >
           <DialogHeader>
-            <DialogTitle>En attente d’approbation</DialogTitle>
+            <DialogTitle>En attente d'approbation</DialogTitle>
             <DialogDescription>
-              Ouvrez l’application Djogana sur votre téléphone et approuvez cette connexion.
+              Ouvrez l'application Djogana sur votre téléphone et approuvez cette connexion.
             </DialogDescription>
           </DialogHeader>
           {approvalStatus === "pending" && (
@@ -208,16 +255,37 @@ const Login = () => {
                   {String(deviceCode).padStart(6, "0").slice(-6)}
                 </p>
               </div>
+
+              {/* Countdown timer */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Clock className="size-3.5" />
+                    <span>Validité de la requête</span>
+                  </div>
+                  <span className={`font-mono font-semibold tabular-nums ${timerColor}`}>
+                    {formatTime(secondsLeft)}
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ease-linear ${barColor}`}
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+              </div>
+
               <div className="flex items-center justify-center gap-2 text-muted-foreground">
                 <Spinner className="size-4" />
-                <span className="text-sm">En attente de validation sur l’app mobile…</span>
+                <span className="text-sm">En attente de validation sur l'app mobile…</span>
               </div>
             </>
           )}
           {(approvalStatus === "denied" || approvalStatus === "expired") && (
             <p className="text-sm text-destructive">
               {approvalStatus === "denied"
-                ? "Connexion refusée sur l’application mobile."
+                ? "Connexion refusée sur l'application mobile."
                 : "La demande a expiré."}
             </p>
           )}

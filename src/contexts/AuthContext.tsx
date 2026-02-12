@@ -258,6 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           status: string
           user?: User
           message?: string
+          token?: string
         }
         const status = data.status as
           | 'pending'
@@ -266,6 +267,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           | 'expired'
           | 'not_found'
         if (status === 'approved' && data.user) {
+          // Store the JWT token so that authenticated API calls work
+          if (data.token) {
+            try {
+              sessionStorage.setItem(AUTH_TOKEN_KEY, data.token)
+            } catch (_) { /* ignore */ }
+          }
           setUser({
             identifiant: data.user.identifiant,
             role: data.user.role,

@@ -322,7 +322,9 @@ const ProfilePage = (): ReactNode => {
             created_at: string
           }>
           setActivityLog(data)
-        } else {
+        } else if (res.status !== 401) {
+          // Only show error toast for non-auth errors; 401 is silently ignored
+          // (can happen briefly after device-login before token is stored)
           const err = await res.json().catch(() => ({}))
           toast.error((err as { error?: string }).error ?? 'Impossible de charger le journal')
         }
