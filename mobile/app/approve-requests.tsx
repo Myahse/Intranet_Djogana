@@ -8,14 +8,13 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
-  Modal,
-  Pressable,
   Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNotification } from "@/components/notifications/NotificationContext";
+import { ConfirmModal } from "@/modals";
 import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
 
@@ -351,44 +350,15 @@ export default function ApproveRequestsScreen() {
       </TouchableOpacity>
 
       {/* Modal : Déconnexion */}
-      <Modal
+      <ConfirmModal
         visible={logoutModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeLogoutModal}
-      >
-        <Pressable style={styles.modalOverlay} onPress={closeLogoutModal}>
-          <Pressable
-            style={styles.modalCard}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <Text style={styles.modalTitle}>Déconnexion</Text>
-            <Text style={styles.modalMessage}>
-              Voulez-vous vous déconnecter ?
-            </Text>
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnCancel]}
-                onPress={closeLogoutModal}
-                disabled={loggingOut}
-              >
-                <Text style={styles.modalBtnCancelText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnConfirm]}
-                onPress={confirmLogout}
-                disabled={loggingOut}
-              >
-                {loggingOut ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalBtnConfirmText}>Déconnexion</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={closeLogoutModal}
+        title="Déconnexion"
+        message="Voulez-vous vous déconnecter ?"
+        confirmLabel="Déconnexion"
+        onConfirm={confirmLogout}
+        loading={loggingOut}
+      />
     </View>
   );
 }
@@ -500,23 +470,4 @@ const styles = StyleSheet.create({
   logout: { marginTop: 12, paddingVertical: 12, alignItems: "center" },
   logoutText: { fontSize: 15, color: "#666" },
 
-  /* Modal */
-  modalOverlay: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center", alignItems: "center", padding: 24,
-  },
-  modalCard: {
-    backgroundColor: "#fff", borderRadius: 16, padding: 24,
-    width: "100%", maxWidth: 320,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
-  },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: "#0a0a0a", marginBottom: 8 },
-  modalMessage: { fontSize: 15, color: "#666", marginBottom: 20 },
-  modalActions: { flexDirection: "row", gap: 12 },
-  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
-  modalBtnCancel: { backgroundColor: "#f0f0f0" },
-  modalBtnCancelText: { fontSize: 15, fontWeight: "600", color: "#333" },
-  modalBtnConfirm: { backgroundColor: "#0a0a0a" },
-  modalBtnConfirmText: { fontSize: 15, fontWeight: "600", color: "#fff" },
 });

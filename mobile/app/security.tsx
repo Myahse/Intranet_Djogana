@@ -6,7 +6,6 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
-  Modal,
   Pressable,
   TextInput,
   ActivityIndicator,
@@ -14,6 +13,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { Modal, ConfirmModal } from "@/modals";
 
 type SecurityMenuItem = {
   id: string;
@@ -72,6 +72,9 @@ export default function SecurityScreen() {
   const [showNewPw, setShowNewPw] = useState(false);
 
   const [activityModalVisible, setActivityModalVisible] = useState(false);
+  const [securityInfoModalVisible, setSecurityInfoModalVisible] = useState(false);
+  const [resetNotifModalVisible, setResetNotifModalVisible] = useState(false);
+  const [resettingNotif, setResettingNotif] = useState(false);
 
   const handleMenuItem = (id: string) => {
     switch (id) {
@@ -82,28 +85,13 @@ export default function SecurityScreen() {
         setPasswordModalVisible(true);
         break;
       case "update-security":
-        Alert.alert(
-          "Infos de sécurité",
-          "Vous pouvez mettre à jour vos options de récupération (e-mail, téléphone) et méthodes de vérification depuis le portail web Intranet.\n\nRendez-vous sur la section « Mon compte » du site.",
-          [{ text: "Compris" }]
-        );
+        setSecurityInfoModalVisible(true);
         break;
       case "recent-activity":
         setActivityModalVisible(true);
         break;
       case "reset-notifications":
-        Alert.alert(
-          "Réinitialiser les notifications",
-          "Êtes-vous sûr de vouloir réinitialiser les paramètres de notification de cet appareil ?\nVous devrez vous reconnecter pour réactiver les notifications push.",
-          [
-            { text: "Annuler", style: "cancel" },
-            {
-              text: "Réinitialiser",
-              style: "destructive",
-              onPress: handleResetNotifications,
-            },
-          ]
-        );
+        setResetNotifModalVisible(true);
         break;
     }
   };
@@ -136,16 +124,20 @@ export default function SecurityScreen() {
   };
 
   const handleResetNotifications = async () => {
+    setResettingNotif(true);
     try {
       // TODO: Call API to reset push token registration
       // await api.resetPushToken(token);
       await new Promise((r) => setTimeout(r, 800));
+      setResetNotifModalVisible(false);
       Alert.alert(
         "Notifications réinitialisées",
         "Les paramètres de notification ont été réinitialisés. Reconnectez-vous pour les réactiver."
       );
     } catch {
       Alert.alert("Erreur", "Impossible de réinitialiser les notifications.");
+    } finally {
+      setResettingNotif(false);
     }
   };
 
@@ -196,136 +188,147 @@ export default function SecurityScreen() {
         </View>
       </ScrollView>
 
-      {/* Modal : Changer le mot de passe */}
+      {/* Modal : Changer le mot de passe (bottom sheet) */}
       <Modal
         visible={passwordModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => !changingPassword && setPasswordModalVisible(false)}
+        onClose={() => !changingPassword && setPasswordModalVisible(false)}
+        height={0.55}
       >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => !changingPassword && setPasswordModalVisible(false)}
-        >
-          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>Changer le mot de passe</Text>
+        <View style={styles.sheetContent}>
+          <Text style={styles.sheetTitle}>Changer le mot de passe</Text>
 
-            <View style={styles.modalInputRow}>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Mot de passe actuel"
-                placeholderTextColor="#999"
-                secureTextEntry={!showCurrentPw}
-                value={currentPassword}
-                onChangeText={setCurrentPassword}
-                editable={!changingPassword}
-              />
-              <Pressable onPress={() => setShowCurrentPw((v) => !v)} style={styles.modalEye}>
-                <Ionicons
-                  name={showCurrentPw ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color="#888"
-                />
-              </Pressable>
-            </View>
-
-            <View style={styles.modalInputRow}>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Nouveau mot de passe"
-                placeholderTextColor="#999"
-                secureTextEntry={!showNewPw}
-                value={newPassword}
-                onChangeText={setNewPassword}
-                editable={!changingPassword}
-              />
-              <Pressable onPress={() => setShowNewPw((v) => !v)} style={styles.modalEye}>
-                <Ionicons
-                  name={showNewPw ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color="#888"
-                />
-              </Pressable>
-            </View>
-
+          <View style={styles.sheetInputRow}>
             <TextInput
-              style={styles.modalInputFull}
-              placeholder="Confirmer le nouveau mot de passe"
+              style={styles.sheetInput}
+              placeholder="Mot de passe actuel"
               placeholderTextColor="#999"
-              secureTextEntry
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
+              secureTextEntry={!showCurrentPw}
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
               editable={!changingPassword}
             />
+            <Pressable onPress={() => setShowCurrentPw((v) => !v)} style={styles.sheetEye}>
+              <Ionicons
+                name={showCurrentPw ? "eye-off-outline" : "eye-outline"}
+                size={20}
+                color="#888"
+              />
+            </Pressable>
+          </View>
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnCancel]}
-                onPress={() => setPasswordModalVisible(false)}
-                disabled={changingPassword}
-              >
-                <Text style={styles.modalBtnCancelText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnConfirm]}
-                onPress={handleChangePassword}
-                disabled={changingPassword}
-              >
-                {changingPassword ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalBtnConfirmText}>Modifier</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
+          <View style={styles.sheetInputRow}>
+            <TextInput
+              style={styles.sheetInput}
+              placeholder="Nouveau mot de passe"
+              placeholderTextColor="#999"
+              secureTextEntry={!showNewPw}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              editable={!changingPassword}
+            />
+            <Pressable onPress={() => setShowNewPw((v) => !v)} style={styles.sheetEye}>
+              <Ionicons
+                name={showNewPw ? "eye-off-outline" : "eye-outline"}
+                size={20}
+                color="#888"
+              />
+            </Pressable>
+          </View>
+
+          <TextInput
+            style={styles.sheetInputFull}
+            placeholder="Confirmer le nouveau mot de passe"
+            placeholderTextColor="#999"
+            secureTextEntry
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            editable={!changingPassword}
+          />
+
+          <View style={styles.sheetActions}>
+            <TouchableOpacity
+              style={[styles.sheetBtn, styles.sheetBtnCancel]}
+              onPress={() => setPasswordModalVisible(false)}
+              disabled={changingPassword}
+            >
+              <Text style={styles.sheetBtnCancelText}>Annuler</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sheetBtn, styles.sheetBtnConfirm]}
+              onPress={handleChangePassword}
+              disabled={changingPassword}
+            >
+              {changingPassword ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.sheetBtnConfirmText}>Modifier</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
-      {/* Modal : Activité récente */}
+      {/* Modal : Activité récente (bottom sheet) */}
       <Modal
         visible={activityModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setActivityModalVisible(false)}
+        onClose={() => setActivityModalVisible(false)}
+        height={0.6}
       >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setActivityModalVisible(false)}
-        >
-          <Pressable style={styles.activityModalCard} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.activityHeader}>
-              <Text style={styles.modalTitle}>Activité récente</Text>
-              <TouchableOpacity onPress={() => setActivityModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.activityList}>
-              {recentActivity.map((item) => (
-                <View key={item.id} style={styles.activityItem}>
-                  <View style={styles.activityIcon}>
-                    <Ionicons name={item.icon} size={18} color="#666" />
-                  </View>
-                  <View style={styles.activityContent}>
-                    <Text style={styles.activityAction}>{item.action}</Text>
-                    <Text style={styles.activityMeta}>
-                      {item.date} • {item.device}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-
-            <TouchableOpacity
-              style={styles.activityCloseBtn}
-              onPress={() => setActivityModalVisible(false)}
-            >
-              <Text style={styles.activityCloseBtnText}>Fermer</Text>
+        <View style={styles.sheetContent}>
+          <View style={styles.activityHeader}>
+            <Text style={styles.sheetTitle}>Activité récente</Text>
+            <TouchableOpacity onPress={() => setActivityModalVisible(false)}>
+              <Ionicons name="close" size={24} color="#666" />
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
+          </View>
+
+          <ScrollView style={styles.activityList}>
+            {recentActivity.map((item) => (
+              <View key={item.id} style={styles.activityItem}>
+                <View style={styles.activityIcon}>
+                  <Ionicons name={item.icon} size={18} color="#666" />
+                </View>
+                <View style={styles.activityContent}>
+                  <Text style={styles.activityAction}>{item.action}</Text>
+                  <Text style={styles.activityMeta}>
+                    {item.date} • {item.device}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+
+          <TouchableOpacity
+            style={styles.activityCloseBtn}
+            onPress={() => setActivityModalVisible(false)}
+          >
+            <Text style={styles.activityCloseBtnText}>Fermer</Text>
+          </TouchableOpacity>
+        </View>
       </Modal>
+
+      {/* Modal : Infos de sécurité */}
+      <ConfirmModal
+        visible={securityInfoModalVisible}
+        onClose={() => setSecurityInfoModalVisible(false)}
+        title="Infos de sécurité"
+        message={"Vous pouvez mettre à jour vos options de récupération (e-mail, téléphone) et méthodes de vérification depuis le portail web Intranet.\n\nRendez-vous sur la section « Mon compte » du site."}
+        confirmLabel="Compris"
+        cancelLabel="Fermer"
+        onConfirm={() => setSecurityInfoModalVisible(false)}
+      />
+
+      {/* Modal : Réinitialiser les notifications */}
+      <ConfirmModal
+        visible={resetNotifModalVisible}
+        onClose={() => !resettingNotif && setResetNotifModalVisible(false)}
+        title="Réinitialiser les notifications"
+        message={"Êtes-vous sûr de vouloir réinitialiser les paramètres de notification de cet appareil ?\n\nVous devrez vous reconnecter pour réactiver les notifications push."}
+        confirmLabel="Réinitialiser"
+        destructive
+        onConfirm={handleResetNotifications}
+        loading={resettingNotif}
+      />
     </View>
   );
 }
@@ -360,42 +363,28 @@ const styles = StyleSheet.create({
   menuLabel: { fontSize: 15, fontWeight: "600", color: "#111", marginBottom: 2 },
   menuDescription: { fontSize: 13, color: "#888", lineHeight: 18 },
 
-  modalOverlay: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center", alignItems: "center", padding: 24,
-  },
-  modalCard: {
-    backgroundColor: "#fff", borderRadius: 16, padding: 24,
-    width: "100%", maxWidth: 360,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
-  },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: "#0a0a0a", marginBottom: 16 },
-  modalInputRow: {
+  /* Bottom-sheet content */
+  sheetContent: { flex: 1, padding: 24 },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: "#0a0a0a", marginBottom: 16 },
+  sheetInputRow: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: "#f9f9f9", borderWidth: 1, borderColor: "#e5e5e5",
     borderRadius: 10, marginBottom: 12,
   },
-  modalInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: "#111" },
-  modalInputFull: {
+  sheetInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: "#111" },
+  sheetInputFull: {
     backgroundColor: "#f9f9f9", borderWidth: 1, borderColor: "#e5e5e5",
     borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 15, color: "#111", marginBottom: 20,
   },
-  modalEye: { paddingHorizontal: 12, paddingVertical: 12 },
-  modalActions: { flexDirection: "row", gap: 12 },
-  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
-  modalBtnCancel: { backgroundColor: "#f0f0f0" },
-  modalBtnCancelText: { fontSize: 15, fontWeight: "600", color: "#333" },
-  modalBtnConfirm: { backgroundColor: "#0a0a0a" },
-  modalBtnConfirmText: { fontSize: 15, fontWeight: "600", color: "#fff" },
+  sheetEye: { paddingHorizontal: 12, paddingVertical: 12 },
+  sheetActions: { flexDirection: "row", gap: 12 },
+  sheetBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  sheetBtnCancel: { backgroundColor: "#f0f0f0" },
+  sheetBtnCancelText: { fontSize: 15, fontWeight: "600", color: "#333" },
+  sheetBtnConfirm: { backgroundColor: "#0a0a0a" },
+  sheetBtnConfirmText: { fontSize: 15, fontWeight: "600", color: "#fff" },
 
-  activityModalCard: {
-    backgroundColor: "#fff", borderRadius: 16, padding: 20,
-    width: "100%", maxWidth: 400, maxHeight: "75%",
-    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
-  },
   activityHeader: {
     flexDirection: "row", justifyContent: "space-between",
     alignItems: "center", marginBottom: 16,

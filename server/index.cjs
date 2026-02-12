@@ -1091,7 +1091,9 @@ app.get('/api/auth/device/poll/:requestId', async (req, res) => {
 
     if (row.status === 'approved' && row.session_payload) {
       await pool.query(`UPDATE login_requests SET status = 'consumed' WHERE id = $1`, [requestId])
-      return res.json({ status: 'approved', user: row.session_payload })
+      const approvedUser = row.session_payload
+      const token = signToken(approvedUser.identifiant)
+      return res.json({ status: 'approved', user: approvedUser, token })
     }
 
     return res.json({ status: row.status })
