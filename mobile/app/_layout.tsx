@@ -93,6 +93,21 @@ export default function RootLayout() {
               headerLargeTitle: false,
             }}
           />
+          <Stack.Screen
+            name="create-passkey"
+            options={{
+              title: "Créer un passkey",
+              presentation: "modal",
+              headerLargeTitle: false,
+            }}
+          />
+          <Stack.Screen
+            name="security"
+            options={{
+              title: "Sécurité",
+              headerLargeTitle: false,
+            }}
+          />
         </Stack>
       </AuthProvider>
     </NotificationProvider>

@@ -6,7 +6,7 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-        classpath 'com.google.gms:google-services:4.4.2'
+        classpath 'com.google.gms:google-services:4.4.1'
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
@@ -23,3 +23,10 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
+
+// Override minSdkVersion to match Hermes requirement (minSdk 24)
+rootProject.ext {
+    if (rootProject.ext.has('minSdkVersion') && rootProject.ext.minSdkVersion < 24) {
+        minSdkVersion = 24
+    }
+}
