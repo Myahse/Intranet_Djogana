@@ -8,32 +8,28 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
+import { s, vs, fs } from "@/responsive";
 
 interface ConfirmModalProps {
   visible: boolean;
   onClose: () => void;
   title: string;
   message?: string;
-  /** Label for the confirm button. Default: "Confirmer" */
+
   confirmLabel?: string;
-  /** Label for the cancel button. Default: "Annuler" */
+
   cancelLabel?: string;
-  /** If true, the confirm button appears red/destructive. */
+
   destructive?: boolean;
-  /** Called when the user taps the confirm button. */
+
   onConfirm: () => void;
-  /** Shows a spinner on the confirm button & disables interaction. */
+
   loading?: boolean;
-  /** Optional React node rendered between message and buttons. */
+
   children?: React.ReactNode;
 }
 
-/**
- * Reusable centered confirmation dialog.
- *
- * Follows the rental-app overlay + stopPropagation pattern:
- * tapping the backdrop closes the modal, tapping the card does not.
- */
+
 const ConfirmModal: React.FC<ConfirmModalProps> = ({
   visible,
   onClose,
@@ -102,48 +98,48 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 24,
+    padding: s(24),
   },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: s(16),
+    padding: s(24),
     width: "100%",
-    maxWidth: 320,
+    maxWidth: s(320),
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: vs(4) },
     shadowOpacity: 0.15,
-    shadowRadius: 12,
+    shadowRadius: s(12),
     elevation: 8,
   },
   title: {
-    fontSize: 18,
+    fontSize: fs(18),
     fontWeight: "700",
     color: "#0a0a0a",
-    marginBottom: 8,
+    marginBottom: vs(8),
   },
   message: {
-    fontSize: 15,
+    fontSize: fs(15),
     color: "#666",
-    marginBottom: 20,
-    lineHeight: 22,
+    marginBottom: vs(20),
+    lineHeight: fs(22),
   },
   actions: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 4,
+    gap: s(12),
+    marginTop: vs(4),
   },
   btn: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: vs(12),
+    borderRadius: s(10),
     alignItems: "center",
   },
   btnCancel: { backgroundColor: "#f0f0f0" },
-  btnCancelText: { fontSize: 15, fontWeight: "600", color: "#333" },
+  btnCancelText: { fontSize: fs(15), fontWeight: "600", color: "#333" },
   btnConfirm: { backgroundColor: "#0a0a0a" },
   btnDestructive: { backgroundColor: "#dc2626" },
-  btnConfirmText: { fontSize: 15, fontWeight: "600", color: "#fff" },
+  btnConfirmText: { fontSize: fs(15), fontWeight: "600", color: "#fff" },
 });
 
 export default ConfirmModal;

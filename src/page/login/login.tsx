@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog"
 
 const REQUEST_VALIDITY_SECONDS = 15
+const COOLDOWN_SECONDS = 20
 
 /** Format remaining seconds as just "Xs" */
 function formatTime(sec: number): string {
@@ -48,6 +49,24 @@ const Login = () => {
   const [totalSeconds, setTotalSeconds] = useState(0)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Cooldown between requests (20s)
+  const [cooldown, setCooldown] = useState(0)
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const startCooldown = useCallback(() => {
+    setCooldown(COOLDOWN_SECONDS)
+    if (cooldownRef.current) clearInterval(cooldownRef.current)
+    cooldownRef.current = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          if (cooldownRef.current) clearInterval(cooldownRef.current)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }, [])
+
   // Start countdown timer
   const startCountdown = useCallback((expiresInSec: number) => {
     setTotalSeconds(expiresInSec)
@@ -64,6 +83,14 @@ const Login = () => {
     }, 1000)
   }, [])
 
+  // Auto-close the modal when the countdown reaches 0
+  useEffect(() => {
+    if (modalOpen && secondsLeft === 0 && totalSeconds > 0 && approvalStatus === "pending") {
+      toast.error("La demande a expiré")
+      closeModal()
+    }
+  }, [secondsLeft, modalOpen, totalSeconds, approvalStatus])
+
   useEffect(() => {
     if (!modalOpen || !deviceRequestId || approvalStatus !== "pending") return
     const poll = async () => {
@@ -72,6 +99,10 @@ const Login = () => {
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current)
           pollIntervalRef.current = null
+        }
+        if (countdownRef.current) {
+          clearInterval(countdownRef.current)
+          countdownRef.current = null
         }
         setModalOpen(false)
         toast.success("Connexion approuvée")
@@ -91,8 +122,8 @@ const Login = () => {
           clearInterval(pollIntervalRef.current)
           pollIntervalRef.current = null
         }
-        setApprovalStatus("expired")
-        toast.error("Demande expirée")
+        toast.error("La demande a expiré")
+        closeModal()
       }
     }
     poll()
@@ -117,9 +148,15 @@ const Login = () => {
     setApprovalStatus(null)
     setSecondsLeft(0)
     setTotalSeconds(0)
+    // Start the 20s cooldown before next request
+    startCooldown()
   }
 
   const handleSubmit = async () => {
+    if (cooldown > 0) {
+      toast.error(`Veuillez patienter ${cooldown}s avant de renvoyer une requête`)
+      return
+    }
     const data = form.getValues()
     const ident = (data.identifiant || "").trim()
     const password = (data.mot_de_passe || "").trim()
@@ -224,8 +261,8 @@ const Login = () => {
                     </div>
                   )}
                 />
-                <Button type="submit" className="w-full">
-                  Se connecter
+                <Button type="submit" className="w-full" disabled={cooldown > 0}>
+                  {cooldown > 0 ? `Patientez ${cooldown}s` : "Se connecter"}
                 </Button>
               </form>
             </Form>

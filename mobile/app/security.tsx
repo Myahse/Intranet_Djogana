@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { Modal, ConfirmModal } from "@/modals";
+import { s, vs, ms, fs } from "@/responsive";
 
 type SecurityMenuItem = {
   id: string;
@@ -154,7 +155,7 @@ export default function SecurityScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <View style={styles.avatarContainer}>
-            <Ionicons name="person" size={28} color="#fff" />
+            <Ionicons name="person" size={ms(28)} color="#fff" />
           </View>
           <Text style={styles.userName}>{user?.identifiant ?? "Utilisateur"}</Text>
           <Text style={styles.userRole}>
@@ -176,13 +177,13 @@ export default function SecurityScreen() {
               activeOpacity={0.6}
             >
               <View style={[styles.menuIcon, { backgroundColor: item.bgColor }]}>
-                <Ionicons name={item.icon} size={20} color={item.color} />
+                <Ionicons name={item.icon} size={ms(20)} color={item.color} />
               </View>
               <View style={styles.menuContent}>
                 <Text style={styles.menuLabel}>{item.label}</Text>
                 <Text style={styles.menuDescription}>{item.description}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#ccc" />
+              <Ionicons name="chevron-forward" size={ms(18)} color="#ccc" />
             </TouchableOpacity>
           ))}
         </View>
@@ -210,7 +211,7 @@ export default function SecurityScreen() {
             <Pressable onPress={() => setShowCurrentPw((v) => !v)} style={styles.sheetEye}>
               <Ionicons
                 name={showCurrentPw ? "eye-off-outline" : "eye-outline"}
-                size={20}
+                size={ms(20)}
                 color="#888"
               />
             </Pressable>
@@ -229,7 +230,7 @@ export default function SecurityScreen() {
             <Pressable onPress={() => setShowNewPw((v) => !v)} style={styles.sheetEye}>
               <Ionicons
                 name={showNewPw ? "eye-off-outline" : "eye-outline"}
-                size={20}
+                size={ms(20)}
                 color="#888"
               />
             </Pressable>
@@ -278,7 +279,7 @@ export default function SecurityScreen() {
           <View style={styles.activityHeader}>
             <Text style={styles.sheetTitle}>Activité récente</Text>
             <TouchableOpacity onPress={() => setActivityModalVisible(false)}>
-              <Ionicons name="close" size={24} color="#666" />
+              <Ionicons name="close" size={ms(24)} color="#666" />
             </TouchableOpacity>
           </View>
 
@@ -286,7 +287,7 @@ export default function SecurityScreen() {
             {recentActivity.map((item) => (
               <View key={item.id} style={styles.activityItem}>
                 <View style={styles.activityIcon}>
-                  <Ionicons name={item.icon} size={18} color="#666" />
+                  <Ionicons name={item.icon} size={ms(18)} color="#666" />
                 </View>
                 <View style={styles.activityContent}>
                   <Text style={styles.activityAction}>{item.action}</Text>
@@ -335,72 +336,72 @@ export default function SecurityScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  scrollContent: { padding: s(16), paddingBottom: vs(40) },
 
-  header: { alignItems: "center", paddingVertical: 24 },
+  header: { alignItems: "center", paddingVertical: vs(24) },
   avatarContainer: {
-    width: 64, height: 64, borderRadius: 32,
+    width: s(64), height: s(64), borderRadius: s(32),
     backgroundColor: "#0a0a0a",
-    justifyContent: "center", alignItems: "center", marginBottom: 12,
+    justifyContent: "center", alignItems: "center", marginBottom: vs(12),
   },
-  userName: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 4 },
-  userRole: { fontSize: 14, color: "#888" },
+  userName: { fontSize: fs(18), fontWeight: "700", color: "#111", marginBottom: vs(4) },
+  userRole: { fontSize: fs(14), color: "#888" },
 
   sectionTitle: {
-    fontSize: 13, fontWeight: "600", color: "#999",
-    textTransform: "uppercase", letterSpacing: 0.5,
-    marginBottom: 8, marginLeft: 4,
+    fontSize: fs(13), fontWeight: "600", color: "#999",
+    textTransform: "uppercase", letterSpacing: s(0.5),
+    marginBottom: vs(8), marginLeft: s(4),
   },
 
   menuCard: {
-    backgroundColor: "#fff", borderRadius: 14,
+    backgroundColor: "#fff", borderRadius: s(14),
     borderWidth: 1, borderColor: "#eee", overflow: "hidden",
   },
-  menuItem: { flexDirection: "row", alignItems: "center", padding: 16, gap: 14 },
+  menuItem: { flexDirection: "row", alignItems: "center", padding: s(16), gap: s(14) },
   menuItemBorder: { borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
-  menuIcon: { width: 40, height: 40, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  menuIcon: { width: s(40), height: s(40), borderRadius: s(10), justifyContent: "center", alignItems: "center" },
   menuContent: { flex: 1 },
-  menuLabel: { fontSize: 15, fontWeight: "600", color: "#111", marginBottom: 2 },
-  menuDescription: { fontSize: 13, color: "#888", lineHeight: 18 },
+  menuLabel: { fontSize: fs(15), fontWeight: "600", color: "#111", marginBottom: vs(2) },
+  menuDescription: { fontSize: fs(13), color: "#888", lineHeight: fs(18) },
 
   /* Bottom-sheet content */
-  sheetContent: { flex: 1, padding: 24 },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: "#0a0a0a", marginBottom: 16 },
+  sheetContent: { flex: 1, padding: s(24) },
+  sheetTitle: { fontSize: fs(18), fontWeight: "700", color: "#0a0a0a", marginBottom: vs(16) },
   sheetInputRow: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: "#f9f9f9", borderWidth: 1, borderColor: "#e5e5e5",
-    borderRadius: 10, marginBottom: 12,
+    borderRadius: s(10), marginBottom: vs(12),
   },
-  sheetInput: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: "#111" },
+  sheetInput: { flex: 1, paddingHorizontal: s(14), paddingVertical: vs(12), fontSize: fs(15), color: "#111" },
   sheetInputFull: {
     backgroundColor: "#f9f9f9", borderWidth: 1, borderColor: "#e5e5e5",
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 15, color: "#111", marginBottom: 20,
+    borderRadius: s(10), paddingHorizontal: s(14), paddingVertical: vs(12),
+    fontSize: fs(15), color: "#111", marginBottom: vs(20),
   },
-  sheetEye: { paddingHorizontal: 12, paddingVertical: 12 },
-  sheetActions: { flexDirection: "row", gap: 12 },
-  sheetBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  sheetEye: { paddingHorizontal: s(12), paddingVertical: vs(12) },
+  sheetActions: { flexDirection: "row", gap: s(12) },
+  sheetBtn: { flex: 1, paddingVertical: vs(12), borderRadius: s(10), alignItems: "center" },
   sheetBtnCancel: { backgroundColor: "#f0f0f0" },
-  sheetBtnCancelText: { fontSize: 15, fontWeight: "600", color: "#333" },
+  sheetBtnCancelText: { fontSize: fs(15), fontWeight: "600", color: "#333" },
   sheetBtnConfirm: { backgroundColor: "#0a0a0a" },
-  sheetBtnConfirmText: { fontSize: 15, fontWeight: "600", color: "#fff" },
+  sheetBtnConfirmText: { fontSize: fs(15), fontWeight: "600", color: "#fff" },
 
   activityHeader: {
     flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 16,
+    alignItems: "center", marginBottom: vs(16),
   },
-  activityList: { marginBottom: 16 },
+  activityList: { marginBottom: vs(16) },
   activityItem: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#f0f0f0", gap: 12,
+    paddingVertical: vs(12), borderBottomWidth: 1, borderBottomColor: "#f0f0f0", gap: s(12),
   },
   activityIcon: {
-    width: 36, height: 36, borderRadius: 18,
+    width: s(36), height: s(36), borderRadius: s(18),
     backgroundColor: "#f5f5f5", justifyContent: "center", alignItems: "center",
   },
   activityContent: { flex: 1 },
-  activityAction: { fontSize: 14, fontWeight: "600", color: "#111", marginBottom: 2 },
-  activityMeta: { fontSize: 12, color: "#999" },
-  activityCloseBtn: { backgroundColor: "#f0f0f0", borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  activityCloseBtnText: { fontSize: 15, fontWeight: "600", color: "#333" },
+  activityAction: { fontSize: fs(14), fontWeight: "600", color: "#111", marginBottom: vs(2) },
+  activityMeta: { fontSize: fs(12), color: "#999" },
+  activityCloseBtn: { backgroundColor: "#f0f0f0", borderRadius: s(10), paddingVertical: vs(12), alignItems: "center" },
+  activityCloseBtnText: { fontSize: fs(15), fontWeight: "600", color: "#333" },
 });

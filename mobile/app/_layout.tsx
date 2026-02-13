@@ -1,16 +1,20 @@
 import { useEffect, useRef } from "react";
-import { Stack, useRouter } from "expo-router";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { NotificationProvider } from "@/components/notifications/NotificationContext";
+import NotificationHandler from "@/components/NotificationHandler";
+
+// ⚠️  Import the background task module at the top level so that
+//     TaskManager.defineTask runs at module scope (required by expo-task-manager).
+import { registerBackgroundNotificationTask } from "@/notifications/backgroundTask";
+import { setupNotificationCategories } from "@/notifications/categories";
 
 export default function RootLayout() {
-  const router = useRouter();
   const notificationListener = useRef<Notifications.EventSubscription | null>(
     null
   );
-  const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
   useEffect(() => {
     // Configure how notifications are presented when the app is in the foreground
@@ -24,7 +28,15 @@ export default function RootLayout() {
       }),
     });
 
-    // Listen for incoming notifications while app is open
+    // Set up notification categories (Approve/Deny action buttons)
+    // and the dedicated high-priority Android channel.
+    setupNotificationCategories();
+
+    // Register the background task so action-button taps are handled
+    // even when the app is not in the foreground.
+    registerBackgroundNotificationTask();
+
+    // Listen for incoming notifications while app is open (logging only)
     notificationListener.current =
       Notifications.addNotificationReceivedListener((notification) => {
         console.log(
@@ -33,45 +45,24 @@ export default function RootLayout() {
         );
       });
 
-    // Listen for user tapping on a notification
-    responseListener.current =
-      Notifications.addNotificationResponseReceivedListener((response) => {
-        const data = response.notification.request.content.data as
-          | { requestId?: string; code?: string }
-          | undefined;
-        console.log(
-          "🔔 Notification Response:",
-          JSON.stringify(data, null, 2)
-        );
-        // Navigate to approval screen when user taps the notification
-        router.push("/approve-requests");
-      });
-
-    // Check if the app was opened from a notification (cold start)
-    Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (!response) return;
-      const data = response.notification.request.content.data as
-        | { requestId?: string; code?: string }
-        | undefined;
-      if (data) {
-        router.push("/approve-requests");
-      }
-    });
+    // Notification tap handling + cold start are now managed by
+    // <NotificationHandler /> which lives inside AuthProvider and
+    // can silently authenticate via passkey before showing the
+    // approval overlay modal.
 
     return () => {
       if (notificationListener.current) {
         notificationListener.current.remove();
       }
-      if (responseListener.current) {
-        responseListener.current.remove();
-      }
     };
-  }, [router]);
+  }, []);
 
   return (
     <NotificationProvider>
       <AuthProvider>
         <StatusBar style="auto" />
+        {/* Handles notification taps → passkey auth → overlay modal */}
+        <NotificationHandler />
         <Stack
           screenOptions={{
             headerShadowVisible: false,
