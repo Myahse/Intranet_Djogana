@@ -5,10 +5,21 @@ import {
 } from 'recharts'
 import {
   Users, Building2, FolderOpen, FileText, HardDrive, Link2,
-  TrendingUp, Upload, Activity, RefreshCw,
+  TrendingUp, Upload, Activity, RefreshCw, CalendarDays,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
+
+/* ─── period presets ─── */
+const PERIODS = [
+  { value: '7d', label: '7 derniers jours' },
+  { value: '30d', label: '30 derniers jours' },
+  { value: '3m', label: '3 derniers mois' },
+  { value: '6m', label: '6 derniers mois' },
+  { value: '1y', label: '12 derniers mois' },
+  { value: 'all', label: 'Depuis le début' },
+] as const
+type Period = (typeof PERIODS)[number]['value']
 
 const API = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -56,6 +67,9 @@ const ACTION_LABELS: Record<string, string> = {
 
 /* ─── types ─── */
 interface Stats {
+  /** Non-null when the data is scoped to a single direction (non-admin user) */
+  scopedDirection?: string | null
+  period?: string
   users: {
     total: number
     byRole: { role: string; count: number }[]
@@ -130,12 +144,14 @@ export default function AdminPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [period, setPeriod] = useState<Period>('all')
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (p: Period = period) => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API}/api/admin/stats`, { headers: getAuthHeaders() })
+      const url = `${API}/api/admin/stats${p !== 'all' ? `?period=${p}` : ''}`
+      const res = await fetch(url, { headers: getAuthHeaders() })
       if (!res.ok) throw new Error(`${res.status}`)
       setStats(await res.json())
     } catch (e) {
@@ -144,9 +160,14 @@ export default function AdminPage() {
     } finally {
       setLoading(false)
     }
-  }, [getAuthHeaders])
+  }, [getAuthHeaders, period])
 
   useEffect(() => { fetchStats() }, [fetchStats])
+
+  const handlePeriodChange = (p: Period) => {
+    setPeriod(p)
+    fetchStats(p)
+  }
 
   /* loading / error */
   if (loading) {
@@ -161,7 +182,7 @@ export default function AdminPage() {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
         <p className="text-destructive">{error}</p>
-        <button onClick={fetchStats} className="text-sm underline">Réessayer</button>
+        <button onClick={() => { fetchStats(period) }} className="text-sm underline">Réessayer</button>
       </div>
     )
   }
@@ -202,32 +223,63 @@ export default function AdminPage() {
   return (
     <div className="flex-1 space-y-6 p-6 overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Tableau de bord</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Tableau de bord
+            {stats.scopedDirection && (
+              <span className="text-muted-foreground font-normal text-lg"> &mdash; {stats.scopedDirection}</span>
+            )}
+          </h1>
           <p className="text-muted-foreground text-sm">
-            Vue d'ensemble de l'intranet &mdash; connecté en tant que{' '}
+            {stats.scopedDirection
+              ? `Statistiques de votre direction — connecté en tant que `
+              : `Vue d'ensemble de l'intranet — connecté en tant que `}
             <span className="font-semibold">{user?.identifiant}</span>
           </p>
         </div>
-        <button
-          onClick={fetchStats}
-          className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted transition-colors"
-        >
-          <RefreshCw className="h-4 w-4" />
-          Actualiser
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Period filter */}
+          <div className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-1 py-1">
+            <CalendarDays className="h-4 w-4 text-muted-foreground ml-2" />
+            {PERIODS.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => handlePeriodChange(p.value)}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  period === p.value
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => { fetchStats(period) }}
+            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted transition-colors"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Actualiser
+          </button>
+        </div>
       </div>
 
       {/* ── KPI cards ── */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-        <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" />
-        <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" />
-        <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" />
-        <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" />
-        <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" />
-        <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" />
-      </div>
+      {(() => {
+        const periodLabel = period !== 'all' ? PERIODS.find(p => p.value === period)?.label : undefined
+        return (
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" />
+            <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" />
+            <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" />
+            <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" sub={periodLabel} />
+            <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" sub={periodLabel} />
+            <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" sub={periodLabel} />
+          </div>
+        )
+      })()}
 
       {/* ── Row 1: File types pie + Files over time ── */}
       <div className="grid gap-6 lg:grid-cols-2">
@@ -282,7 +334,7 @@ export default function AdminPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Fichiers uploadés (6 derniers mois)
+              <TrendingUp className="h-4 w-4" /> Fichiers uploadés {period === 'all' ? '(12 derniers mois)' : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`}
             </CardTitle>
           </CardHeader>
           <CardContent>

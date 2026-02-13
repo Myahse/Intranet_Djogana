@@ -343,6 +343,7 @@ async function initDb() {
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_direction boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_view_activity_log boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_set_folder_visibility boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_view_stats boolean NOT NULL DEFAULT false')
   } catch (_) { /* ignore */ }
 
   // Activity / audit log: who did what, when (per direction for access control)
@@ -579,120 +580,159 @@ function validateDirectionCode(raw) {
   return s
 }
 
+// Helper: convert a postgres-style interval string to milliseconds
+function parsePgInterval(interval) {
+  const match = interval.match(/^(\d+)\s+(days?|months?|years?)$/)
+  if (!match) return 0
+  const n = parseInt(match[1], 10)
+  const unit = match[2]
+  if (unit.startsWith('day')) return n * 86400000
+  if (unit.startsWith('month')) return n * 30 * 86400000
+  if (unit.startsWith('year')) return n * 365 * 86400000
+  return 0
+}
+
 // ──────────── Admin analytics / stats ────────────
+// Admin sees everything; users with can_view_stats see only their direction.
 app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
-    // Only admin can access
-    const perms = await getPermissionsForIdentifiant(req.authIdentifiant)
-    if (!perms || perms.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' })
+    // Check access
+    const userRow = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [req.authIdentifiant]
+    )
+    if (userRow.rows.length === 0) {
+      return res.status(403).json({ error: 'Accès refusé.' })
+    }
+    const caller = userRow.rows[0]
+    const isAdmin = caller.role === 'admin'
+
+    if (!isAdmin) {
+      const perms = await getPermissionsForIdentifiant(req.authIdentifiant)
+      if (!perms || !perms.can_view_stats) {
+        return res.status(403).json({ error: 'Accès refusé.' })
+      }
     }
 
-    // Run all queries in parallel for speed
+    // For non-admin users: scope everything to their direction
+    const dirId = isAdmin ? null : caller.direction_id
+
+    // ── Period filter ──
+    // Accepted: 7d, 30d, 3m, 6m, 1y, all (default: all)
+    const periodIntervals = { '7d': '7 days', '30d': '30 days', '3m': '3 months', '6m': '6 months', '1y': '1 year' }
+    const periodParam = (req.query.period || 'all').toString()
+    const pgInterval = periodIntervals[periodParam] || null // null = all time
+
+    // Helper: build { sql, params } with optional direction + date filters
+    // Each query builds its own param array so indices are always correct.
+    function q(baseSql, { joinAlias = '', dateCol = 'created_at', extraWhere = [] } = {}) {
+      const clauses = [...extraWhere]
+      const params = []
+      if (dirId) {
+        params.push(dirId)
+        const col = joinAlias ? `${joinAlias}.direction_id` : 'direction_id'
+        clauses.push(`${col} = $${params.length}`)
+      }
+      if (pgInterval && dateCol) {
+        params.push(new Date(Date.now() - parsePgInterval(pgInterval)).toISOString())
+        const col = joinAlias ? `${joinAlias}.${dateCol}` : dateCol
+        clauses.push(`${col} >= $${params.length}`)
+      }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+      return pool.query(baseSql.replace('__WHERE__', where), params)
+    }
+
+    // Files MIME-type CASE expression (reused)
+    const mimeCase = `
+      CASE
+        WHEN mime_type LIKE 'image/%' THEN 'Images'
+        WHEN mime_type LIKE 'video/%' THEN 'Vidéos'
+        WHEN mime_type LIKE 'audio/%' THEN 'Audio'
+        WHEN mime_type IN ('application/pdf') THEN 'PDF'
+        WHEN mime_type IN ('application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document') THEN 'Word'
+        WHEN mime_type IN ('application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/csv') THEN 'Excel/CSV'
+        WHEN mime_type IN ('application/vnd.ms-powerpoint','application/vnd.openxmlformats-officedocument.presentationml.presentation') THEN 'PowerPoint'
+        WHEN mime_type LIKE 'text/%' THEN 'Texte'
+        ELSE 'Autre'
+      END`
+
+    // Run all queries in parallel
     const [
-      usersCount,
-      usersByRole,
-      usersByDirection,
-      directionsCount,
-      foldersCount,
-      foldersByDirection,
-      filesCount,
-      filesByType,
-      filesByDirection,
-      storageTotal,
-      linksCount,
-      recentActivity,
-      topUploaders,
-      filesOverTime,
+      usersCount, usersByRole, usersByDirection,
+      directionsCount, foldersCount, foldersByDirection,
+      filesCount, filesByType, filesByDirection,
+      storageTotal, linksCount,
+      recentActivity, topUploaders, filesOverTime,
     ] = await Promise.all([
-      // Total users
-      pool.query('SELECT COUNT(*)::int AS count FROM users'),
-      // Users grouped by role
-      pool.query('SELECT role, COUNT(*)::int AS count FROM users GROUP BY role ORDER BY count DESC'),
-      // Users grouped by direction
-      pool.query(`
-        SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(u.id)::int AS count
-        FROM users u LEFT JOIN directions d ON u.direction_id = d.id
-        GROUP BY d.name ORDER BY count DESC
-      `),
-      // Total directions
-      pool.query('SELECT COUNT(*)::int AS count FROM directions'),
-      // Total folders
-      pool.query('SELECT COUNT(*)::int AS count FROM folders'),
-      // Folders grouped by direction
-      pool.query(`
-        SELECT d.name AS direction, COUNT(f.id)::int AS count
-        FROM folders f JOIN directions d ON f.direction_id = d.id
-        GROUP BY d.name ORDER BY count DESC
-      `),
-      // Total files
-      pool.query('SELECT COUNT(*)::int AS count FROM files'),
-      // Files grouped by MIME type (category)
-      pool.query(`
-        SELECT
-          CASE
-            WHEN mime_type LIKE 'image/%' THEN 'Images'
-            WHEN mime_type LIKE 'video/%' THEN 'Vidéos'
-            WHEN mime_type LIKE 'audio/%' THEN 'Audio'
-            WHEN mime_type IN ('application/pdf') THEN 'PDF'
-            WHEN mime_type IN (
-              'application/msword',
-              'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            ) THEN 'Word'
-            WHEN mime_type IN (
-              'application/vnd.ms-excel',
-              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              'text/csv'
-            ) THEN 'Excel/CSV'
-            WHEN mime_type IN (
-              'application/vnd.ms-powerpoint',
-              'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-            ) THEN 'PowerPoint'
-            WHEN mime_type LIKE 'text/%' THEN 'Texte'
-            ELSE 'Autre'
-          END AS category,
-          COUNT(*)::int AS count,
-          COALESCE(SUM(size), 0)::bigint AS total_size
-        FROM files
-        GROUP BY category
-        ORDER BY count DESC
-      `),
-      // Files grouped by direction
-      pool.query(`
-        SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
-               COALESCE(SUM(f.size), 0)::bigint AS total_size
-        FROM files f LEFT JOIN directions d ON f.direction_id = d.id
-        GROUP BY d.name ORDER BY count DESC
-      `),
-      // Total storage used
-      pool.query('SELECT COALESCE(SUM(size), 0)::bigint AS total FROM files'),
-      // Total links
-      pool.query('SELECT COUNT(*)::int AS count FROM links'),
-      // Recent activity (last 10)
-      pool.query(`
-        SELECT action, actor_identifiant, entity_type, details, created_at
-        FROM activity_log ORDER BY created_at DESC LIMIT 10
-      `),
-      // Top uploaders (top 5)
-      pool.query(`
-        SELECT u.identifiant, COUNT(f.id)::int AS uploads
-        FROM files f JOIN users u ON f.uploaded_by = u.id
-        GROUP BY u.identifiant ORDER BY uploads DESC LIMIT 5
-      `),
-      // Files created per month (last 6 months)
-      pool.query(`
-        SELECT
-          TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
-          COUNT(*)::int AS count,
-          COALESCE(SUM(size), 0)::bigint AS total_size
-        FROM files
-        WHERE created_at >= NOW() - INTERVAL '6 months'
-        GROUP BY month
-        ORDER BY month ASC
-      `),
+      // ── Users (structural — not date-filtered, admin users hidden) ──
+      q('SELECT COUNT(*)::int AS count FROM users __WHERE__', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
+      q('SELECT role, COUNT(*)::int AS count FROM users __WHERE__ GROUP BY role ORDER BY count DESC', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
+      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(u.id)::int AS count
+         FROM users u LEFT JOIN directions d ON u.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
+        { joinAlias: 'u', dateCol: null, extraWhere: ["u.role <> 'admin'"] }),
+      // ── Directions (structural) ──
+      dirId
+        ? pool.query('SELECT 1::int AS count')
+        : pool.query('SELECT COUNT(*)::int AS count FROM directions'),
+      // ── Folders (structural — not date-filtered, but direction-scoped) ──
+      q('SELECT COUNT(*)::int AS count FROM folders __WHERE__', { dateCol: null }),
+      q(`SELECT d.name AS direction, COUNT(fo.id)::int AS count
+         FROM folders fo JOIN directions d ON fo.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
+        { joinAlias: 'fo', dateCol: null }),
+      // ── Files (date + direction filtered) ──
+      q('SELECT COUNT(*)::int AS count FROM files __WHERE__'),
+      q(`SELECT ${mimeCase} AS category, COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
+         FROM files __WHERE__ GROUP BY category ORDER BY count DESC`),
+      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
+                COALESCE(SUM(f.size),0)::bigint AS total_size
+         FROM files f LEFT JOIN directions d ON f.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
+        { joinAlias: 'f' }),
+      // ── Storage (date + direction filtered) ──
+      q('SELECT COALESCE(SUM(size),0)::bigint AS total FROM files __WHERE__'),
+      // ── Links (date + direction filtered) ──
+      q('SELECT COUNT(*)::int AS count FROM links __WHERE__'),
+      // ── Activity (date + direction filtered, admin actors hidden) ──
+      q(`SELECT action, actor_identifiant, entity_type, details, created_at
+         FROM activity_log __WHERE__ ORDER BY created_at DESC LIMIT 10`,
+        { extraWhere: ["(actor_identifiant IS NULL OR actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
+      // ── Top uploaders (date + direction filtered, admin hidden) ──
+      q(`SELECT u.identifiant, COUNT(f.id)::int AS uploads
+         FROM files f JOIN users u ON f.uploaded_by = u.id __WHERE__
+         GROUP BY u.identifiant ORDER BY uploads DESC LIMIT 5`,
+        { joinAlias: 'f', extraWhere: ["u.role <> 'admin'"] }),
+      // ── Files over time (always use period or default to 6 months) ──
+      (() => {
+        const clauses = []
+        const params = []
+        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+        if (pgInterval) {
+          params.push(new Date(Date.now() - parsePgInterval(pgInterval)).toISOString())
+          clauses.push(`created_at >= $${params.length}`)
+        } else {
+          // Default: show last 12 months for the timeline even when period is "all"
+          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+          clauses.push(`created_at >= $${params.length}`)
+        }
+        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+        return pool.query(`
+          SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+                 COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
+          FROM files ${where}
+          GROUP BY month ORDER BY month ASC
+        `, params)
+      })(),
     ])
 
+    // For direction-scoped users, include the direction name
+    let scopedDirectionName = null
+    if (dirId) {
+      const d = await pool.query('SELECT name FROM directions WHERE id = $1', [dirId])
+      scopedDirectionName = d.rows[0]?.name || null
+    }
+
     res.json({
+      scopedDirection: scopedDirectionName,
+      period: periodParam,
       users: {
         total: usersCount.rows[0].count,
         byRole: usersByRole.rows,
@@ -837,6 +877,7 @@ app.get('/api/users', async (_req, res) => {
              d.name AS direction_name
       FROM users u
       LEFT JOIN directions d ON d.id = u.direction_id
+      WHERE u.role <> 'admin'
       ORDER BY u.created_at DESC
     `)
     return res.json(
@@ -875,6 +916,12 @@ app.delete('/api/users/:id', async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur introuvable.' })
     }
     const deletedUser = userRow.rows[0]
+
+    // Block deletion of admin users
+    if (deletedUser.role === 'admin') {
+      return res.status(403).json({ error: 'Impossible de supprimer un compte administrateur.' })
+    }
+
     let actorId = null
     if (callerIdentifiant) {
       const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
@@ -922,13 +969,23 @@ app.post('/api/auth/register', async (req, res) => {
     let finalRole
     if (role && typeof role === 'string' && role.trim()) {
       const trimmed = role.trim()
+      // Block assigning admin role — only an existing admin can do this
+      if (trimmed.toLowerCase() === 'admin') {
+        if (!callerIdentifiant) {
+          return res.status(403).json({ error: 'Impossible de créer un compte administrateur.' })
+        }
+        const callerRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [callerIdentifiant])
+        if (callerRes.rows.length === 0 || callerRes.rows[0].role !== 'admin') {
+          return res.status(403).json({ error: 'Seul un administrateur peut créer un compte administrateur.' })
+        }
+      }
       const roleRes = await pool.query('SELECT name FROM roles WHERE name = $1', [trimmed])
       if (roleRes.rows.length === 0) {
         return res.status(400).json({ error: 'Rôle invalide.' })
       }
       finalRole = trimmed
     } else {
-      finalRole = identifiant === '1234567890' ? 'admin' : 'user'
+      finalRole = 'user'
     }
 
     // Non-admin users must be assigned to a direction
@@ -1537,6 +1594,8 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
     if (user.role !== 'admin') {
       params.push(user.direction_id)
       sql += ` AND a.direction_id = $${params.length}`
+      // Hide admin actions from non-admin users
+      sql += ` AND (a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))`
     }
     if (filterDirectionId && user.role === 'admin') {
       params.push(filterDirectionId)
@@ -1590,13 +1649,14 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_delete_direction: true,
       can_view_activity_log: true,
       can_set_folder_visibility: true,
+      can_view_stats: true,
     }
   }
   const permRes = await pool.query(
     `
       SELECT p.can_create_folder, p.can_upload_file, p.can_delete_file, p.can_delete_folder,
              p.can_create_user, p.can_delete_user, p.can_create_direction, p.can_delete_direction,
-             p.can_view_activity_log, p.can_set_folder_visibility
+             p.can_view_activity_log, p.can_set_folder_visibility, p.can_view_stats
       FROM roles r
       JOIN role_permissions p ON p.role_id = r.id
       WHERE r.name = $1
@@ -1615,6 +1675,7 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_delete_direction: false,
       can_view_activity_log: false,
       can_set_folder_visibility: false,
+      can_view_stats: false,
     }
   }
   const row = permRes.rows[0]
@@ -1629,10 +1690,11 @@ async function getPermissionsForIdentifiant(identifiant) {
     can_delete_direction: !!row.can_delete_direction,
     can_view_activity_log: !!row.can_view_activity_log,
     can_set_folder_visibility: !!row.can_set_folder_visibility,
+    can_view_stats: !!row.can_view_stats,
   }
 }
 
-// List roles with their global permissions
+// List roles with their global permissions (admin role is hidden from the list)
 app.get('/api/roles', async (_req, res) => {
   try {
     const result = await pool.query(`
@@ -1648,9 +1710,11 @@ app.get('/api/roles', async (_req, res) => {
         COALESCE(p.can_create_direction, false) AS can_create_direction,
         COALESCE(p.can_delete_direction, false) AS can_delete_direction,
         COALESCE(p.can_view_activity_log, false) AS can_view_activity_log,
-        COALESCE(p.can_set_folder_visibility, false) AS can_set_folder_visibility
+        COALESCE(p.can_set_folder_visibility, false) AS can_set_folder_visibility,
+        COALESCE(p.can_view_stats, false) AS can_view_stats
       FROM roles r
       LEFT JOIN role_permissions p ON p.role_id = r.id
+      WHERE r.name <> 'admin'
       ORDER BY r.created_at DESC
     `)
     return res.json(result.rows)
@@ -1660,13 +1724,16 @@ app.get('/api/roles', async (_req, res) => {
   }
 })
 
-// Create a new role (name must be unique)
+// Create a new role (name must be unique; "admin" is reserved)
 app.post('/api/roles', async (req, res) => {
   try {
     const { name } = req.body || {}
     const trimmed = (name || '').trim()
     if (!trimmed) {
       return res.status(400).json({ error: 'Nom de rôle requis.' })
+    }
+    if (trimmed.toLowerCase() === 'admin') {
+      return res.status(400).json({ error: 'Le nom "admin" est réservé.' })
     }
 
     const id = uuidv4()
@@ -1723,19 +1790,23 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       canDeleteDirection,
       canViewActivityLog,
       canSetFolderVisibility,
+      canViewStats,
     } = req.body || {}
 
-    // Ensure the role exists
-    const roleRes = await pool.query('SELECT id FROM roles WHERE id = $1', [id])
+    // Ensure the role exists and is not the admin role
+    const roleRes = await pool.query('SELECT id, name FROM roles WHERE id = $1', [id])
     if (roleRes.rows.length === 0) {
       return res.status(404).json({ error: 'Rôle introuvable.' })
+    }
+    if (roleRes.rows[0].name === 'admin') {
+      return res.status(403).json({ error: 'Les permissions du rôle admin ne peuvent pas être modifiées.' })
     }
 
     // Upsert permissions row
     await pool.query(
       `
-        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log, can_set_folder_visibility)
-        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), COALESCE($11, false))
+        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log, can_set_folder_visibility, can_view_stats)
+        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), COALESCE($11, false), COALESCE($12, false))
         ON CONFLICT (role_id)
         DO UPDATE SET
           can_create_folder = COALESCE($2, role_permissions.can_create_folder),
@@ -1747,9 +1818,10 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           can_create_direction = COALESCE($8, role_permissions.can_create_direction),
           can_delete_direction = COALESCE($9, role_permissions.can_delete_direction),
           can_view_activity_log = COALESCE($10, role_permissions.can_view_activity_log),
-          can_set_folder_visibility = COALESCE($11, role_permissions.can_set_folder_visibility)
+          can_set_folder_visibility = COALESCE($11, role_permissions.can_set_folder_visibility),
+          can_view_stats = COALESCE($12, role_permissions.can_view_stats)
       `,
-      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection, canViewActivityLog, canSetFolderVisibility]
+      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection, canViewActivityLog, canSetFolderVisibility, canViewStats]
     )
 
     const updated = await pool.query(
@@ -1766,7 +1838,8 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           p.can_create_direction,
           p.can_delete_direction,
           p.can_view_activity_log,
-          p.can_set_folder_visibility
+          p.can_set_folder_visibility,
+          p.can_view_stats
         FROM roles r
         JOIN role_permissions p ON p.role_id = r.id
         WHERE r.id = $1

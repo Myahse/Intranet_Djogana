@@ -62,7 +62,8 @@ function DashboardLayout() {
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
+  const canViewStats = isAdmin || user?.permissions?.can_view_stats
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
@@ -191,7 +192,7 @@ function DashboardLayout() {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    {isAdmin && (
+                    {canViewStats && (
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild isActive={isAdminPage}>
                           <Link to="/dashboard/stats">
