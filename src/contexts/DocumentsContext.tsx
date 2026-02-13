@@ -76,6 +76,10 @@ function isOfficeDoc(fileName: string): boolean {
   return ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx' || ext === 'xls' || ext === 'xlsx'
 }
 
+function buildOfficeViewerUrl(fileUrl: string) {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
+}
+
 async function uploadToServer(
   file: File,
   folderName: string,
@@ -100,10 +104,6 @@ async function uploadToServer(
   }
 
   return (await res.json()) as { id: string; name: string; size: number; url: string }
-}
-
-function buildOfficeViewerUrl(fileUrl: string) {
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
 }
 
 type FolderMeta = {
