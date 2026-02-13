@@ -1,4 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  Modal,
+  ActivityIndicator,
+  StyleSheet,
+  Animated,
+  Dimensions,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,6 +17,7 @@ import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
 import ApprovalOverlayModal from "@/modals/ApprovalOverlayModal";
 import { ACTION_APPROVE, ACTION_DENY } from "@/notifications/constants";
+import { s, vs, ms, fs } from "@/responsive";
 
 /**
  * NotificationHandler
@@ -39,6 +50,13 @@ export default function NotificationHandler() {
   // (may differ from the context token if we did a silent login)
   const sessionTokenRef = useRef<string | null>(null);
 
+  /* ── Processing overlay state (for notification action-button taps) ── */
+  const [processingVisible, setProcessingVisible] = useState(false);
+  const [processingAction, setProcessingAction] = useState<"approve" | "deny" | null>(null);
+  const [processingResult, setProcessingResult] = useState<"success" | "error" | null>(null);
+  const processingScale = useRef(new Animated.Value(0.85)).current;
+  const processingOpacity = useRef(new Animated.Value(0)).current;
+
   /* ── Obtain a valid auth token (biometric if needed) ── */
   const obtainActiveToken = useCallback(async (): Promise<string | null> => {
     let activeToken = token;
@@ -63,6 +81,43 @@ export default function NotificationHandler() {
     return activeToken;
   }, [token, login]);
 
+  /* ── Show / hide the processing overlay with animation ── */
+  const showProcessingOverlay = useCallback(
+    (action: "approve" | "deny") => {
+      setProcessingAction(action);
+      setProcessingResult(null);
+      setProcessingVisible(true);
+      processingScale.setValue(0.85);
+      processingOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(processingScale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 65,
+          friction: 9,
+        }),
+        Animated.timing(processingOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    },
+    [processingScale, processingOpacity]
+  );
+
+  const hideProcessingOverlay = useCallback(() => {
+    Animated.timing(processingOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setProcessingVisible(false);
+      setProcessingAction(null);
+      setProcessingResult(null);
+    });
+  }, [processingOpacity]);
+
   /* ── Handle an action-button tap (Approve / Deny) ── */
   const handleActionButton = useCallback(
     async (
@@ -71,6 +126,9 @@ export default function NotificationHandler() {
     ) => {
       const requestId = data?.requestId;
       if (!requestId) return;
+
+      const isApprove = actionId === ACTION_APPROVE;
+      showProcessingOverlay(isApprove ? "approve" : "deny");
 
       // Try stored token first (no biometric)
       let activeToken = await storage.getToken();
@@ -81,17 +139,18 @@ export default function NotificationHandler() {
       }
 
       if (!activeToken) {
-        // Can't authenticate → open the app
+        // Can't authenticate → close overlay and open the app
+        hideProcessingOverlay();
         router.push("/approve-requests");
         return;
       }
 
-      const isApprove = actionId === ACTION_APPROVE;
       const success = isApprove
         ? await api.approveDeviceRequest(activeToken, requestId)
         : await api.denyDeviceRequest(activeToken, requestId);
 
       if (success) {
+        setProcessingResult("success");
         // Show a quick confirmation notification
         await Notifications.scheduleNotificationAsync({
           content: {
@@ -102,12 +161,17 @@ export default function NotificationHandler() {
           },
           trigger: null,
         });
+        // Auto-close the overlay after a brief delay
+        setTimeout(hideProcessingOverlay, 1500);
       } else {
-        // Failed → open the app for manual handling
-        router.push("/approve-requests");
+        setProcessingResult("error");
+        setTimeout(() => {
+          hideProcessingOverlay();
+          router.push("/approve-requests");
+        }, 1500);
       }
     },
-    [obtainActiveToken, router]
+    [obtainActiveToken, router, showProcessingOverlay, hideProcessingOverlay]
   );
 
   /* ── Handle a regular notification tap (no action button) ── */
@@ -248,12 +312,168 @@ export default function NotificationHandler() {
   }, []);
 
   return (
-    <ApprovalOverlayModal
-      visible={overlayVisible}
-      request={overlayRequest}
-      onApprove={handleOverlayApprove}
-      onDeny={handleOverlayDeny}
-      onClose={handleOverlayClose}
-    />
+    <>
+      <ApprovalOverlayModal
+        visible={overlayVisible}
+        request={overlayRequest}
+        onApprove={handleOverlayApprove}
+        onDeny={handleOverlayDeny}
+        onClose={handleOverlayClose}
+      />
+
+      {/* ── Processing overlay (shown when action button tapped on notification) ── */}
+      <Modal
+        visible={processingVisible}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+      >
+        <View style={processingStyles.overlay}>
+          <Animated.View
+            style={[
+              processingStyles.card,
+              {
+                transform: [{ scale: processingScale }],
+                opacity: processingOpacity,
+              },
+            ]}
+          >
+            {/* Icon */}
+            <View style={processingStyles.iconContainer}>
+              <View
+                style={[
+                  processingStyles.iconCircle,
+                  processingResult === "success"
+                    ? processingStyles.iconCircleSuccess
+                    : processingResult === "error"
+                    ? processingStyles.iconCircleError
+                    : processingStyles.iconCircleDefault,
+                ]}
+              >
+                {processingResult === null ? (
+                  <ActivityIndicator
+                    size="large"
+                    color={processingAction === "approve" ? "#0a0a0a" : "#dc2626"}
+                  />
+                ) : (
+                  <Ionicons
+                    name={
+                      processingResult === "success"
+                        ? "checkmark-circle"
+                        : "close-circle"
+                    }
+                    size={ms(40)}
+                    color={
+                      processingResult === "success" ? "#16a34a" : "#dc2626"
+                    }
+                  />
+                )}
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text style={processingStyles.title}>
+              {processingResult === null
+                ? processingAction === "approve"
+                  ? "Approbation en cours…"
+                  : "Refus en cours…"
+                : processingResult === "success"
+                ? processingAction === "approve"
+                  ? "Connexion approuvée"
+                  : "Connexion refusée"
+                : "Erreur"}
+            </Text>
+
+            {/* Subtitle */}
+            <Text style={processingStyles.subtitle}>
+              {processingResult === null
+                ? "Veuillez patienter…"
+                : processingResult === "success"
+                ? processingAction === "approve"
+                  ? "L'accès a été accordé avec succès."
+                  : "L'accès a été refusé."
+                : "Impossible de traiter cette demande."}
+            </Text>
+
+            {/* Security badge */}
+            <View style={processingStyles.badge}>
+              <Ionicons name="lock-closed" size={ms(12)} color="#999" />
+              <Text style={processingStyles.badgeText}>Connexion sécurisée</Text>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+    </>
   );
 }
+
+/* ── Styles for the processing overlay ── */
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+
+const processingStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: s(24),
+  },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: s(20),
+    padding: s(28),
+    width: "100%",
+    maxWidth: Math.min(SCREEN_WIDTH - s(48), s(320)),
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: vs(8) },
+    shadowOpacity: 0.2,
+    shadowRadius: s(24),
+    elevation: 12,
+  },
+  iconContainer: {
+    marginBottom: vs(16),
+  },
+  iconCircle: {
+    width: s(72),
+    height: s(72),
+    borderRadius: s(36),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconCircleDefault: {
+    backgroundColor: "#f5f5f5",
+  },
+  iconCircleSuccess: {
+    backgroundColor: "#f0fdf4",
+  },
+  iconCircleError: {
+    backgroundColor: "#fef2f2",
+  },
+  title: {
+    fontSize: fs(18),
+    fontWeight: "700",
+    color: "#0a0a0a",
+    textAlign: "center",
+    marginBottom: vs(6),
+  },
+  subtitle: {
+    fontSize: fs(14),
+    color: "#666",
+    textAlign: "center",
+    lineHeight: fs(20),
+    marginBottom: vs(8),
+  },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: s(4),
+    marginTop: vs(12),
+  },
+  badgeText: {
+    fontSize: fs(11),
+    color: "#999",
+    fontWeight: "500",
+  },
+});

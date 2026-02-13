@@ -2,7 +2,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -46,6 +48,7 @@ type AuthContextValue = {
   setUser: (user: User | null) => void
   login: (identifiant: string, motDePasse: string) => Promise<boolean>
   logout: () => void
+  refreshPermissions: () => Promise<void>
   registerUser: (
     identifiant: string,
     password: string,
@@ -207,6 +210,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (_) { /* ignore */ }
     return {}
   }, [])
+
+  // Fetch fresh permissions / user data from the server without re-login
+  const refreshPermissions = useCallback(async () => {
+    try {
+      const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
+      if (!token) return
+      const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as {
+        identifiant: string
+        role: string
+        direction_id?: string | null
+        direction_name?: string | null
+        permissions?: UserPermissions | null
+      }
+      if (!data.identifiant || !data.role) return
+      setUser({
+        identifiant: data.identifiant,
+        role: data.role,
+        direction_id: data.direction_id ?? null,
+        direction_name: data.direction_name ?? null,
+        permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+      })
+    } catch {
+      // silent – keep existing session
+    }
+  }, [setUser])
 
   const requestDeviceLogin = useCallback(
     async (
@@ -440,6 +472,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   )
 
+  // Auto-refresh permissions on window focus and every 5 minutes
+  const refreshRef = useRef(refreshPermissions)
+  refreshRef.current = refreshPermissions
+
+  useEffect(() => {
+    if (!user) return
+    const onFocus = () => { refreshRef.current() }
+    window.addEventListener('focus', onFocus)
+    const interval = setInterval(() => { refreshRef.current() }, 5 * 60 * 1000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      clearInterval(interval)
+    }
+  }, [user])
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -447,6 +494,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser,
       login,
       logout,
+      refreshPermissions,
       registerUser,
       changePassword,
       requestDeviceLogin,
@@ -461,6 +509,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser,
       login,
       logout,
+      refreshPermissions,
       registerUser,
       changePassword,
       requestDeviceLogin,
