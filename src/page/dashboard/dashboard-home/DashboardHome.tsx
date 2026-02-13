@@ -52,6 +52,7 @@ const DashboardHome = (): ReactNode => {
       can_delete_direction?: boolean
       can_view_activity_log?: boolean
       can_set_folder_visibility?: boolean
+      can_view_stats?: boolean
     }>
   >([])
   const [selectedRole, setSelectedRole] = useState<string>('user')
@@ -124,6 +125,7 @@ const DashboardHome = (): ReactNode => {
               can_delete_direction?: boolean
               can_view_activity_log?: boolean
               can_set_folder_visibility?: boolean
+              can_view_stats?: boolean
             }>
             setRoles(rolesData)
             const defaultRole =
@@ -262,6 +264,7 @@ const DashboardHome = (): ReactNode => {
         can_upload_file?: boolean
         can_delete_file?: boolean
         can_delete_folder?: boolean
+        can_view_stats?: boolean
       }
       setRoles((prev) =>
         prev.some((r) => r.id === created.id)
@@ -280,6 +283,7 @@ const DashboardHome = (): ReactNode => {
                 can_delete_direction: false,
                 can_view_activity_log: false,
                 can_set_folder_visibility: false,
+                can_view_stats: false,
               },
             ]
       )
@@ -334,7 +338,8 @@ const DashboardHome = (): ReactNode => {
       | 'can_create_direction'
       | 'can_delete_direction'
       | 'can_view_activity_log'
-      | 'can_set_folder_visibility',
+      | 'can_set_folder_visibility'
+      | 'can_view_stats',
     value: boolean
   ) => {
     setLoading({ open: true, message: 'Mise à jour des permissions…' })
@@ -350,6 +355,7 @@ const DashboardHome = (): ReactNode => {
       if (field === 'can_delete_direction') payload.canDeleteDirection = value
       if (field === 'can_view_activity_log') payload.canViewActivityLog = value
       if (field === 'can_set_folder_visibility') payload.canSetFolderVisibility = value
+      if (field === 'can_view_stats') payload.canViewStats = value
 
       const res = await fetch(
         `${API_BASE_URL}/api/roles/${encodeURIComponent(roleId)}/permissions`,
@@ -377,6 +383,7 @@ const DashboardHome = (): ReactNode => {
         can_delete_direction: boolean
         can_view_activity_log: boolean
         can_set_folder_visibility: boolean
+        can_view_stats: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Permissions mises à jour' }))
@@ -720,6 +727,7 @@ const DashboardHome = (): ReactNode => {
                       <th className="px-3 py-2 text-center font-medium">Supprimer direction</th>
                       <th className="px-3 py-2 text-center font-medium">Voir journal</th>
                       <th className="px-3 py-2 text-center font-medium">Visibilité dossier</th>
+                      <th className="px-3 py-2 text-center font-medium">Voir stats</th>
                       <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
                     </tr>
                   </thead>
@@ -756,6 +764,9 @@ const DashboardHome = (): ReactNode => {
                         </td>
                         <td className="px-3 py-2 text-center">
                           <Switch checked={Boolean(r.can_set_folder_visibility)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_set_folder_visibility', checked)} aria-label={`Autoriser ${r.name} à définir la visibilité des dossiers`} />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <Switch checked={Boolean(r.can_view_stats)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_view_stats', checked)} aria-label={`Autoriser ${r.name} à voir les statistiques`} />
                         </td>
                         <td className="px-3 py-2 text-right">
                           {r.name !== 'admin' ? (
