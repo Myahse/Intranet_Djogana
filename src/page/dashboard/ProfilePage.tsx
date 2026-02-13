@@ -1,5 +1,4 @@
 import { useAuth } from '@/contexts/AuthContext'
-import { useDocuments } from '@/contexts/DocumentsContext'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -13,56 +12,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { FileText, FolderPlus, History, LogOut, Trash2, Upload, UserPlus, KeyRound, Building2, Link2 } from 'lucide-react'
-import { parseFolderKey } from '@/contexts/DocumentsContext'
+import { History, LogOut, Trash2, UserPlus, KeyRound, Building2 } from 'lucide-react'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-
-const fileInputClass =
-  'flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
-
-// APK, images, video, MP3, Excel, documents, and other files
-const FILE_UPLOAD_ACCEPT =
-  '.apk,application/vnd.android.package-archive,' +
-  'image/*,' +
-  'video/*,' +
-  'audio/*,.mp3,audio/mpeg,' +
-  '.xls,.xlsx,.xlsm,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,' +
-  '.pdf,.doc,.docx,.ppt,.pptx,.txt,.zip,.rar,' +
-  'application/octet-stream'
 
 const ProfilePage = (): ReactNode => {
   const navigate = useNavigate()
   const { user, isAdmin, logout, registerUser, changePassword, getAuthHeaders } = useAuth()
-  const { folderOptions, addFile, addLink, addFolder, addFolderMeta } = useDocuments()
   const canCreateUser = isAdmin || !!user?.permissions?.can_create_user
   const canDeleteUser = isAdmin || !!user?.permissions?.can_delete_user
   const canCreateDirection = isAdmin || !!user?.permissions?.can_create_direction
   const canDeleteDirection = isAdmin || !!user?.permissions?.can_delete_direction
   const canViewActivityLog = isAdmin || !!user?.permissions?.can_view_activity_log
-  const canSetFolderVisibility = isAdmin || !!user?.permissions?.can_set_folder_visibility
-  const [selectedFolder, setSelectedFolder] = useState<string>('')
-  const [selectedFolderLink, setSelectedFolderLink] = useState<string>('')
-  const [linkUrl, setLinkUrl] = useState<string>('')
-  const [linkLabel, setLinkLabel] = useState<string>('')
-  const [uploadFileName, setUploadFileName] = useState<string>('')
-  const [newFolderName, setNewFolderName] = useState('')
-  const [newFolderVisibility, setNewFolderVisibility] = useState<'public' | 'direction_only'>('public')
-  const [formationGroupName, setFormationGroupName] = useState('')
-  const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
-  const [formationSubfolderName, setFormationSubfolderName] = useState('')
   const [newUserPhone, setNewUserPhone] = useState('')
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [isChangingPassword, setIsChangingPassword] = useState(false)
-  const uploadFileInputRef = useRef<HTMLInputElement>(null)
-  const addFolderFileInputRef = useRef<HTMLInputElement>(null)
-  const formationFolderFileInputRef = useRef<HTMLInputElement>(null)
   const [users, setUsers] = useState<
     Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string }>
   >([])
@@ -91,8 +61,6 @@ const ProfilePage = (): ReactNode => {
   const [newDirectionCode, setNewDirectionCode] = useState('')
   const [isCreatingDirection, setIsCreatingDirection] = useState(false)
   const [selectedDirection, setSelectedDirection] = useState<string>('')
-  const [selectedDirectionFolder, setSelectedDirectionFolder] = useState<string>('')
-  const [selectedDirectionFormation, setSelectedDirectionFormation] = useState<string>('')
   const [activityLog, setActivityLog] = useState<
     Array<{
       id: string
@@ -110,130 +78,9 @@ const ProfilePage = (): ReactNode => {
   const [activityLogDirectionId, setActivityLogDirectionId] = useState<string>('')
   const [activityLogAction, setActivityLogAction] = useState<string>('')
 
-  // Existing formation groups derived from folder keys (name part: "group::subfolder")
-  const formationGroupOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          folderOptions
-            .map((opt) => parseFolderKey(opt.value).name.split('::')[0])
-            .filter((name) => name && name.trim().length > 0)
-        )
-      ).map((name) => ({ value: name, label: name })),
-    [folderOptions]
-  )
-
   const handleLogout = () => {
     logout()
     navigate('/login')
-  }
-
-  const handleAddFolder = async () => {
-    const name = newFolderName.trim()
-    if (!name) {
-      toast.error('Veuillez saisir un nom de dossier')
-      return
-    }
-    if (!selectedDirectionFolder) {
-      toast.error('Veuillez sélectionner une direction')
-      return
-    }
-    const file = addFolderFileInputRef.current?.files?.[0]
-    if (!file) {
-      toast.error('Veuillez choisir un fichier à ajouter au dossier')
-      return
-    }
-    try {
-      await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
-      setNewFolderName('')
-      setNewFolderVisibility('public')
-      if (addFolderFileInputRef.current) addFolderFileInputRef.current.value = ''
-      toast.success('Dossier créé et fichier ajouté')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la création du dossier")
-      // eslint-disable-next-line no-console
-      console.error(err)
-    }
-  }
-
-  const handleUploadFile = async () => {
-    if (!selectedFolder) {
-      toast.error('Veuillez sélectionner un dossier')
-      return
-    }
-    const file = uploadFileInputRef.current?.files?.[0]
-    if (!file) {
-      toast.error('Veuillez choisir un fichier')
-      return
-    }
-    try {
-      await addFile(selectedFolder, file, uploadFileName.trim() || undefined)
-      setUploadFileName('')
-      if (uploadFileInputRef.current) uploadFileInputRef.current.value = ''
-      toast.success('Fichier ajouté (le code de la direction est appliqué automatiquement)')
-    } catch (err) {
-      toast.error("Erreur lors de l'upload du fichier")
-      // eslint-disable-next-line no-console
-      console.error(err)
-    }
-  }
-
-  const handleAddLink = async () => {
-    if (!selectedFolderLink) {
-      toast.error('Veuillez sélectionner un dossier')
-      return
-    }
-    const url = linkUrl.trim()
-    if (!url) {
-      toast.error('Veuillez saisir une URL (ex. https://github.com/...)')
-      return
-    }
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      toast.error('L’URL doit commencer par http:// ou https://')
-      return
-    }
-    try {
-      await addLink(selectedFolderLink, url, linkLabel.trim() || url)
-      setLinkUrl('')
-      setLinkLabel('')
-      toast.success('Lien ajouté')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de l'ajout du lien")
-      // eslint-disable-next-line no-console
-      console.error(err)
-    }
-  }
-
-  const handleAddFormationFolder = async () => {
-    const group = (selectedFormationGroup || formationGroupName).trim()
-    const sub = formationSubfolderName.trim()
-    if (!group || !sub) {
-      toast.error('Veuillez saisir le nom du groupe et du sous-dossier')
-      return
-    }
-    if (!selectedDirectionFormation) {
-      toast.error('Veuillez sélectionner une direction')
-      return
-    }
-    const file = formationFolderFileInputRef.current?.files?.[0]
-    const folderKey = `${group}::${sub}`
-    try {
-      if (file) {
-        await addFolder(folderKey, file, selectedDirectionFormation)
-        toast.success('Dossier de formation créé et fichier ajouté')
-      } else {
-        await addFolderMeta(folderKey, selectedDirectionFormation)
-        toast.success('Dossier de formation créé (sans fichier)')
-      }
-      setFormationGroupName('')
-      setSelectedFormationGroup('')
-      setFormationSubfolderName('')
-      if (formationFolderFileInputRef.current) formationFolderFileInputRef.current.value = ''
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur lors de la création du dossier de formation")
-      // eslint-disable-next-line no-console
-      console.error(err)
-    }
   }
 
   useEffect(() => {
@@ -288,8 +135,6 @@ const ProfilePage = (): ReactNode => {
             setDirections(dirData)
             if (dirData.length > 0 && !selectedDirection) {
               setSelectedDirection(dirData[0].id)
-              setSelectedDirectionFolder(dirData[0].id)
-              setSelectedDirectionFormation(dirData[0].id)
             }
           }
         }
@@ -331,7 +176,6 @@ const ProfilePage = (): ReactNode => {
           }>
           setActivityLog(data)
         } else if (res.status === 401) {
-          // Token is expired or invalid — force re-authentication
           logout()
         } else {
           const err = await res.json().catch(() => ({}))
@@ -340,7 +184,7 @@ const ProfilePage = (): ReactNode => {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(err)
-        toast.error('Erreur lors du chargement du journal d’activité')
+        toast.error("Erreur lors du chargement du journal d'activité")
       } finally {
         setActivityLogLoading(false)
       }
@@ -499,7 +343,7 @@ const ProfilePage = (): ReactNode => {
         can_set_folder_visibility: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
-      toast.success('Permissions mises à jour')
+      toast.success('Permissions mises à jour. Les utilisateurs connectés recevront les changements automatiquement.')
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(err)
@@ -539,7 +383,7 @@ const ProfilePage = (): ReactNode => {
       return
     }
     if (selectedRole !== 'admin' && !selectedDirection) {
-      toast.error('Veuillez sélectionner une direction pour l’utilisateur')
+      toast.error("Veuillez sélectionner une direction pour l'utilisateur")
       return
     }
 
@@ -1212,270 +1056,6 @@ const ProfilePage = (): ReactNode => {
               </Card>
             )}
           </div>
-
-          {isAdmin && (
-          <div className="space-y-8">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <FolderPlus className="size-5" />
-                Ajouter un dossier
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Créez un nouveau dossier dans une direction, avec un nom et un premier fichier.
-              </p>
-              <div className="grid gap-2 max-w-xs">
-                <Label htmlFor="folder-direction">Direction</Label>
-                <Select value={selectedDirectionFolder} onValueChange={setSelectedDirectionFolder}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Sélectionner une direction" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {directions.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="folder-name">Nom du dossier</Label>
-                <Input
-                  id="folder-name"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="Ex. Procédures 2024"
-                  className="max-w-xs"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Fichier à envoyer</Label>
-                <input
-                  ref={addFolderFileInputRef}
-                  type="file"
-                  className={fileInputClass}
-                  accept={FILE_UPLOAD_ACCEPT}
-                />
-              </div>
-              {canSetFolderVisibility && (
-                <div className="flex items-center gap-3">
-                  <Switch
-                    id="folder-visibility"
-                    checked={newFolderVisibility === 'direction_only'}
-                    onCheckedChange={(checked) =>
-                      setNewFolderVisibility(checked ? 'direction_only' : 'public')
-                    }
-                  />
-                  <Label htmlFor="folder-visibility" className="cursor-pointer">
-                    Visible uniquement par ma direction
-                  </Label>
-                </div>
-              )}
-              <Button onClick={handleAddFolder}>
-                <FolderPlus className="size-4 mr-2" />
-                Créer le dossier et ajouter le fichier
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <FolderPlus className="size-5" />
-                Ajouter un sous-dossier (groupe + sous-dossier)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Créez une structure hiérarchique pour les documents de formation&nbsp;: un groupe
-                (ex. &quot;Module 1&quot;) contenant un sous-dossier (ex. &quot;Cours&quot;), puis
-                ajoutez un premier fichier.
-              </p>
-              <div className="grid gap-2 max-w-xs">
-                <Label htmlFor="formation-direction">Direction</Label>
-                <Select value={selectedDirectionFormation} onValueChange={setSelectedDirectionFormation}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Sélectionner une direction" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {directions.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="formation-group-name">Nom du groupe</Label>
-                {formationGroupOptions.length > 0 && (
-                  <Select
-                    value={selectedFormationGroup}
-                    onValueChange={(value) => {
-                      setSelectedFormationGroup(value)
-                      setFormationGroupName('')
-                    }}
-                  >
-                    <SelectTrigger className="w-full max-w-xs">
-                      <SelectValue placeholder="Sélectionner un groupe existant" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {formationGroupOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                <Input
-                  id="formation-group-name"
-                  value={formationGroupName}
-                  onChange={(e) => {
-                    setFormationGroupName(e.target.value)
-                    setSelectedFormationGroup('')
-                  }}
-                  placeholder='Ou saisir un nouveau groupe, ex. "Module 1"'
-                  className="max-w-xs"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="formation-subfolder-name">Nom du sous-dossier</Label>
-                <Input
-                  id="formation-subfolder-name"
-                  value={formationSubfolderName}
-                  onChange={(e) => setFormationSubfolderName(e.target.value)}
-                  placeholder='Ex. "Cours", "Supports", "Exercices"'
-                  className="max-w-xs"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Fichier à envoyer</Label>
-                <input
-                  ref={formationFolderFileInputRef}
-                  type="file"
-                  className={fileInputClass}
-                  accept={FILE_UPLOAD_ACCEPT}
-                />
-              </div>
-              <Button
-                onClick={handleAddFormationFolder}
-                className="min-w-0 whitespace-normal text-left sm:whitespace-nowrap sm:text-center"
-              >
-                <FolderPlus className="size-4 shrink-0 mr-2" />
-                <span>Créer le sous-dossier et ajouter le fichier</span>
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Link2 className="size-5" />
-                Ajouter un lien
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Ajoutez un lien (site web, dépôt GitHub, documentation, etc.) dans un dossier. Le lien s’ouvrira dans un nouvel onglet.
-              </p>
-              <div className="grid gap-2">
-                <Label>Sélectionner un dossier</Label>
-                <Select value={selectedFolderLink} onValueChange={setSelectedFolderLink}>
-                  <SelectTrigger className="w-full max-w-xs">
-                    <SelectValue placeholder="Sélectionner un dossier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {folderOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2 max-w-md">
-                <Label htmlFor="link-url">URL</Label>
-                <Input
-                  id="link-url"
-                  type="url"
-                  value={linkUrl}
-                  onChange={(e) => setLinkUrl(e.target.value)}
-                  placeholder="https://github.com/... ou https://example.com"
-                />
-              </div>
-              <div className="grid gap-2 max-w-md">
-                <Label htmlFor="link-label">Libellé (optionnel)</Label>
-                <Input
-                  id="link-label"
-                  value={linkLabel}
-                  onChange={(e) => setLinkLabel(e.target.value)}
-                  placeholder="Ex. Dépôt GitHub du projet"
-                />
-              </div>
-              <Button onClick={handleAddLink}>
-                <Link2 className="size-4 mr-2" />
-                Ajouter le lien
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Upload className="size-5" />
-                Uploader un fichier
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Choisissez un dossier existant, puis sélectionnez le fichier à envoyer.
-                Types acceptés : APK, images, vidéos, MP3/audio, Excel (xls, xlsx, csv), PDF, Word, PowerPoint, ZIP et autres fichiers.
-              </p>
-              <div className="grid gap-2">
-                <Label>Sélectionner un dossier</Label>
-                <Select value={selectedFolder} onValueChange={setSelectedFolder}>
-                  <SelectTrigger className="w-full max-w-xs">
-                    <SelectValue placeholder="Sélectionner un dossier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {folderOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Fichier</Label>
-                <input
-                  ref={uploadFileInputRef}
-                  type="file"
-                  className={fileInputClass}
-                  accept={FILE_UPLOAD_ACCEPT}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="upload-file-name">Nom du fichier (optionnel)</Label>
-                <Input
-                  id="upload-file-name"
-                  value={uploadFileName}
-                  onChange={(e) => setUploadFileName(e.target.value)}
-                  placeholder="Ex. rapport.pdf (le code direction sera ajouté automatiquement)"
-                />
-              </div>
-              <Button onClick={handleUploadFile}>
-                <FileText className="size-4 mr-2" />
-                Envoyer le fichier
-              </Button>
-            </CardContent>
-          </Card>
-          </div>
-          )}
         </div>
       )}
     </div>

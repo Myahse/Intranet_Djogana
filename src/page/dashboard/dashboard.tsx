@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Sidebar,
   SidebarContent,
@@ -28,7 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ChevronDown, ChevronRight, Filter, FolderOpen, Home, Search, User } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/ProfilePage'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
@@ -48,8 +49,10 @@ function DashboardLayout() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { contentFilter, setContentFilter } = useDashboardFilter()
-  const { folderOptions } = useDocuments()
+  const navigate = useNavigate()
+  const { folderOptions, getFiles, getLinks } = useDocuments()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({})
 
   const { setOpenMobile } = useSidebar()
   useEffect(() => {
@@ -186,7 +189,10 @@ function DashboardLayout() {
                 </SidebarGroupContent>
               </SidebarGroup>
               <SidebarGroup>
-                <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
+                <div className="flex items-center justify-between pr-2">
+                  <SidebarGroupLabel>Dossiers</SidebarGroupLabel>
+                  <SidebarActions />
+                </div>
                 <SidebarGroupContent>
                   <SidebarMenu>
                     <SidebarMenuItem>
@@ -196,18 +202,53 @@ function DashboardLayout() {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    {filteredRootFolders.map((folder) => (
-                      <SidebarMenuItem key={folder.value}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={isFolderActive(folder.value)}
-                        >
-                          <Link to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}>
+                    {filteredRootFolders.map((folder) => {
+                      const rootFiles = getFiles(folder.value)
+                      const rootLinks = getLinks(folder.value)
+                      const rootHasContent = rootFiles.length > 0 || rootLinks.length > 0
+                      const rootIsExpanded = openFolders[folder.value] ?? isFolderActive(folder.value)
+
+                      return (
+                        <SidebarMenuItem key={folder.value}>
+                          <SidebarMenuButton
+                            isActive={isFolderActive(folder.value)}
+                            onClick={() => {
+                              if (rootHasContent) setOpenFolders((prev) => ({ ...prev, [folder.value]: !rootIsExpanded }))
+                              navigate(`/dashboard/documents/${encodeURIComponent(folder.value)}`)
+                            }}
+                          >
+                            {rootHasContent ? (
+                              rootIsExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />
+                            ) : null}
                             <span>{folder.label}</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
+                          </SidebarMenuButton>
+                          {rootIsExpanded && rootHasContent && (
+                            <SidebarMenuSub>
+                              {rootFiles.map((file) => (
+                                <SidebarMenuSubItem key={file.id}>
+                                  <SidebarMenuSubButton asChild size="sm">
+                                    <a href={file.url} target="_blank" rel="noopener noreferrer" title={file.name}>
+                                      <FileText className="size-3.5" />
+                                      <span className="truncate">{file.name}</span>
+                                    </a>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              ))}
+                              {rootLinks.map((link) => (
+                                <SidebarMenuSubItem key={link.id}>
+                                  <SidebarMenuSubButton asChild size="sm">
+                                    <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.label}>
+                                      <Link2 className="size-3.5" />
+                                      <span className="truncate">{link.label}</span>
+                                    </a>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              ))}
+                            </SidebarMenuSub>
+                          )}
+                        </SidebarMenuItem>
+                      )
+                    })}
                     {Object.entries(filteredGroupedFolders).map(([groupKey, group]) => {
                       const groupHasActive = group.subfolders.some((sf) =>
                         isFolderActive(sf.value)
@@ -234,22 +275,63 @@ function DashboardLayout() {
                           </SidebarMenuButton>
                           {isOpen && (
                             <SidebarMenuSub>
-                              {group.subfolders.map((subfolder) => (
-                                <SidebarMenuSubItem key={subfolder.value}>
-                                  <SidebarMenuSubButton
-                                    asChild
-                                    isActive={isFolderActive(subfolder.value)}
-                                  >
-                                    <Link
-                                      to={`/dashboard/documents/${encodeURIComponent(
-                                        subfolder.value
-                                      )}`}
+                              {group.subfolders.map((subfolder) => {
+                                const subFiles = getFiles(subfolder.value)
+                                const subLinks = getLinks(subfolder.value)
+                                const subHasContent = subFiles.length > 0 || subLinks.length > 0
+                                const subIsExpanded = openFolders[subfolder.value] ?? isFolderActive(subfolder.value)
+
+                                return (
+                                  <SidebarMenuSubItem key={subfolder.value}>
+                                    <SidebarMenuSubButton
+                                      isActive={isFolderActive(subfolder.value)}
+                                      onClick={(e) => {
+                                        e.preventDefault()
+                                        if (subHasContent) setOpenFolders((prev) => ({ ...prev, [subfolder.value]: !subIsExpanded }))
+                                        navigate(`/dashboard/documents/${encodeURIComponent(subfolder.value)}`)
+                                      }}
+                                      className="cursor-pointer"
                                     >
+                                      {subHasContent ? (
+                                        subIsExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+                                      ) : null}
                                       <span>{subfolder.label}</span>
-                                    </Link>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              ))}
+                                    </SidebarMenuSubButton>
+                                    {subIsExpanded && subHasContent && (
+                                      <ul className="ml-3.5 mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-2.5">
+                                        {subFiles.map((file) => (
+                                          <li key={file.id}>
+                                            <a
+                                              href={file.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              title={file.name}
+                                              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                                            >
+                                              <FileText className="size-3 shrink-0" />
+                                              <span className="truncate">{file.name}</span>
+                                            </a>
+                                          </li>
+                                        ))}
+                                        {subLinks.map((link) => (
+                                          <li key={link.id}>
+                                            <a
+                                              href={link.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              title={link.label}
+                                              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                                            >
+                                              <Link2 className="size-3 shrink-0" />
+                                              <span className="truncate">{link.label}</span>
+                                            </a>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </SidebarMenuSubItem>
+                                )
+                              })}
                             </SidebarMenuSub>
                           )}
                         </SidebarMenuItem>

@@ -722,6 +722,51 @@ app.post('/api/auth/login', async (req, res) => {
   }
 })
 
+// Refresh current user data (permissions, direction, role) without re-login
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    if (!token) {
+      return res.status(401).json({ error: 'Token requis.' })
+    }
+    let decoded
+    try {
+      decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] })
+    } catch (_) {
+      return res.status(401).json({ error: 'Token invalide ou expiré.' })
+    }
+    const identifiant = decoded && decoded.identifiant ? decoded.identifiant : null
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Token invalide.' })
+    }
+    const result = await pool.query(
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, d.name AS direction_name
+       FROM users u
+       LEFT JOIN directions d ON d.id = u.direction_id
+       WHERE u.identifiant = $1`,
+      [identifiant]
+    )
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = result.rows[0]
+    const permissions = await getPermissionsForIdentifiant(user.identifiant)
+    return res.json({
+      id: user.id,
+      identifiant: user.identifiant,
+      role: user.role,
+      direction_id: user.direction_id,
+      direction_name: user.direction_name || null,
+      permissions: permissions || undefined,
+    })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('auth/me error', err)
+    return res.status(500).json({ error: 'Erreur serveur.' })
+  }
+})
+
 app.post('/api/auth/change-password', async (req, res) => {
   try {
     const { identifiant, currentPassword, newPassword } = req.body || {}
