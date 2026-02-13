@@ -201,7 +201,7 @@ async function initDb() {
       id uuid PRIMARY KEY,
       user_identifiant text NOT NULL,
       code text NOT NULL,
-      status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'consumed')),
+      status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'detruite')),
       session_payload jsonb,
       created_at timestamptz NOT NULL DEFAULT now(),
       expires_at timestamptz NOT NULL,
@@ -213,6 +213,12 @@ async function initDb() {
     ON login_requests (user_identifiant, status)
     WHERE status = 'pending';
   `)
+
+  // Migration: add 'detruite' to the status CHECK constraint (for existing databases)
+  try {
+    await pool.query(`ALTER TABLE login_requests DROP CONSTRAINT IF EXISTS login_requests_status_check`)
+    await pool.query(`ALTER TABLE login_requests ADD CONSTRAINT login_requests_status_check CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'detruite'))`)
+  } catch (_) { /* constraint may already be correct */ }
 
   // FCM device push tokens per user (so notifications survive server restarts)
   await pool.query(`
