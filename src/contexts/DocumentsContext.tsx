@@ -73,7 +73,7 @@ const DocumentsContext = createContext<DocumentsContextValue | null>(null)
 
 function isOfficeDoc(fileName: string): boolean {
   const ext = fileName.split('.').pop()?.toLowerCase()
-  return ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx'
+  return ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx' || ext === 'xls' || ext === 'xlsx'
 }
 
 async function uploadToServer(

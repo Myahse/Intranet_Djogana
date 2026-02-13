@@ -49,12 +49,20 @@ function isPdf(fileName: string): boolean {
   return fileName.split('.').pop()?.toLowerCase() === 'pdf'
 }
 
-function getOfficeDocType(fileName: string): 'docx' | 'doc' | 'pptx' | 'ppt' | null {
+function isExcelFile(fileName: string): boolean {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  return ext === 'xlsx' || ext === 'xls' || ext === 'csv'
+}
+
+function getOfficeDocType(fileName: string): 'docx' | 'doc' | 'pptx' | 'ppt' | 'xlsx' | 'xls' | 'csv' | null {
   const ext = fileName.split('.').pop()?.toLowerCase()
   if (ext === 'docx') return 'docx'
   if (ext === 'doc') return 'doc'
   if (ext === 'pptx') return 'pptx'
   if (ext === 'ppt') return 'ppt'
+  if (ext === 'xlsx') return 'xlsx'
+  if (ext === 'xls') return 'xls'
+  if (ext === 'csv') return 'csv'
   return null
 }
 
@@ -93,7 +101,9 @@ function FilePreviewContent({
         />
       ) : canPreviewOffice ? (
         <iframe
-          src={file.viewerUrl ?? `/preview?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(file.name)}`}
+          src={isExcelFile(file.name)
+            ? `/preview?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(file.name)}`
+            : (file.viewerUrl ?? `/preview?url=${encodeURIComponent(file.url)}&name=${encodeURIComponent(file.name)}`)}
           title={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
         />
@@ -179,7 +189,7 @@ function FileCard({
       <HoverCard openDelay={300} closeDelay={100}>
         <HoverCardTrigger asChild>
           <div
-            className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer"
+            className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer overflow-hidden min-w-0"
             onClick={handleClick}
           >
             {file.url && (
@@ -238,7 +248,7 @@ function FileCard({
             ) : (
               <FileText className="size-24 text-muted-foreground sm:size-28" />
             )}
-            <span className="text-center text-sm font-medium line-clamp-2">
+            <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={file.name}>
               {file.name}
             </span>
           </div>
@@ -314,7 +324,7 @@ function LinkCard({
   })()
 
   return (
-    <div className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50">
+    <div className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0">
       <a
         href={link.url}
         target="_blank"
@@ -325,7 +335,7 @@ function LinkCard({
         <div className="rounded-lg border bg-muted/30 p-4 flex items-center justify-center">
           <ExternalLink className="size-12 text-primary" />
         </div>
-        <span className="text-center text-sm font-medium line-clamp-2" title={displayLabel}>
+        <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={displayLabel}>
           {displayLabel}
         </span>
       </a>
@@ -604,14 +614,14 @@ const DocumentSection = () => {
                 <Link
                   key={value}
                   to={`/dashboard/documents/${encodeURIComponent(value)}`}
-                  className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50"
+                  className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
                 >
                   <img
                     src={folderHasFiles[value] ? folderFilledSvg : folderSvg}
                     alt=""
                     className="h-24 w-auto max-w-full sm:h-28"
                   />
-                  <span className="text-center text-sm font-medium">{subLabel}</span>
+                  <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={subLabel}>{subLabel}</span>
                 </Link>
               )
             })}
@@ -634,14 +644,14 @@ const DocumentSection = () => {
             <Link
               key={folder.value}
               to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}
-              className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50"
+              className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
             >
               <img
                 src={folderHasFiles[folder.value] ? folderFilledSvg : folderSvg}
                 alt=""
                 className="h-24 w-auto max-w-full sm:h-28"
               />
-              <span className="text-center text-sm font-medium">{folder.label}</span>
+              <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={folder.label}>{folder.label}</span>
             </Link>
           ))}
           {groupNames.map((groupName) => {
@@ -651,14 +661,14 @@ const DocumentSection = () => {
               <Link
                 key={groupName}
                 to={`/dashboard/documents/${encodeURIComponent(groupName)}`}
-                className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50"
+                className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
               >
                 <img
                   src={hasAnyFile ? folderFilledSvg : folderSvg}
                   alt=""
                   className="h-24 w-auto max-w-full sm:h-28"
                 />
-                <span className="text-center text-sm font-medium">{groupName}</span>
+                <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={groupName}>{groupName}</span>
               </Link>
             )
           })}

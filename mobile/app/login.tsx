@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import * as storage from "@/storage";
 import { s, vs, ms, fs } from "@/responsive";
@@ -28,10 +28,13 @@ export default function LoginScreen() {
   const [passkeyAvailable, setPasskeyAvailable] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
 
-  // Check if a passkey is stored on mount
-  useEffect(() => {
-    storage.hasPasskey().then(setPasskeyAvailable);
-  }, []);
+  // Re-check passkey availability every time this screen gains focus
+  // (so a freshly-created passkey is picked up immediately without restarting)
+  useFocusEffect(
+    useCallback(() => {
+      storage.hasPasskey().then(setPasskeyAvailable);
+    }, [])
+  );
 
   const handleSubmit = async () => {
     const ident = identifiant.trim();

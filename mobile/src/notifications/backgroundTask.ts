@@ -16,16 +16,31 @@ import {
   BACKGROUND_NOTIFICATION_TASK,
   ACTION_APPROVE,
   ACTION_DENY,
+  APPROVAL_CHANNEL_ID,
 } from "./constants";
 
 // ── Inline helpers so we don't rely on metro aliases inside the task ──
 
+const TOKEN_KEY = "djogana_auth_token";
+const PASSKEY_KEY = "djogana_passkey";
+
 async function getStoredToken(): Promise<string | null> {
   try {
     const SecureStore = require("expo-secure-store");
-    return await SecureStore.getItemAsync("djogana_auth_token");
+    return await SecureStore.getItemAsync(TOKEN_KEY);
   } catch {
     return null;
+  }
+}
+
+/** Check if a passkey exists (no biometric prompt). */
+async function hasPasskey(): Promise<boolean> {
+  try {
+    const SecureStore = require("expo-secure-store");
+    const raw = await SecureStore.getItemAsync(PASSKEY_KEY);
+    return raw !== null;
+  } catch {
+    return false;
   }
 }
 
@@ -96,24 +111,51 @@ TaskManager.defineTask(
       return;
     }
 
+    const isApprove = actionIdentifier === ACTION_APPROVE;
+
     // Try the stored auth token (no biometric needed)
     const token = await getStoredToken();
 
     if (!token) {
-      // No token → we can't process silently. Prompt the user to open the app.
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "Authentification requise",
-          body: "Ouvrez l'application pour traiter la demande de connexion.",
-          data: requestData ?? {},
-        },
-        trigger: null,
-      });
+      // No token → check if user has a passkey for biometric auth.
+      // We can't trigger biometrics from a background task, so we
+      // schedule an immediate heads-up notification. When the user
+      // taps it the app opens, NotificationHandler detects the
+      // `pendingAction` flag and triggers biometric → auto-process.
+      const passkeyExists = await hasPasskey();
+
+      if (passkeyExists) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: isApprove
+              ? "Approuver la connexion"
+              : "Refuser la connexion",
+            body: "Appuyez pour vous authentifier et traiter la demande.",
+            data: {
+              ...(requestData ?? {}),
+              pendingAction: actionIdentifier, // flag for NotificationHandler
+            },
+            ...(APPROVAL_CHANNEL_ID
+              ? { channelId: APPROVAL_CHANNEL_ID }
+              : {}),
+          },
+          trigger: null,
+        });
+      } else {
+        // No passkey either → generic prompt
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Authentification requise",
+            body: "Ouvrez l'application et connectez-vous pour traiter la demande.",
+            data: requestData ?? {},
+          },
+          trigger: null,
+        });
+      }
       return;
     }
 
-    // Process the action
-    const isApprove = actionIdentifier === ACTION_APPROVE;
+    // ── Token available → process in the background silently ──
     const endpoint = isApprove
       ? "/api/auth/device/approve"
       : "/api/auth/device/deny";
