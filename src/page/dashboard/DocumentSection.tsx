@@ -400,9 +400,6 @@ const DocumentSection = () => {
   // folderKey can be:
   //   - an exact folder value like "3::Procédures" (direction_id::name)
   //   - a group name like "Module 1" (just the name part, no direction_id)
-  const hasExactFolder = folderKey
-    ? folderOptions.some((f) => f.value === folderKey)
-    : false
 
   // Find subfolders matching by value prefix OR by name prefix
   const subfolderEntries = folderKey
