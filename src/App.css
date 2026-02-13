@@ -125,5 +125,13 @@
 /* Sidebar starts below the top navbar on dashboard */
 .dashboard-with-top-nav [data-slot="sidebar-container"] {
   top: 3.5rem;
-  height: calc(100vh - 3.5rem);
+  height: calc(100svh - 3.5rem);
+}
+
+/* Lock the dashboard wrapper to exactly the remaining viewport height
+   so only the main content area scrolls — navbar & sidebar stay fixed. */
+.dashboard-with-top-nav {
+  height: 100svh;
+  max-height: 100svh;
+  overflow: hidden;
 }
