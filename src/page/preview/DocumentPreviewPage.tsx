@@ -1,14 +1,45 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import * as mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
 
-function isOfficeDoc(fileName: string): boolean {
+function getDocType(fileName: string): 'word' | 'excel' | null {
   const ext = fileName.split('.').pop()?.toLowerCase()
-  return ext === 'docx' || ext === 'doc'
+  if (ext === 'docx' || ext === 'doc') return 'word'
+  if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') return 'excel'
+  return null
 }
 
 const MAMMOTH_STYLES =
   'mammoth-content text-foreground [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6'
+
+/**
+ * Build an HTML table from an xlsx/xls/csv ArrayBuffer.
+ * Shows all sheets as separate sections with the sheet name as a header.
+ */
+function excelToHtml(arrayBuffer: ArrayBuffer, fileName: string): string {
+  const isCsv = fileName.split('.').pop()?.toLowerCase() === 'csv'
+  const workbook = XLSX.read(arrayBuffer, {
+    type: 'array',
+    codepage: isCsv ? 65001 : undefined,
+  })
+
+  const sections = workbook.SheetNames.map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet) return ''
+
+    const html = XLSX.utils.sheet_to_html(sheet, { editable: false })
+
+    const multipleSheets = workbook.SheetNames.length > 1
+    const header = multipleSheets
+      ? `<h3 style="font-size:15px;font-weight:600;margin:16px 0 8px;color:#333">${sheetName}</h3>`
+      : ''
+
+    return header + html
+  })
+
+  return sections.join('')
+}
 
 export default function DocumentPreviewPage() {
   const [searchParams] = useSearchParams()
@@ -30,8 +61,9 @@ export default function DocumentPreviewPage() {
 
     const run = async () => {
       try {
-        if (!isOfficeDoc(fileName)) {
-          setError('Type de fichier non pris en charge pour l’aperçu.')
+        const docType = getDocType(fileName)
+        if (!docType) {
+          setError("Type de fichier non pris en charge pour l\u2019aper\u00e7u.")
           return
         }
 
@@ -41,17 +73,24 @@ export default function DocumentPreviewPage() {
         if (cancelled) return
 
         const arrayBuffer = await blob.arrayBuffer()
-        const result = await mammoth.convertToHtml({ arrayBuffer })
-        if (cancelled) return
 
-        container.innerHTML = `<div class="${MAMMOTH_STYLES}">${result.value}</div>`
+        if (docType === 'word') {
+          const result = await mammoth.convertToHtml({ arrayBuffer })
+          if (cancelled) return
+          container.innerHTML = `<div class="${MAMMOTH_STYLES}">${result.value}</div>`
+        } else {
+          // Excel / CSV
+          const html = excelToHtml(arrayBuffer, fileName)
+          if (cancelled) return
+          container.innerHTML = `<div class="excel-preview">${html}</div>`
+        }
       } catch (err) {
         if (!cancelled) {
           const message =
-            err instanceof Error ? err.message : 'Erreur d’aperçu'
+            err instanceof Error ? err.message : "Erreur d\u2019aper\u00e7u"
           setError(
             message === 'Failed to fetch'
-              ? 'Impossible de joindre le serveur. Vérifiez que l’API est accessible et CORS autorisé.'
+              ? "Impossible de joindre le serveur. V\u00e9rifiez que l\u2019API est accessible et CORS autoris\u00e9."
               : message
           )
         }
@@ -86,7 +125,7 @@ export default function DocumentPreviewPage() {
     <div className="min-h-full w-full bg-white">
       {loading && (
         <div className="flex items-center justify-center gap-2 p-6 text-muted-foreground">
-          <span className="text-sm">Chargement de l’aperçu…</span>
+          <span className="text-sm">Chargement de l&apos;aper&ccedil;u&hellip;</span>
         </div>
       )}
       <div
@@ -94,6 +133,40 @@ export default function DocumentPreviewPage() {
         className="min-h-[70vh] overflow-auto p-4"
         style={{ display: loading ? 'none' : 'block' }}
       />
+
+      {/* Excel table styling */}
+      <style>{`
+        .excel-preview table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .excel-preview th {
+          background: #f0f4f0;
+          font-weight: 600;
+          text-align: left;
+          padding: 8px 12px;
+          border: 1px solid #d4d4d4;
+          white-space: nowrap;
+          color: #1a1a1a;
+          position: sticky;
+          top: 0;
+          z-index: 1;
+        }
+        .excel-preview td {
+          padding: 6px 12px;
+          border: 1px solid #e5e5e5;
+          white-space: nowrap;
+          color: #333;
+        }
+        .excel-preview tr:nth-child(even) td {
+          background: #fafafa;
+        }
+        .excel-preview tr:hover td {
+          background: #e8f0fe;
+        }
+      `}</style>
     </div>
   )
 }

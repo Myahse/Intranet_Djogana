@@ -168,7 +168,11 @@ export default function NotificationHandler() {
     (response: Notifications.NotificationResponse) => {
       const actionId = response.actionIdentifier;
       const data = response.notification.request.content.data as
-        | { requestId?: string; code?: string }
+        | {
+            requestId?: string;
+            code?: string;
+            pendingAction?: string; // set by background task fallback
+          }
         | undefined;
 
       console.log(
@@ -176,13 +180,26 @@ export default function NotificationHandler() {
         JSON.stringify({ actionId, data }, null, 2)
       );
 
-      // Check if an action button was tapped (not the default tap)
+      // A) The background task couldn't process silently (no token) but
+      //    a passkey exists. It scheduled a follow-up notification with
+      //    `pendingAction`. Now that the app is in the foreground we can
+      //    trigger biometric → auto-approve/deny.
+      if (
+        data?.pendingAction === ACTION_APPROVE ||
+        data?.pendingAction === ACTION_DENY
+      ) {
+        handleActionButton(data.pendingAction, data);
+        return;
+      }
+
+      // B) Direct action-button tap on the original notification
       if (actionId === ACTION_APPROVE || actionId === ACTION_DENY) {
         handleActionButton(actionId, data);
-      } else {
-        // Default tap on the notification body → show overlay
-        handleNotificationTap(data);
+        return;
       }
+
+      // C) Default tap on the notification body → show overlay
+      handleNotificationTap(data);
     },
     [handleActionButton, handleNotificationTap]
   );
