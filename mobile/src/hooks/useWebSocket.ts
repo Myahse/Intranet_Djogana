@@ -19,6 +19,11 @@ export type WsMessage =
         createdAt: string;
         expiresAt: string;
       };
+    }
+  | {
+      type: "device_request_status";
+      requestIds: string[];
+      status: string;
     };
 
 type UseWebSocketOptions = {

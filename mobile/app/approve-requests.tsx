@@ -211,6 +211,17 @@ export default function ApproveRequestsScreen() {
       if (msg.type === "new_device_request" && msg.request) {
         pushLiveRequest(msg.request);
       }
+
+      // A request changed status (detruite, approved, denied)
+      // → remove from the active requests list & refresh history
+      if (msg.type === "device_request_status" && msg.requestIds?.length) {
+        const changedIds = new Set(msg.requestIds);
+        setRequests((prev) => prev.filter((r) => !changedIds.has(r.id)));
+        // Refresh history if the tab has been loaded at least once
+        if (historyLoaded.current) {
+          loadHistory();
+        }
+      }
     },
     [pushLiveRequest]
   );

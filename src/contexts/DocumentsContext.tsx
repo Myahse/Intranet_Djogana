@@ -128,147 +128,162 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     linksApiUnavailableRef.current = false
   }, [user?.identifiant, isAdmin])
 
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const params = new URLSearchParams()
-        if (user && !isAdmin && user.role) {
-          params.set('role', user.role)
-          if (user.direction_id) params.set('direction_id', user.direction_id)
+  /** Fetch all documents, links and folders from the API */
+  const loadAll = useCallback(async () => {
+    try {
+      const params = new URLSearchParams()
+      if (user && !isAdmin && user.role) {
+        params.set('role', user.role)
+        if (user.direction_id) params.set('direction_id', user.direction_id)
+      }
+      const roleParam = params.toString() ? `?${params.toString()}` : ''
+
+      const res = await fetch(`${API_BASE_URL}/api/files${roleParam}`)
+      if (!res.ok) return
+
+      const data = (await res.json()) as Array<{
+        id: string
+        name: string
+        size: number
+        url: string
+        view_url?: string
+        folder: string
+        direction_id?: string | null
+      }>
+
+      const loaded: DocumentItem[] = data.map((row) => {
+        // Use the server-proxied view_url for Office Viewer (serves correct Content-Type)
+        const viewUrl = row.view_url
+        const viewerUrl = isOfficeDoc(row.name) && viewUrl
+          ? buildOfficeViewerUrl(viewUrl)
+          : undefined
+        const dirId = row.direction_id ?? ''
+        const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
+
+        return {
+          id: row.id,
+          name: row.name,
+          size: row.size ?? 0,
+          url: row.url,
+          viewUrl,
+          viewerUrl,
+          folderKey,
+          direction_id: row.direction_id,
         }
-        const roleParam = params.toString() ? `?${params.toString()}` : ''
+      })
 
-        const res = await fetch(`${API_BASE_URL}/api/files${roleParam}`)
-        if (!res.ok) return
+      setItems(loaded)
 
-        const data = (await res.json()) as Array<{
-          id: string
-          name: string
-          size: number
-          url: string
-          view_url?: string
-          folder: string
-          direction_id?: string | null
-        }>
-
-        const loaded: DocumentItem[] = data.map((row) => {
-          // Use the server-proxied view_url for Office Viewer (serves correct Content-Type)
-          const viewUrl = row.view_url
-          const viewerUrl = isOfficeDoc(row.name) && viewUrl
-            ? buildOfficeViewerUrl(viewUrl)
-            : undefined
-          const dirId = row.direction_id ?? ''
-          const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
-
-          return {
-            id: row.id,
-            name: row.name,
-            size: row.size ?? 0,
-            url: row.url,
-            viewUrl,
-            viewerUrl,
-            folderKey,
-            direction_id: row.direction_id,
-          }
-        })
-
-        setItems(loaded)
-
-        if (!linksApiUnavailableRef.current) {
-          try {
-            const linksRes = await fetch(`${API_BASE_URL}/api/links${roleParam}`)
-            if (linksRes.status === 404) {
-              linksApiUnavailableRef.current = true
-            } else if (linksRes.ok) {
-              const linksData = (await linksRes.json()) as Array<{
-                id: string
-                folder: string
-                direction_id?: string | null
-                url: string
-                label: string
-              }>
-              const loadedLinks: LinkItem[] = linksData.map((row) => {
-                const dirId = row.direction_id ?? ''
-                const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
-                return {
-                  id: row.id,
-                  url: row.url,
-                  label: row.label,
-                  folderKey,
-                  direction_id: row.direction_id,
-                }
-              })
-              setLinkItems(loadedLinks)
-            }
-          } catch (linksErr) {
-            linksApiUnavailableRef.current = true
-            // eslint-disable-next-line no-console
-            console.warn('Links could not be loaded:', linksErr)
-          }
-        }
-
+      if (!linksApiUnavailableRef.current) {
         try {
-          const foldersRes = await fetch(
-            `${API_BASE_URL}/api/folders${roleParam}`
-          )
-          if (foldersRes.ok) {
-            const foldersData = (await foldersRes.json()) as Array<{
+          const linksRes = await fetch(`${API_BASE_URL}/api/links${roleParam}`)
+          if (linksRes.status === 404) {
+            linksApiUnavailableRef.current = true
+          } else if (linksRes.ok) {
+            const linksData = (await linksRes.json()) as Array<{
               id: string
-              name: string
-              direction_id: string
-              direction_name: string
+              folder: string
+              direction_id?: string | null
+              url: string
+              label: string
             }>
-            setFolderList(
-              foldersData.map((f) => ({
-                value: `${f.direction_id}::${f.name}`,
-                label: f.name,
-                direction_id: f.direction_id,
-                direction_name: f.direction_name,
-                name: f.name,
-              }))
-            )
-          } else {
-            const fromFiles = Array.from(
-              new Set(
-                data
-                  .filter((r) => r.folder && (r.direction_id ?? ''))
-                  .map((r) =>
-                    r.direction_id
-                      ? `${r.direction_id}::${r.folder}`
-                      : r.folder
-                  )
-              )
-            )
-            setFolderList(
-              fromFiles.map((v) => {
-                const { direction_id, name } = parseFolderKey(v)
-                return {
-                  value: v,
-                  label: name,
-                  direction_id,
-                  direction_name: '',
-                  name,
-                }
-              })
-            )
+            const loadedLinks: LinkItem[] = linksData.map((row) => {
+              const dirId = row.direction_id ?? ''
+              const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
+              return {
+                id: row.id,
+                url: row.url,
+                label: row.label,
+                folderKey,
+                direction_id: row.direction_id,
+              }
+            })
+            setLinkItems(loadedLinks)
           }
-        } catch {
+        } catch (linksErr) {
+          linksApiUnavailableRef.current = true
+          // eslint-disable-next-line no-console
+          console.warn('Links could not be loaded:', linksErr)
+        }
+      }
+
+      try {
+        const foldersRes = await fetch(
+          `${API_BASE_URL}/api/folders${roleParam}`
+        )
+        if (foldersRes.ok) {
+          const foldersData = (await foldersRes.json()) as Array<{
+            id: string
+            name: string
+            direction_id: string
+            direction_name: string
+          }>
+          setFolderList(
+            foldersData.map((f) => ({
+              value: `${f.direction_id}::${f.name}`,
+              label: f.name,
+              direction_id: f.direction_id,
+              direction_name: f.direction_name,
+              name: f.name,
+            }))
+          )
+        } else {
           const fromFiles = Array.from(
-            new Set(data.map((r) => (r.direction_id ? `${r.direction_id}::${r.folder}` : r.folder)).filter(Boolean))
+            new Set(
+              data
+                .filter((r) => r.folder && (r.direction_id ?? ''))
+                .map((r) =>
+                  r.direction_id
+                    ? `${r.direction_id}::${r.folder}`
+                    : r.folder
+                )
+            )
           )
           setFolderList(
             fromFiles.map((v) => {
               const { direction_id, name } = parseFolderKey(v)
-              return { value: v, label: name, direction_id, direction_name: '', name }
+              return {
+                value: v,
+                label: name,
+                direction_id,
+                direction_name: '',
+                name,
+              }
             })
           )
         }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('failed to load documents from API', err)
+      } catch {
+        const fromFiles = Array.from(
+          new Set(data.map((r) => (r.direction_id ? `${r.direction_id}::${r.folder}` : r.folder)).filter(Boolean))
+        )
+        setFolderList(
+          fromFiles.map((v) => {
+            const { direction_id, name } = parseFolderKey(v)
+            return { value: v, label: name, direction_id, direction_name: '', name }
+          })
+        )
       }
-    })()
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('failed to load documents from API', err)
+    }
   }, [user, isAdmin])
+
+  // Initial load
+  useEffect(() => { loadAll() }, [loadAll])
+
+  // Real-time reload when files, folders, or links change via WebSocket
+  useEffect(() => {
+    const handler = () => { loadAll() }
+    window.addEventListener('ws:files', handler)
+    window.addEventListener('ws:folders', handler)
+    window.addEventListener('ws:links', handler)
+    return () => {
+      window.removeEventListener('ws:files', handler)
+      window.removeEventListener('ws:folders', handler)
+      window.removeEventListener('ws:links', handler)
+    }
+  }, [loadAll])
 
   const folderOptions = useMemo<FolderOption[]>(
     () =>

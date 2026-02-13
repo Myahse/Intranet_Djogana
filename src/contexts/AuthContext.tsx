@@ -14,7 +14,7 @@ const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 // Derive WebSocket URL from the API base (http→ws, https→wss)
-function getWsUrl(): string {
+export function getWsUrl(): string {
   const base = API_BASE_URL || window.location.origin
   return base.replace(/^http/, 'ws') + '/ws'
 }
@@ -559,6 +559,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Our account was deleted → force logout
             console.log('[ws] user deleted, logging out…')
             logoutRef.current()
+          }
+
+          // Generic data-change events → re-dispatch as DOM CustomEvents
+          // so every page/context can subscribe independently.
+          if (data.type === 'data_changed' && data.resource) {
+            const eventName = `ws:${data.resource}` // e.g. "ws:files", "ws:folders"
+            window.dispatchEvent(
+              new CustomEvent(eventName, { detail: { action: data.action, ...data } })
+            )
+            // Also fire a generic "ws:data_changed" for catch-all listeners
+            window.dispatchEvent(
+              new CustomEvent('ws:data_changed', { detail: { resource: data.resource, action: data.action, ...data } })
+            )
           }
         } catch {
           // ignore malformed messages

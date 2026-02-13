@@ -536,6 +536,85 @@ function broadcastNewDeviceRequest(identifiant, request) {
   }
 }
 
+/**
+ * Unauthenticated WebSocket clients that "watch" a specific request ID.
+ * Used by the web login page to get instant status updates without polling.
+ */
+const requestWatchers = new Set()
+
+/**
+ * Broadcast a "device_request_status" event to a specific identifiant.
+ * Sent when a request is approved, denied, destroyed, or expired.
+ * Both the mobile app and web client listen for this to update in real-time.
+ * Also notifies any unauthenticated request watchers.
+ * @param {string} identifiant
+ * @param {string[]} requestIds – IDs of requests whose status changed
+ * @param {string} newStatus – 'approved' | 'denied' | 'detruite' | 'expired'
+ * @param {object} [sessionPayload] – for 'approved' status, the user session data
+ */
+function broadcastRequestStatusChange(identifiant, requestIds, newStatus, sessionPayload) {
+  if (!requestIds || requestIds.length === 0) return
+  const message = JSON.stringify({
+    type: 'device_request_status',
+    requestIds,
+    status: newStatus,
+  })
+  // Notify authenticated mobile clients
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+  // Notify unauthenticated web login page watchers
+  for (const watcher of requestWatchers) {
+    try {
+      if (!requestIds.includes(watcher._watchRequestId)) continue
+      if (watcher.readyState !== 1) continue
+      // For approved status, include session payload + JWT so the web can log in instantly
+      if (newStatus === 'approved' && sessionPayload) {
+        const token = signToken(sessionPayload.identifiant)
+        // Mark the request as consumed (same as the poll endpoint does)
+        pool.query(`UPDATE login_requests SET status = 'consumed' WHERE id = $1`, [watcher._watchRequestId]).catch(() => {})
+        watcher.send(JSON.stringify({
+          type: 'device_request_status',
+          requestIds,
+          status: newStatus,
+          user: sessionPayload,
+          token,
+        }))
+      } else {
+        watcher.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/**
+ * Broadcast a generic "data_changed" event to all authenticated WebSocket clients.
+ * The web frontend listens for these and refreshes the relevant data automatically.
+ *
+ * @param {string} resource – e.g. 'files', 'folders', 'links', 'users', 'directions', 'roles', 'activity'
+ * @param {string} action  – e.g. 'created', 'updated', 'deleted'
+ * @param {object} [details] – optional extra info (e.g. { directionId, id })
+ */
+function broadcastDataChange(resource, action, details) {
+  const message = JSON.stringify({
+    type: 'data_changed',
+    resource,
+    action,
+    ...(details || {}),
+  })
+  for (const client of wsClients) {
+    try {
+      if (client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
   return jwt.sign(
@@ -884,6 +963,7 @@ app.post('/api/directions', async (req, res) => {
       entityId: id,
       details: { name: trimmed, code },
     })
+    broadcastDataChange('directions', 'created', { id })
     return res.status(201).json({ id, name: trimmed, code })
   } catch (err) {
     if (err && err.code === '23505') {
@@ -928,6 +1008,7 @@ app.delete('/api/directions/:id', async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Direction introuvable.' })
     }
+    broadcastDataChange('directions', 'deleted', { id })
     return res.status(204).send()
   } catch (err) {
     if (err && err.code === '23503') {
@@ -1009,6 +1090,7 @@ app.delete('/api/users/:id', async (req, res) => {
     broadcastUserDeleted(deletedUser.identifiant)
 
     await pool.query('DELETE FROM users WHERE id = $1', [id])
+    broadcastDataChange('users', 'deleted', { id })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1090,6 +1172,7 @@ app.post('/api/auth/register', async (req, res) => {
       details: { identifiant, role: finalRole },
     })
 
+    broadcastDataChange('users', 'created', { id })
     return res.status(201).json({ id, identifiant, role: finalRole, direction_id: finalRole === 'admin' ? null : directionId })
   } catch (err) {
     if (err && err.code === '23505') {
@@ -1260,11 +1343,13 @@ app.post('/api/auth/device/request', async (req, res) => {
 
     // Cancel all previous pending requests for this user so only the latest one is active
     // Mark them as 'detruite' (destroyed/superseded) – visible in history
-    await pool.query(
+    const destroyedRows = await pool.query(
       `UPDATE login_requests SET status = 'detruite'
-       WHERE user_identifiant = $1 AND status = 'pending'`,
+       WHERE user_identifiant = $1 AND status = 'pending'
+       RETURNING id`,
       [ident]
     )
+    const destroyedIds = destroyedRows.rows.map((r) => r.id)
 
     await pool.query(
       `INSERT INTO login_requests (id, user_identifiant, code, status, expires_at)
@@ -1272,7 +1357,12 @@ app.post('/api/auth/device/request', async (req, res) => {
       [requestId, ident, code, expiresAt]
     )
 
-    // Notify connected WebSocket clients (mobile app) in real-time
+    // Notify connected WebSocket clients that old requests are destroyed
+    if (destroyedIds.length > 0) {
+      broadcastRequestStatusChange(ident, destroyedIds, 'detruite')
+    }
+
+    // Notify connected WebSocket clients (mobile app) about the new request
     broadcastNewDeviceRequest(ident, {
       id: requestId,
       code,
@@ -1555,6 +1645,9 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
       [JSON.stringify(sessionPayload), requestId]
     )
 
+    // Broadcast approval to all connected clients for this user (web picks it up instantly)
+    broadcastRequestStatusChange(identifiant, [requestId], 'approved', sessionPayload)
+
     return res.json({ success: true, requestId })
   } catch (err) {
     console.error('device approve error', err)
@@ -1586,6 +1679,10 @@ app.post('/api/auth/device/deny', requireAuth, async (req, res) => {
     }
 
     await pool.query(`UPDATE login_requests SET status = 'denied' WHERE id = $1`, [requestId])
+
+    // Broadcast denial to all connected clients for this user
+    broadcastRequestStatusChange(identifiant, [requestId], 'denied')
+
     return res.json({ success: true, requestId })
   } catch (err) {
     console.error('device deny error', err)
@@ -1841,6 +1938,7 @@ app.post('/api/roles', async (req, res) => {
       [row.id]
     )
 
+    broadcastDataChange('roles', 'created', { id: row.id })
     return res.status(201).json(row)
   } catch (err) {
     console.error('create role error', err)
@@ -1925,6 +2023,7 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       broadcastPermissionsChange(updated.rows[0].name)
     }
 
+    broadcastDataChange('roles', 'updated', { id })
     return res.json(updated.rows[0])
   } catch (err) {
     console.error('update role permissions error', err)
@@ -1963,6 +2062,7 @@ app.delete('/api/roles/:id', async (req, res) => {
     // Delete (cascades to role_permissions and folder_role_visibility)
     await pool.query('DELETE FROM roles WHERE id = $1', [id])
 
+    broadcastDataChange('roles', 'deleted', { id })
     return res.json({ ok: true })
   } catch (err) {
     console.error('delete role error', err)
@@ -2050,6 +2150,7 @@ app.post('/api/folder-permissions', async (req, res) => {
 
     // Broadcast so affected clients refresh their view
     broadcastPermissionsChange(null)
+    broadcastDataChange('folders', 'updated')
 
     return res.status(201).json(result.rows[0])
   } catch (err) {
@@ -2179,6 +2280,7 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       details: { name: storedFileName, folder, size: Number(req.file.size) || 0 },
     })
 
+    broadcastDataChange('files', 'created', { id, directionId, folder })
     return res.json({
       id,
       name: storedFileName,
@@ -2329,6 +2431,7 @@ app.post('/api/folders', async (req, res) => {
       details: { name, visibility },
     })
 
+    broadcastDataChange('folders', 'created', { id, directionId })
     return res.status(201).json({ id, name, direction_id: directionId, visibility })
   } catch (err) {
     if (err && err.code === '23505') {
@@ -2393,6 +2496,7 @@ app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
 
     // Broadcast to all non-admin clients so they refresh visibility
     broadcastPermissionsChange(null)
+    broadcastDataChange('folders', 'updated', { id })
 
     return res.json({ id, name: folder.name, direction_id: folder.direction_id, visibility })
   } catch (err) {
@@ -2605,6 +2709,7 @@ app.patch('/api/files/:id', async (req, res) => {
       details: { name: storedFileName },
     })
 
+    broadcastDataChange('files', 'updated', { id })
     return res.json({ id, name: storedFileName })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -2670,6 +2775,7 @@ app.delete('/api/files/:id', async (req, res) => {
     })
 
     await pool.query('DELETE FROM files WHERE id = $1', [id])
+    broadcastDataChange('files', 'deleted', { id, directionId: fileDir })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -2743,6 +2849,9 @@ app.delete('/api/folders/:folder', async (req, res) => {
       await pool.query('DELETE FROM files WHERE folder = $1', [folder])
       await pool.query('DELETE FROM folders WHERE name = $1', [folder])
     }
+    broadcastDataChange('folders', 'deleted', { directionId })
+    broadcastDataChange('files', 'deleted', { directionId })
+    broadcastDataChange('links', 'deleted', { directionId })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -2823,6 +2932,7 @@ app.post('/api/links', async (req, res) => {
       details: { folder: name, url: linkUrl, label: linkLabel },
     })
 
+    broadcastDataChange('links', 'created', { id, directionId })
     return res.status(201).json({
       id,
       folder: name,
@@ -2969,6 +3079,7 @@ app.patch('/api/links/:id', async (req, res) => {
       entityId: id,
       details: { url: newUrl, label: newLabel },
     })
+    broadcastDataChange('links', 'updated', { id })
     return res.json({ id, url: newUrl, label: newLabel })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -3021,6 +3132,7 @@ app.delete('/api/links/:id', async (req, res) => {
     })
 
     await pool.query('DELETE FROM links WHERE id = $1', [id])
+    broadcastDataChange('links', 'deleted', { id })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -3039,9 +3151,36 @@ const server = http.createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 wss.on('connection', async (ws, req) => {
-  // Authenticate via query param: ws://host/ws?token=JWT
   const url = new URL(req.url, `http://${req.headers.host}`)
   const token = url.searchParams.get('token')
+  const watchRequestId = url.searchParams.get('watchRequest')
+
+  // ─── Mode 1: Unauthenticated request watcher (web login page) ───
+  if (watchRequestId && !token) {
+    ws._watchRequestId = watchRequestId
+    requestWatchers.add(ws)
+    console.log(`[ws] request watcher connected for ${watchRequestId} — ${requestWatchers.size} watchers`)
+
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === 1) ws.ping()
+    }, 30000)
+
+    ws.on('close', () => {
+      requestWatchers.delete(ws)
+      clearInterval(pingInterval)
+      console.log(`[ws] request watcher disconnected for ${watchRequestId} — ${requestWatchers.size} watchers`)
+    })
+
+    ws.on('error', () => {
+      requestWatchers.delete(ws)
+      clearInterval(pingInterval)
+    })
+
+    ws.send(JSON.stringify({ type: 'watching', requestId: watchRequestId }))
+    return
+  }
+
+  // ─── Mode 2: Authenticated client (mobile / web dashboard) ───
   const identifiant = token ? authenticateWsClient(token) : null
 
   if (!identifiant) {
