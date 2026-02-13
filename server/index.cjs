@@ -188,6 +188,13 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
+  // Add must_change_password flag (new users must change password on first login)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT true;
+    `)
+  } catch (_) { /* column may already exist */ }
+
   // Device login requests (GitHub-style: request access → approve on mobile → grant session)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_requests (
@@ -830,7 +837,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -856,6 +863,7 @@ app.post('/api/auth/login', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       permissions: permissions || undefined,
+      must_change_password: Boolean(user.must_change_password),
       token,
     })
   } catch (err) {
@@ -884,7 +892,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(401).json({ error: 'Token invalide.' })
     }
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -902,6 +910,7 @@ app.get('/api/auth/me', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       permissions: permissions || undefined,
+      must_change_password: Boolean(user.must_change_password),
     })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -934,9 +943,9 @@ app.post('/api/auth/change-password', async (req, res) => {
     }
 
     const hashed = await bcrypt.hash(newPassword, 10)
-    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashed, user.id])
+    await pool.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [hashed, user.id])
 
-    return res.json({ success: true })
+    return res.json({ success: true, must_change_password: false })
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('change-password error', err)
@@ -956,7 +965,7 @@ app.post('/api/auth/device/request', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1220,7 +1229,7 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
     }
 
     const userRes = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1237,6 +1246,7 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
       direction_id: user.direction_id || null,
       direction_name: user.direction_name || null,
       permissions: permissions || undefined,
+      must_change_password: Boolean(user.must_change_password),
     }
 
     await pool.query(

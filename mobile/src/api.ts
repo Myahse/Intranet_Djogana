@@ -246,6 +246,39 @@ export async function getPushTokenStatus(
  * The backend should use Firebase Admin SDK to send notifications
  * to this token directly.
  */
+export type HistoryDeviceRequest = {
+  id: string;
+  code: string;
+  status: string;          // "approved" | "denied" | "expired"
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt?: string;     // When the request was approved/denied
+};
+
+export type ListDeviceHistoryResult =
+  | { ok: true; requests: HistoryDeviceRequest[] }
+  | { ok: false; networkError: boolean };
+
+/**
+ * Fetch the history of device login requests (approved, denied, expired).
+ * Falls back to `/api/auth/device/requests/history`.
+ */
+export async function listDeviceRequestHistory(
+  token: string
+): Promise<ListDeviceHistoryResult> {
+  try {
+    const base = await getApiBaseUrl();
+    const res = await fetch(`${base}/api/auth/device/requests/history`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, networkError: false };
+    const data = (await res.json()) as HistoryDeviceRequest[];
+    return { ok: true, requests: data };
+  } catch {
+    return { ok: false, networkError: true };
+  }
+}
+
 export async function registerPushToken(
   token: string,
   fcmToken: string

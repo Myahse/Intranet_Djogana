@@ -1,16 +1,17 @@
-import Login from '@/page/login/login'
-import Home from '@/page/home/home'
-import Documents from '@/page/document/document'
-import Landing from '@/page/landing/landing'
+import Login from '@/page/login'
+import Home from '@/page/home'
+import Documents from '@/page/document'
+import Landing from '@/page/landing'
 import { Routes, Route } from 'react-router-dom'
-import Dashboard from '@/page/dashboard/dashboard'
-import DashboardHome from '@/page/dashboard/DashboardHome'
-import DocumentSection from '@/page/dashboard/DocumentSection'
-import DocumentPreviewPage from '@/page/preview/DocumentPreviewPage'
+import Dashboard from '@/page/dashboard'
+import DashboardHome from '@/page/dashboard/dashboard-home'
+import DocumentSection from '@/page/dashboard/document-section'
+import DocumentPreviewPage from '@/page/preview'
+import ForceChangePasswordPage from '@/page/dashboard/force-change-password'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { DocumentsProvider } from '@/contexts/DocumentsContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
-import AdminPage from '@/page/admin/admin'
+import AdminPage from '@/page/admin'
 
 export default function App() {
   return (
@@ -22,6 +23,14 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/document" element={<Documents />} />
           <Route path="/preview" element={<DocumentPreviewPage />} />
+          <Route
+            path="/change-password"
+            element={
+              <ProtectedRoute allowPasswordChange>
+                <ForceChangePasswordPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={

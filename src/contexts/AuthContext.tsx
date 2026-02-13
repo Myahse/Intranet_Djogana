@@ -38,6 +38,7 @@ export type User = {
   direction_id?: string | null
   direction_name?: string | null
   permissions?: UserPermissions | null
+  must_change_password?: boolean
 }
 
 export type DeviceLoginRequest = {
@@ -172,6 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id?: string | null
           direction_name?: string | null
           permissions?: UserPermissions | null
+          must_change_password?: boolean
           token?: string
         }
         if (!data.identifiant || !data.role) {
@@ -190,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id: data.direction_id ?? null,
           direction_name: data.direction_name ?? null,
           permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+          must_change_password: Boolean(data.must_change_password),
         })
         return true
       } catch {
@@ -232,6 +235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         direction_id?: string | null
         direction_name?: string | null
         permissions?: UserPermissions | null
+        must_change_password?: boolean
       }
       if (!data.identifiant || !data.role) return
       setUser({
@@ -240,6 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         direction_id: data.direction_id ?? null,
         direction_name: data.direction_name ?? null,
         permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+        must_change_password: Boolean(data.must_change_password),
       })
     } catch {
       // silent – keep existing session
@@ -322,6 +327,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               data.user.role === 'admin'
                 ? adminPermissions
                 : (data.user.permissions ?? null),
+            must_change_password: Boolean(data.user.must_change_password),
           })
         }
         return {
@@ -470,12 +476,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const data = await res.json()
-        return Boolean(data && data.success)
+        if (data && data.success) {
+          // Clear the must_change_password flag after successful password change
+          setUser({ ...user, must_change_password: false })
+          return true
+        }
+        return false
       } catch {
         return false
       }
     },
-    [user]
+    [user, setUser]
   )
 
   // Auto-refresh permissions via WebSocket (real-time) + window focus fallback

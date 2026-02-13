@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import * as mammoth from 'mammoth'
 import * as XLSX from 'xlsx'
+import './document-preview.css'
 
 function getDocType(fileName: string): 'word' | 'excel' | null {
   const ext = fileName.split('.').pop()?.toLowerCase()
@@ -134,39 +135,7 @@ export default function DocumentPreviewPage() {
         style={{ display: loading ? 'none' : 'block' }}
       />
 
-      {/* Excel table styling */}
-      <style>{`
-        .excel-preview table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 13px;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        .excel-preview th {
-          background: #f0f4f0;
-          font-weight: 600;
-          text-align: left;
-          padding: 8px 12px;
-          border: 1px solid #d4d4d4;
-          white-space: nowrap;
-          color: #1a1a1a;
-          position: sticky;
-          top: 0;
-          z-index: 1;
-        }
-        .excel-preview td {
-          padding: 6px 12px;
-          border: 1px solid #e5e5e5;
-          white-space: nowrap;
-          color: #333;
-        }
-        .excel-preview tr:nth-child(even) td {
-          background: #fafafa;
-        }
-        .excel-preview tr:hover td {
-          background: #e8f0fe;
-        }
-      `}</style>
+      {/* Excel table styles imported from document-preview.css */}
     </div>
   )
 }
