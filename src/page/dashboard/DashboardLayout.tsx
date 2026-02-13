@@ -28,10 +28,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import { BarChart3, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
+import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
@@ -61,8 +62,10 @@ function DashboardLayout() {
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
+  const { isAdmin } = useAuth()
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
+  const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
 
   // Group folders by "group::subfolder" convention. folder.value is "direction_id::name"; only split the name part.
   const groupedFolders: Record<
@@ -188,6 +191,16 @@ function DashboardLayout() {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
+                    {isAdmin && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton asChild isActive={isAdminPage}>
+                          <Link to="/dashboard/stats">
+                            <BarChart3 className="size-4" />
+                            <span>Statistiques</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
