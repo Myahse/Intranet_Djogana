@@ -215,7 +215,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
             setFolderList(
               foldersData.map((f) => ({
                 value: `${f.direction_id}::${f.name}`,
-                label: `${f.name} (${f.direction_name})`,
+                label: f.name,
                 direction_id: f.direction_id,
                 direction_name: f.direction_name,
                 name: f.name,

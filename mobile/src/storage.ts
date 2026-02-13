@@ -28,9 +28,9 @@ export async function clearToken(): Promise<void> {
   }
 }
 
-/* ── Passkey (biometric credentials) ── */
 
-const PASSKEY_KEY = "djogana_passkey";
+
+const PASSKEY_KEY = process.env.PASSKEY_KEY ?? "djogana_passkey";
 
 export type PasskeyData = {
   identifiant: string;
@@ -38,7 +38,6 @@ export type PasskeyData = {
   createdAt: string;
 };
 
-/** Save credentials protected by biometrics in SecureStore. */
 export async function savePasskey(identifiant: string, password: string): Promise<void> {
   const data: PasskeyData = {
     identifiant,

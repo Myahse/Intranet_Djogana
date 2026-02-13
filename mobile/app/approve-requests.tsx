@@ -12,8 +12,10 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNotification } from "@/components/notifications/NotificationContext";
+import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { ConfirmModal } from "@/modals";
 import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
@@ -43,17 +45,48 @@ function RequestCard({
   onApprove,
   onDeny,
   onExpired,
+  isNew,
 }: {
   item: DeviceRequest;
   actingId: string | null;
   onApprove: (id: string) => void;
   onDeny: (id: string) => void;
   onExpired: (id: string) => void;
+  /** true when the card was just added via WebSocket / notification */
+  isNew?: boolean;
 }) {
   const [seconds, setSeconds] = useState(() => remainingSeconds(item.createdAt));
   const progressAnim = useRef(
     new Animated.Value(seconds / REQUEST_VALIDITY_SECONDS)
   ).current;
+
+  /* ── Entrance animation for live-pushed cards ── */
+  const slideAnim = useRef(new Animated.Value(isNew ? 0 : 1)).current;
+  const glowOpacity = useRef(new Animated.Value(isNew ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (!isNew) return;
+    // Slide + scale in
+    Animated.spring(slideAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 50,
+      friction: 8,
+    }).start();
+    // Glow pulse then fade
+    Animated.sequence([
+      Animated.timing(glowOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(glowOpacity, {
+        toValue: 0,
+        duration: 1200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [isNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const expired = seconds <= 0;
 
@@ -85,7 +118,7 @@ function RequestCard({
     return () => clearInterval(interval);
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Color shifts : green \u2192 orange \u2192 red
+  // Color shifts : green → orange → red
   const timerColor =
     seconds > 10 ? "#16a34a" : seconds > 5 ? "#ea580c" : "#dc2626";
 
@@ -99,8 +132,30 @@ function RequestCard({
     outputRange: ["#dc2626", "#ea580c", "#f59e0b", "#16a34a"],
   });
 
+  const cardTranslateY = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-30, 0],
+  });
+
   return (
-    <View style={[styles.card, expired && styles.cardExpired]}>
+    <Animated.View
+      style={[
+        styles.card,
+        expired && styles.cardExpired,
+        {
+          opacity: slideAnim,
+          transform: [{ translateY: cardTranslateY }, { scale: slideAnim }],
+        },
+      ]}
+    >
+      {/* Glow border for live cards */}
+      {isNew && (
+        <Animated.View
+          style={[styles.newGlow, { opacity: glowOpacity }]}
+          pointerEvents="none"
+        />
+      )}
+
       {/* Header : code + timer */}
       <View style={styles.cardHeader}>
         <Text style={[styles.code, expired && styles.codeExpired]}>
@@ -160,7 +215,7 @@ function RequestCard({
           </TouchableOpacity>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -181,12 +236,74 @@ export default function ApproveRequestsScreen() {
   const [pushRegistered, setPushRegistered] = useState<boolean | null>(null);
   const serverRegDone = useRef(false);
 
+  /** IDs of requests that arrived live (WebSocket / push) – triggers entrance animation */
+  const [liveIds, setLiveIds] = useState<Set<string>>(new Set());
+  /** Whether the WebSocket is currently connected */
+  const [wsConnected, setWsConnected] = useState(false);
+
+  /* ── Helper: add a request to the list with entrance animation ── */
+  const pushLiveRequest = useCallback((req: DeviceRequest) => {
+    setRequests((prev) => {
+      if (prev.some((r) => r.id === req.id)) return prev;
+      return [req, ...prev];
+    });
+    setLiveIds((prev) => new Set(prev).add(req.id));
+  }, []);
+
+  /* ── WebSocket: real-time device request updates ── */
+  const handleWsMessage = useCallback(
+    (msg: WsMessage) => {
+      if (msg.type === "new_device_request" && msg.request) {
+        pushLiveRequest(msg.request);
+      }
+    },
+    [pushLiveRequest]
+  );
+
+  useWebSocket({
+    token,
+    onMessage: handleWsMessage,
+    onOpen: useCallback(() => setWsConnected(true), []),
+    onClose: useCallback(() => setWsConnected(false), []),
+  });
+
+  /* ── Foreground push notification: auto-refresh the list ── */
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener((notif) => {
+      const data = notif.request.content.data as
+        | { requestId?: string; code?: string }
+        | undefined;
+      if (!data?.requestId || !token) return;
+
+      // Fetch the specific request so it appears instantly with animation
+      (async () => {
+        try {
+          if (data.code) {
+            const req = await api.getDeviceRequestByCode(token, data.code);
+            if (req && req.status === "pending") {
+              pushLiveRequest(req);
+              return;
+            }
+          }
+          // Fallback: full reload
+          const result = await api.listDeviceRequests(token);
+          if (result.ok) setRequests(result.requests);
+        } catch {
+          /* silent */
+        }
+      })();
+    });
+
+    return () => sub.remove();
+  }, [token, pushLiveRequest]);
+
   const load = async () => {
     if (!token) return;
     setLoadError(null);
     const result = await api.listDeviceRequests(token);
     if (result.ok) {
       setRequests(result.requests);
+      setLiveIds(new Set()); // clear animations after full reload
     } else {
       setRequests([]);
       setLoadError(
@@ -284,6 +401,19 @@ export default function ApproveRequestsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* ── Live connection indicator ── */}
+      <View style={styles.connectionRow}>
+        <View
+          style={[
+            styles.connectionDot,
+            { backgroundColor: wsConnected ? "#16a34a" : "#d4d4d4" },
+          ]}
+        />
+        <Text style={styles.connectionText}>
+          {wsConnected ? "Connecté en temps réel" : "Connexion en cours…"}
+        </Text>
+      </View>
+
       <Text style={styles.hint}>
         Connectez-vous avec le même identifiant que sur le site. Les demandes
         en attente apparaissent ici.
@@ -319,7 +449,7 @@ export default function ApproveRequestsScreen() {
             <Text style={styles.emptyText}>
               {loadError
                 ? "Tirez pour réessayer."
-                : "Aucune demande en attente. Faites une demande de connexion sur le site puis tirez pour actualiser."}
+                : "Aucune demande en attente. Faites une demande de connexion sur le site, elle apparaîtra automatiquement."}
             </Text>
           </View>
         }
@@ -333,6 +463,7 @@ export default function ApproveRequestsScreen() {
             onApprove={handleApprove}
             onDeny={handleDeny}
             onExpired={handleExpired}
+            isNew={liveIds.has(item.id)}
           />
         )}
       />
@@ -371,6 +502,24 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5", padding: s(16) },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 
+  /* Connection indicator */
+  connectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: s(6),
+    marginBottom: vs(8),
+  },
+  connectionDot: {
+    width: s(8),
+    height: s(8),
+    borderRadius: s(4),
+  },
+  connectionText: {
+    fontSize: fs(12),
+    color: "#999",
+    fontWeight: "500",
+  },
+
   hint: { fontSize: fs(14), color: "#666", marginBottom: vs(16) },
   pushHint: {
     fontSize: fs(13), color: "#b45309", marginBottom: vs(12),
@@ -395,6 +544,15 @@ const styles = StyleSheet.create({
     marginBottom: vs(12),
     borderWidth: 1,
     borderColor: "#eee",
+    overflow: "hidden",
+  },
+  /** Green glow overlay that fades out on new live cards */
+  newGlow: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(22, 163, 74, 0.08)",
+    borderRadius: s(12),
+    borderWidth: 2,
+    borderColor: "rgba(22, 163, 74, 0.35)",
   },
   cardExpired: {
     opacity: 0.55,
