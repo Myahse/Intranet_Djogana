@@ -42,6 +42,7 @@ export default function App() {
             <Route index element={<DashboardHome />} />
             <Route path="documents" element={<DocumentSection />} />
             <Route path="documents/:folder" element={<DocumentSection />} />
+            <Route path="stats" element={<AdminPage />} />
           </Route>
           <Route
             path="/admin"
