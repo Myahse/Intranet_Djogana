@@ -47,7 +47,8 @@ const Dashboard = () => (
 
 function DashboardLayout() {
   const location = useLocation()
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
+  const canViewStats = isAdmin || !!user?.permissions?.can_view_stats
   const [profileOpen, setProfileOpen] = useState(false)
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { contentFilter, setContentFilter } = useDashboardFilter()
@@ -191,7 +192,7 @@ function DashboardLayout() {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    {isAdmin && (
+                    {canViewStats && (
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild isActive={isStatsPage}>
                           <Link to="/dashboard/stats">

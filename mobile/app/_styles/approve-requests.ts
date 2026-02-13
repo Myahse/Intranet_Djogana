@@ -151,14 +151,11 @@ export const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(22, 163, 74, 0.35)",
   },
-  cardExpired: {
-    opacity: 0.55,
-  },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: vs(10),
+    marginBottom: vs(14),
   },
   code: {
     fontSize: fs(22),
@@ -167,44 +164,20 @@ export const styles = StyleSheet.create({
     letterSpacing: s(4),
     color: "#111",
   },
-  codeExpired: {
-    color: "#aaa",
-  },
 
-  /* Timer badge */
+  /* Waiting badge (replaces timer) */
   timerBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "#fffbeb",
     paddingHorizontal: s(10),
     paddingVertical: vs(5),
     borderRadius: s(20),
     gap: s(4),
   },
   timerText: {
-    fontSize: fs(13),
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-  },
-
-  /* Progress bar */
-  progressTrack: {
-    height: vs(4),
-    backgroundColor: "#f0f0f0",
-    borderRadius: s(2),
-    marginBottom: vs(14),
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: vs(4),
-    borderRadius: s(2),
-  },
-
-  expiredLabel: {
-    fontSize: fs(13),
-    color: "#999",
-    textAlign: "center",
-    fontStyle: "italic",
+    fontSize: fs(12),
+    fontWeight: "600",
   },
 
   /* Action buttons */

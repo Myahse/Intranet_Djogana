@@ -24,44 +24,22 @@ import { styles, hStyles } from "./_styles/approve-requests";
 type TabKey = "requests" | "history";
 
 /* ────────────────────────────────────────────
- *  Durée de validité d'une requête (secondes)
- * ──────────────────────────────────────────── */
-const REQUEST_VALIDITY_SECONDS = 15;
-
-/* ────────────────────────────────────────────
- *  Calcule les secondes restantes à partir de createdAt
- * ──────────────────────────────────────────── */
-function remainingSeconds(createdAt: string): number {
-  const created = new Date(createdAt).getTime();
-  const now = Date.now();
-  const elapsed = Math.floor((now - created) / 1000);
-  return Math.max(0, REQUEST_VALIDITY_SECONDS - elapsed);
-}
-
-/* ────────────────────────────────────────────
- *  Composant : Carte d'une requête avec timer
+ *  Composant : Carte d'une requête (sans timer)
  * ──────────────────────────────────────────── */
 function RequestCard({
   item,
   actingId,
   onApprove,
   onDeny,
-  onExpired,
   isNew,
 }: {
   item: DeviceRequest;
   actingId: string | null;
   onApprove: (id: string) => void;
   onDeny: (id: string) => void;
-  onExpired: (id: string) => void;
   /** true when the card was just added via WebSocket / notification */
   isNew?: boolean;
 }) {
-  const [seconds, setSeconds] = useState(() => remainingSeconds(item.createdAt));
-  const progressAnim = useRef(
-    new Animated.Value(seconds / REQUEST_VALIDITY_SECONDS)
-  ).current;
-
   /* ── Entrance animation for live-pushed cards ── */
   const slideAnim = useRef(new Animated.Value(isNew ? 0 : 1)).current;
   const glowOpacity = useRef(new Animated.Value(isNew ? 1 : 0)).current;
@@ -90,50 +68,6 @@ function RequestCard({
     ]).start();
   }, [isNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const expired = seconds <= 0;
-
-  useEffect(() => {
-    if (expired) {
-      onExpired(item.id);
-      return;
-    }
-
-    // Animate the progress bar smoothly to 0
-    Animated.timing(progressAnim, {
-      toValue: 0,
-      duration: seconds * 1000,
-      useNativeDriver: false,
-    }).start();
-
-    const interval = setInterval(() => {
-      setSeconds((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
-          clearInterval(interval);
-          onExpired(item.id);
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Color shifts : green → orange → red
-  const timerColor =
-    seconds > 10 ? "#16a34a" : seconds > 5 ? "#ea580c" : "#dc2626";
-
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
-
-  const progressBarColor = progressAnim.interpolate({
-    inputRange: [0, 0.33, 0.66, 1],
-    outputRange: ["#dc2626", "#ea580c", "#f59e0b", "#16a34a"],
-  });
-
   const cardTranslateY = slideAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [-30, 0],
@@ -143,7 +77,6 @@ function RequestCard({
     <Animated.View
       style={[
         styles.card,
-        expired && styles.cardExpired,
         {
           opacity: slideAnim,
           transform: [{ translateY: cardTranslateY }, { scale: slideAnim }],
@@ -158,65 +91,38 @@ function RequestCard({
         />
       )}
 
-      {/* Header : code + timer */}
+      {/* Header : code + waiting badge */}
       <View style={styles.cardHeader}>
-        <Text style={[styles.code, expired && styles.codeExpired]}>
-          {item.code}
-        </Text>
+        <Text style={styles.code}>{item.code}</Text>
         <View style={styles.timerBadge}>
-          <Ionicons
-            name={expired ? "timer-outline" : "time-outline"}
-            size={ms(14)}
-            color={expired ? "#999" : timerColor}
-          />
-          <Text
-            style={[
-              styles.timerText,
-              { color: expired ? "#999" : timerColor },
-            ]}
-          >
-            {expired ? "Expirée" : `${seconds}s`}
+          <Ionicons name="hourglass-outline" size={ms(14)} color="#f59e0b" />
+          <Text style={[styles.timerText, { color: "#f59e0b" }]}>
+            En attente
           </Text>
         </View>
       </View>
 
-      {/* Progress bar */}
-      <View style={styles.progressTrack}>
-        <Animated.View
-          style={[
-            styles.progressBar,
-            { width: progressWidth, backgroundColor: progressBarColor },
-          ]}
-        />
-      </View>
-
       {/* Actions */}
-      {expired ? (
-        <Text style={styles.expiredLabel}>
-          Cette requête a expiré. Veuillez en générer une nouvelle sur le site.
-        </Text>
-      ) : (
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.btn, styles.btnApprove]}
-            onPress={() => onApprove(item.id)}
-            disabled={actingId !== null || expired}
-          >
-            {actingId === item.id ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.btnText}>Approuver</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.btn, styles.btnDeny]}
-            onPress={() => onDeny(item.id)}
-            disabled={actingId !== null || expired}
-          >
-            <Text style={styles.btnTextDeny}>Refuser</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={[styles.btn, styles.btnApprove]}
+          onPress={() => onApprove(item.id)}
+          disabled={actingId !== null}
+        >
+          {actingId === item.id ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.btnText}>Approuver</Text>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.btn, styles.btnDeny]}
+          onPress={() => onDeny(item.id)}
+          disabled={actingId !== null}
+        >
+          <Text style={styles.btnTextDeny}>Refuser</Text>
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -226,9 +132,10 @@ function RequestCard({
  * ──────────────────────────────────────────── */
 function HistoryCard({ item }: { item: HistoryDeviceRequest }) {
   const statusConfig: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
-    approved: { label: "Approuvée", color: "#16a34a", icon: "checkmark-circle" },
-    denied:   { label: "Refusée",   color: "#dc2626", icon: "close-circle" },
-    expired:  { label: "Expirée",   color: "#9ca3af", icon: "time-outline" },
+    approved:  { label: "Approuvée",  color: "#16a34a", icon: "checkmark-circle" },
+    denied:    { label: "Refusée",    color: "#dc2626", icon: "close-circle" },
+    expired:   { label: "Expirée",    color: "#9ca3af", icon: "time-outline" },
+    detruite:  { label: "Détruite",   color: "#f59e0b", icon: "trash-outline" },
   };
   const cfg = statusConfig[item.status] ?? { label: item.status, color: "#666", icon: "help-circle" as keyof typeof Ionicons.glyphMap };
 
@@ -451,11 +358,6 @@ export default function ApproveRequestsScreen() {
     }
   };
 
-  const handleExpired = useCallback((requestId: string) => {
-    // Remove the expired card from the list immediately
-    setRequests((prev) => prev.filter((r) => r.id !== requestId));
-  }, []);
-
   const openLogoutModal = () => setLogoutModalVisible(true);
   const closeLogoutModal = () => {
     if (!loggingOut) setLogoutModalVisible(false);
@@ -583,7 +485,6 @@ export default function ApproveRequestsScreen() {
                 actingId={actingId}
                 onApprove={handleApprove}
                 onDeny={handleDeny}
-                onExpired={handleExpired}
                 isNew={liveIds.has(item.id)}
               />
             )}

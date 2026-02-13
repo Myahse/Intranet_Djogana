@@ -70,7 +70,7 @@ type AuthContextValue = {
     | { error: string }
   >
   pollDeviceRequest: (requestId: string) => Promise<{
-    status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found'
+    status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found' | 'detruite'
     user?: User
     message?: string
   }>
@@ -294,7 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (
       requestId: string
     ): Promise<{
-      status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found'
+      status: 'pending' | 'approved' | 'denied' | 'expired' | 'not_found' | 'detruite'
       user?: User
       message?: string
     }> => {
@@ -314,6 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           | 'denied'
           | 'expired'
           | 'not_found'
+          | 'detruite'
         if (status === 'approved' && data.user) {
           // Store the JWT token so that authenticated API calls work
           if (data.token) {
@@ -501,6 +502,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logoutRef = useRef(logout)
   logoutRef.current = logout
 
+  // Track whether the user is logged in (boolean) so WebSocket only
+  // reconnects on login/logout, NOT on every permission refresh.
+  const isLoggedIn = !!user
+  const isLoggedInRef = useRef(isLoggedIn)
+  isLoggedInRef.current = isLoggedIn
+
   // On mount: sync user state with the server so stale sessionStorage values
   // (like must_change_password) are corrected immediately
   useEffect(() => {
@@ -509,7 +516,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!user) return
+    if (!isLoggedIn) return
 
     // --- Window focus: refresh as a safety net ---
     const onFocus = () => { refreshRef.current() }
@@ -522,7 +529,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let alive = true
 
     function connect() {
-      if (!alive) return
+      if (!alive || !isLoggedInRef.current) return
       const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
       if (!token) return
 
@@ -593,7 +600,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ws.close()
       }
     }
-  }, [user])
+  }, [isLoggedIn])
 
   const value = useMemo<AuthContextValue>(
     () => ({
