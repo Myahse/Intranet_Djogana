@@ -43,12 +43,14 @@ const ProfilePage = (): ReactNode => {
   const canCreateDirection = isAdmin || !!user?.permissions?.can_create_direction
   const canDeleteDirection = isAdmin || !!user?.permissions?.can_delete_direction
   const canViewActivityLog = isAdmin || !!user?.permissions?.can_view_activity_log
+  const canSetFolderVisibility = isAdmin || !!user?.permissions?.can_set_folder_visibility
   const [selectedFolder, setSelectedFolder] = useState<string>('')
   const [selectedFolderLink, setSelectedFolderLink] = useState<string>('')
   const [linkUrl, setLinkUrl] = useState<string>('')
   const [linkLabel, setLinkLabel] = useState<string>('')
   const [uploadFileName, setUploadFileName] = useState<string>('')
   const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderVisibility, setNewFolderVisibility] = useState<'public' | 'direction_only'>('public')
   const [formationGroupName, setFormationGroupName] = useState('')
   const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
   const [formationSubfolderName, setFormationSubfolderName] = useState('')
@@ -78,6 +80,7 @@ const ProfilePage = (): ReactNode => {
       can_create_direction?: boolean
       can_delete_direction?: boolean
       can_view_activity_log?: boolean
+      can_set_folder_visibility?: boolean
     }>
   >([])
   const [selectedRole, setSelectedRole] = useState<string>('user')
@@ -141,8 +144,9 @@ const ProfilePage = (): ReactNode => {
       return
     }
     try {
-      await addFolder(name, file, selectedDirectionFolder)
+      await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
       setNewFolderName('')
+      setNewFolderVisibility('public')
       if (addFolderFileInputRef.current) addFolderFileInputRef.current.value = ''
       toast.success('Dossier créé et fichier ajouté')
     } catch (err) {
@@ -267,6 +271,8 @@ const ProfilePage = (): ReactNode => {
               can_delete_user?: boolean
               can_create_direction?: boolean
               can_delete_direction?: boolean
+              can_view_activity_log?: boolean
+              can_set_folder_visibility?: boolean
             }>
             setRoles(rolesData)
             const defaultRole =
@@ -298,6 +304,8 @@ const ProfilePage = (): ReactNode => {
 
   useEffect(() => {
     if (!canViewActivityLog) return
+    const headers = getAuthHeaders()
+    if (!headers || !('Authorization' in headers)) return
     const params = new URLSearchParams()
     if (activityLogDirectionId) params.set('direction_id', activityLogDirectionId)
     if (activityLogAction) params.set('action', activityLogAction)
@@ -307,7 +315,7 @@ const ProfilePage = (): ReactNode => {
       try {
         const res = await fetch(
           `${API_BASE_URL}/api/activity-log${qs ? `?${qs}` : ''}`,
-          { headers: getAuthHeaders() }
+          { headers }
         )
         if (res.ok) {
           const data = (await res.json()) as Array<{
@@ -322,9 +330,10 @@ const ProfilePage = (): ReactNode => {
             created_at: string
           }>
           setActivityLog(data)
-        } else if (res.status !== 401) {
-          // Only show error toast for non-auth errors; 401 is silently ignored
-          // (can happen briefly after device-login before token is stored)
+        } else if (res.status === 401) {
+          // Token is expired or invalid — force re-authentication
+          logout()
+        } else {
           const err = await res.json().catch(() => ({}))
           toast.error((err as { error?: string }).error ?? 'Impossible de charger le journal')
         }
@@ -336,7 +345,7 @@ const ProfilePage = (): ReactNode => {
         setActivityLogLoading(false)
       }
     })()
-  }, [canViewActivityLog, activityLogDirectionId, activityLogAction, getAuthHeaders])
+  }, [canViewActivityLog, activityLogDirectionId, activityLogAction, getAuthHeaders, logout])
 
   const handleCreateDirection = async () => {
     const name = newDirectionName.trim()
@@ -418,6 +427,7 @@ const ProfilePage = (): ReactNode => {
                 can_create_direction: false,
                 can_delete_direction: false,
                 can_view_activity_log: false,
+                can_set_folder_visibility: false,
               },
             ]
       )
@@ -443,7 +453,8 @@ const ProfilePage = (): ReactNode => {
       | 'can_delete_user'
       | 'can_create_direction'
       | 'can_delete_direction'
-      | 'can_view_activity_log',
+      | 'can_view_activity_log'
+      | 'can_set_folder_visibility',
     value: boolean
   ) => {
     try {
@@ -457,6 +468,7 @@ const ProfilePage = (): ReactNode => {
       if (field === 'can_create_direction') payload.canCreateDirection = value
       if (field === 'can_delete_direction') payload.canDeleteDirection = value
       if (field === 'can_view_activity_log') payload.canViewActivityLog = value
+      if (field === 'can_set_folder_visibility') payload.canSetFolderVisibility = value
 
       const res = await fetch(
         `${API_BASE_URL}/api/roles/${encodeURIComponent(roleId)}/permissions`,
@@ -484,6 +496,7 @@ const ProfilePage = (): ReactNode => {
         can_create_direction: boolean
         can_delete_direction: boolean
         can_view_activity_log: boolean
+        can_set_folder_visibility: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       toast.success('Permissions mises à jour')
@@ -890,6 +903,7 @@ const ProfilePage = (): ReactNode => {
                         <th className="px-3 py-2 text-center font-medium">Créer direction</th>
                         <th className="px-3 py-2 text-center font-medium">Supprimer direction</th>
                         <th className="px-3 py-2 text-center font-medium">Voir journal</th>
+                        <th className="px-3 py-2 text-center font-medium">Visibilité dossier</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -975,6 +989,15 @@ const ProfilePage = (): ReactNode => {
                                 handleTogglePermission(r.id, 'can_view_activity_log', checked)
                               }
                               aria-label={`Autoriser ${r.name} à voir le journal d'activité`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <Switch
+                              checked={Boolean(r.can_set_folder_visibility)}
+                              onCheckedChange={(checked) =>
+                                handleTogglePermission(r.id, 'can_set_folder_visibility', checked)
+                              }
+                              aria-label={`Autoriser ${r.name} à définir la visibilité des dossiers`}
                             />
                           </td>
                         </tr>
@@ -1091,7 +1114,8 @@ const ProfilePage = (): ReactNode => {
                               {entry.action === 'delete_user' && 'Suppression utilisateur'}
                               {entry.action === 'create_direction' && 'Création direction'}
                               {entry.action === 'delete_direction' && 'Suppression direction'}
-                              {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','delete_user','create_direction','delete_direction'].includes(entry.action) && entry.action}
+                              {entry.action === 'update_folder_visibility' && 'Visibilité dossier'}
+                              {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','delete_user','create_direction','delete_direction','update_folder_visibility'].includes(entry.action) && entry.action}
                             </td>
                             <td className="px-3 py-2 text-muted-foreground">{entry.direction_name ?? '—'}</td>
                             <td className="px-3 py-2 max-w-[200px] truncate" title={entry.details ? JSON.stringify(entry.details) : ''}>
@@ -1236,6 +1260,20 @@ const ProfilePage = (): ReactNode => {
                   accept={FILE_UPLOAD_ACCEPT}
                 />
               </div>
+              {canSetFolderVisibility && (
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="folder-visibility"
+                    checked={newFolderVisibility === 'direction_only'}
+                    onCheckedChange={(checked) =>
+                      setNewFolderVisibility(checked ? 'direction_only' : 'public')
+                    }
+                  />
+                  <Label htmlFor="folder-visibility" className="cursor-pointer">
+                    Visible uniquement par ma direction
+                  </Label>
+                </div>
+              )}
               <Button onClick={handleAddFolder}>
                 <FolderPlus className="size-4 mr-2" />
                 Créer le dossier et ajouter le fichier

@@ -8,12 +8,16 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as storage from "@/storage";
 import { useAuth } from "@/contexts/AuthContext";
+import { s, vs, ms, fs } from "@/responsive";
 
 export default function CreatePasskeyScreen() {
   const router = useRouter();
@@ -128,18 +132,20 @@ export default function CreatePasskeyScreen() {
   if (!compatible) {
     return (
       <View style={styles.container}>
-        <View style={styles.content}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="warning-outline" size={56} color="#ea580c" />
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+          <View style={styles.content}>
+            <View style={styles.iconContainer}>
+              <Ionicons name="warning-outline" size={ms(56)} color="#ea580c" />
+            </View>
+            <Text style={styles.title}>Appareil non compatible</Text>
+            <Text style={styles.description}>
+              {"Votre appareil ne supporte pas l'authentification biométrique ou aucune biométrie n'est configurée.\n\nAllez dans Paramètres > Sécurité pour configurer une empreinte digitale ou la reconnaissance faciale."}
+            </Text>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
+              <Text style={styles.cancelButtonText}>Retour</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.title}>Appareil non compatible</Text>
-          <Text style={styles.description}>
-            {"Votre appareil ne supporte pas l'authentification biométrique ou aucune biométrie n'est configurée.\n\nAllez dans Paramètres > Sécurité pour configurer une empreinte digitale ou la reconnaissance faciale."}
-          </Text>
-          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-            <Text style={styles.cancelButtonText}>Retour</Text>
-          </TouchableOpacity>
-        </View>
+        </ScrollView>
       </View>
     );
   }
@@ -148,154 +154,165 @@ export default function CreatePasskeyScreen() {
   if (alreadyExists && !created) {
     return (
       <View style={styles.container}>
-        <View style={styles.content}>
-          <View style={[styles.iconContainer, { backgroundColor: "#f0fdf4" }]}>
-            <Ionicons name="checkmark-circle" size={56} color="#16a34a" />
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+          <View style={styles.content}>
+            <View style={[styles.iconContainer, { backgroundColor: "#f0fdf4" }]}>
+              <Ionicons name="checkmark-circle" size={ms(56)} color="#16a34a" />
+            </View>
+            <Text style={styles.title}>Passkey déjà actif</Text>
+            <Text style={styles.description}>
+              {"Un passkey est déjà enregistré sur cet appareil. Vous pouvez l'utiliser pour vous connecter depuis l'écran de connexion."}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={handleDeletePasskey}
+            >
+              <Ionicons name="trash-outline" size={ms(18)} color="#dc2626" />
+              <Text style={styles.deleteButtonText}>Supprimer le passkey</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
+              <Text style={styles.cancelButtonText}>Retour</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.title}>Passkey déjà actif</Text>
-          <Text style={styles.description}>
-            {"Un passkey est déjà enregistré sur cet appareil. Vous pouvez l'utiliser pour vous connecter depuis l'écran de connexion."}
-          </Text>
-
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={handleDeletePasskey}
-          >
-            <Ionicons name="trash-outline" size={18} color="#dc2626" />
-            <Text style={styles.deleteButtonText}>Supprimer le passkey</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-            <Text style={styles.cancelButtonText}>Retour</Text>
-          </TouchableOpacity>
-        </View>
+        </ScrollView>
       </View>
     );
   }
 
   // Create passkey form
   return (
-    <View style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="finger-print" size={56} color="#0a0a0a" />
-        </View>
-
-        <Text style={styles.title}>Créer un passkey</Text>
-        <Text style={styles.description}>
-          {"Enregistrez vos identifiants protégés par la biométrie de votre appareil"}
-          {biometricType ? ` (${biometricType})` : ""}
-          {". Lors de vos prochaines connexions, un simple scan suffira."}
-        </Text>
-
-        {/* Benefits */}
-        <View style={styles.benefitsCard}>
-          <View style={styles.benefitRow}>
-            <Ionicons name="shield-checkmark-outline" size={20} color="#16a34a" />
-            <Text style={styles.benefitText}>Identifiants chiffrés et sécurisés</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.container}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.content}>
+          <View style={styles.iconContainer}>
+            <Ionicons name="finger-print" size={ms(56)} color="#0a0a0a" />
           </View>
-          <View style={styles.benefitRow}>
-            <Ionicons name="flash-outline" size={20} color="#16a34a" />
-            <Text style={styles.benefitText}>Connexion instantanée par biométrie</Text>
+
+          <Text style={styles.title}>Créer un passkey</Text>
+          <Text style={styles.description}>
+            {"Enregistrez vos identifiants protégés par la biométrie de votre appareil"}
+            {biometricType ? ` (${biometricType})` : ""}
+            {". Lors de vos prochaines connexions, un simple scan suffira."}
+          </Text>
+
+          {/* Benefits */}
+          <View style={styles.benefitsCard}>
+            <View style={styles.benefitRow}>
+              <Ionicons name="shield-checkmark-outline" size={ms(20)} color="#16a34a" />
+              <Text style={styles.benefitText}>Identifiants chiffrés et sécurisés</Text>
+            </View>
+            <View style={styles.benefitRow}>
+              <Ionicons name="flash-outline" size={ms(20)} color="#16a34a" />
+              <Text style={styles.benefitText}>Connexion instantanée par biométrie</Text>
+            </View>
+            <View style={styles.benefitRow}>
+              <Ionicons name="phone-portrait-outline" size={ms(20)} color="#16a34a" />
+              <Text style={styles.benefitText}>Lié à cet appareil uniquement</Text>
+            </View>
           </View>
-          <View style={styles.benefitRow}>
-            <Ionicons name="phone-portrait-outline" size={20} color="#16a34a" />
-            <Text style={styles.benefitText}>Lié à cet appareil uniquement</Text>
-          </View>
-        </View>
 
-        {/* Credentials to store */}
-        {!user && (
-          <TextInput
-            style={styles.input}
-            placeholder="Identifiant"
-            placeholderTextColor="#888"
-            value={identifiant}
-            onChangeText={(t) => setIdentifiant(t.replace(/\D/g, ""))}
-            keyboardType="number-pad"
-            autoCapitalize="none"
-            editable={!creating}
-          />
-        )}
-
-        <View style={styles.passwordRow}>
-          <TextInput
-            style={styles.passwordInput}
-            placeholder="Mot de passe (sera stocké de façon sécurisée)"
-            placeholderTextColor="#888"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            editable={!creating}
-          />
-          <Pressable onPress={() => setShowPassword((v) => !v)} style={styles.eyeBtn} hitSlop={8}>
-            <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#888" />
-          </Pressable>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.createButton, creating && styles.buttonDisabled]}
-          onPress={handleCreatePasskey}
-          disabled={creating || created}
-        >
-          {creating ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="finger-print-outline" size={20} color="#fff" />
-              <Text style={styles.createButtonText}>Créer mon passkey</Text>
-            </>
+          {/* Credentials to store */}
+          {!user && (
+            <TextInput
+              style={styles.input}
+              placeholder="Identifiant"
+              placeholderTextColor="#888"
+              value={identifiant}
+              onChangeText={(t) => setIdentifiant(t.replace(/\D/g, ""))}
+              keyboardType="number-pad"
+              autoCapitalize="none"
+              editable={!creating}
+            />
           )}
-        </TouchableOpacity>
 
-        <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-          <Text style={styles.cancelButtonText}>Annuler</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          <View style={styles.passwordRow}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Mot de passe (sera stocké de façon sécurisée)"
+              placeholderTextColor="#888"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              editable={!creating}
+            />
+            <Pressable onPress={() => setShowPassword((v) => !v)} style={styles.eyeBtn} hitSlop={8}>
+              <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={ms(20)} color="#888" />
+            </Pressable>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.createButton, creating && styles.buttonDisabled]}
+            onPress={handleCreatePasskey}
+            disabled={creating || created}
+          >
+            {creating ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="finger-print-outline" size={ms(20)} color="#fff" />
+                <Text style={styles.createButtonText}>Créer mon passkey</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
+            <Text style={styles.cancelButtonText}>Annuler</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
+  scrollContent: { flexGrow: 1, justifyContent: "center" },
   centered: { justifyContent: "center", alignItems: "center" },
   content: {
-    flex: 1, padding: 24, justifyContent: "center",
-    maxWidth: 400, width: "100%", alignSelf: "center",
+    padding: s(24), justifyContent: "center",
+    maxWidth: s(400), width: "100%", alignSelf: "center",
   },
   iconContainer: {
-    width: 96, height: 96, borderRadius: 24, backgroundColor: "#f0f0f0",
-    justifyContent: "center", alignItems: "center", alignSelf: "center", marginBottom: 24,
+    width: s(96), height: s(96), borderRadius: s(24), backgroundColor: "#f0f0f0",
+    justifyContent: "center", alignItems: "center", alignSelf: "center", marginBottom: vs(24),
   },
-  title: { fontSize: 22, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 12 },
-  description: { fontSize: 15, color: "#666", textAlign: "center", lineHeight: 22, marginBottom: 24 },
-  benefitsCard: { backgroundColor: "#f0fdf4", borderRadius: 12, padding: 16, marginBottom: 24, gap: 14 },
-  benefitRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  benefitText: { fontSize: 14, color: "#15803d", fontWeight: "500", flex: 1 },
+  title: { fontSize: fs(22), fontWeight: "700", color: "#111", textAlign: "center", marginBottom: vs(12) },
+  description: { fontSize: fs(15), color: "#666", textAlign: "center", lineHeight: fs(22), marginBottom: vs(24) },
+  benefitsCard: { backgroundColor: "#f0fdf4", borderRadius: s(12), padding: s(16), marginBottom: vs(24), gap: vs(14) },
+  benefitRow: { flexDirection: "row", alignItems: "center", gap: s(12) },
+  benefitText: { fontSize: fs(14), color: "#15803d", fontWeight: "500", flex: 1 },
   input: {
     backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd",
-    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-    fontSize: 16, color: "#111", marginBottom: 12,
+    borderRadius: s(12), paddingHorizontal: s(16), paddingVertical: vs(14),
+    fontSize: fs(16), color: "#111", marginBottom: vs(12),
   },
   passwordRow: {
     flexDirection: "row", alignItems: "center", backgroundColor: "#fff",
-    borderWidth: 1, borderColor: "#ddd", borderRadius: 12, marginBottom: 20,
+    borderWidth: 1, borderColor: "#ddd", borderRadius: s(12), marginBottom: vs(20),
   },
-  passwordInput: { flex: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: "#111" },
-  eyeBtn: { paddingHorizontal: 14, paddingVertical: 14, justifyContent: "center", alignItems: "center" },
+  passwordInput: { flex: 1, paddingHorizontal: s(16), paddingVertical: vs(14), fontSize: fs(16), color: "#111" },
+  eyeBtn: { paddingHorizontal: s(14), paddingVertical: vs(14), justifyContent: "center", alignItems: "center" },
   createButton: {
-    backgroundColor: "#0a0a0a", borderRadius: 12, paddingVertical: 16,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    backgroundColor: "#0a0a0a", borderRadius: s(12), paddingVertical: vs(16),
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: s(10),
   },
   buttonDisabled: { opacity: 0.7 },
-  createButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  createButtonText: { color: "#fff", fontSize: fs(16), fontWeight: "600" },
   deleteButton: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fecaca",
-    borderRadius: 12, paddingVertical: 14, gap: 8, marginBottom: 8,
+    borderRadius: s(12), paddingVertical: vs(14), gap: s(8), marginBottom: vs(8),
   },
-  deleteButtonText: { fontSize: 15, fontWeight: "600", color: "#dc2626" },
-  cancelButton: { marginTop: 12, paddingVertical: 12, alignItems: "center" },
-  cancelButtonText: { fontSize: 15, color: "#666" },
+  deleteButtonText: { fontSize: fs(15), fontWeight: "600", color: "#dc2626" },
+  cancelButton: { marginTop: vs(12), paddingVertical: vs(12), alignItems: "center" },
+  cancelButtonText: { fontSize: fs(15), color: "#666" },
 });

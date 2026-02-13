@@ -60,8 +60,8 @@ type DocumentsContextValue = {
   getLinks: (folderKey: string) => LinkItem[]
   addFile: (folderKey: string, file: File, customName?: string) => Promise<void>
   addLink: (folderKey: string, url: string, label: string) => Promise<void>
-  addFolder: (folderName: string, file: File, directionId: string) => Promise<void>
-  addFolderMeta: (folderName: string, directionId: string) => Promise<void>
+  addFolder: (folderName: string, file: File, directionId: string, visibility?: string) => Promise<void>
+  addFolderMeta: (folderName: string, directionId: string, visibility?: string) => Promise<void>
   removeFile: (id: string) => Promise<void>
   removeLink: (id: string) => Promise<void>
   renameFile: (id: string, name: string) => Promise<string>
@@ -129,10 +129,12 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     ;(async () => {
       try {
-        const roleParam =
-          user && !isAdmin && user.role
-            ? `?role=${encodeURIComponent(user.role)}`
-            : ''
+        const params = new URLSearchParams()
+        if (user && !isAdmin && user.role) {
+          params.set('role', user.role)
+          if (user.direction_id) params.set('direction_id', user.direction_id)
+        }
+        const roleParam = params.toString() ? `?${params.toString()}` : ''
 
         const res = await fetch(`${API_BASE_URL}/api/files${roleParam}`)
         if (!res.ok) return
@@ -343,9 +345,25 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   )
 
   const addFolder = useCallback(
-    async (folderName: string, file: File, directionId: string) => {
+    async (folderName: string, file: File, directionId: string, visibility?: string) => {
       const name = folderName.trim()
       if (!name || !user?.identifiant) return
+
+      // Create the folder first (with visibility) so the flag is stored before the file upload
+      const folderRes = await fetch(`${API_BASE_URL}/api/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder: name,
+          direction_id: directionId,
+          identifiant: user.identifiant,
+          visibility: visibility || 'public',
+        }),
+      })
+      if (!folderRes.ok) {
+        const err = await folderRes.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de la création du dossier')
+      }
 
       const uploaded = await uploadToServer(file, name, directionId, user.identifiant)
       const viewerUrl = isOfficeDoc(uploaded.name)
@@ -381,7 +399,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   )
 
   const addFolderMeta = useCallback(
-    async (folderName: string, directionId: string) => {
+    async (folderName: string, directionId: string, visibility?: string) => {
       const name = folderName.trim()
       if (!name || !user?.identifiant) return
 
@@ -392,6 +410,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           folder: name,
           direction_id: directionId,
           identifiant: user.identifiant,
+          visibility: visibility || 'public',
         }),
       })
       if (!res.ok) {

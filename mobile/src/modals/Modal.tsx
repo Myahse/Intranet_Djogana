@@ -10,6 +10,7 @@ import {
   StatusBar,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { s, vs } from "@/responsive";
 
 interface ModalProps {
   visible: boolean;
@@ -114,20 +115,20 @@ const styles = StyleSheet.create({
   },
   container: {
     backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: s(20),
+    borderTopRightRadius: s(20),
     width: "100%",
     overflow: "hidden",
   },
   handleRow: {
     alignItems: "center",
-    paddingTop: 10,
-    paddingBottom: 4,
+    paddingTop: vs(10),
+    paddingBottom: vs(4),
   },
   handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: s(36),
+    height: vs(4),
+    borderRadius: s(2),
     backgroundColor: "#ddd",
   },
 });

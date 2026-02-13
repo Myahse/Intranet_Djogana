@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import * as storage from "@/storage";
+import { s, vs, ms, fs } from "@/responsive";
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -130,7 +131,7 @@ export default function LoginScreen() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Ionicons name="finger-print" size={22} color="#fff" />
+                  <Ionicons name="finger-print" size={ms(22)} color="#fff" />
                   <Text style={styles.passkeyLoginText}>Se connecter avec le passkey</Text>
                 </>
               )}
@@ -174,7 +175,7 @@ export default function LoginScreen() {
             >
               <Ionicons
                 name={showPassword ? "eye-off-outline" : "eye-outline"}
-                size={22}
+                size={ms(22)}
                 color="#888"
               />
             </Pressable>
@@ -206,7 +207,7 @@ export default function LoginScreen() {
                 onPress={() => router.push("/create-passkey")}
                 disabled={isLoading}
               >
-                <Ionicons name="finger-print-outline" size={20} color="#0a0a0a" />
+                <Ionicons name="finger-print-outline" size={ms(20)} color="#0a0a0a" />
                 <Text style={styles.passkeySetupText}>Créer un passkey</Text>
               </TouchableOpacity>
             </>
@@ -220,44 +221,44 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   scrollContent: { flexGrow: 1, justifyContent: "center" },
-  content: { padding: 24, maxWidth: 400, width: "100%", alignSelf: "center" },
-  title: { fontSize: 24, fontWeight: "700", marginBottom: 8, color: "#111" },
-  subtitle: { fontSize: 15, color: "#666", marginBottom: 28 },
+  content: { padding: s(24), maxWidth: s(400), width: "100%", alignSelf: "center" },
+  title: { fontSize: fs(24), fontWeight: "700", marginBottom: vs(8), color: "#111" },
+  subtitle: { fontSize: fs(15), color: "#666", marginBottom: vs(28) },
 
   /* Passkey quick-login */
   passkeyLoginButton: {
-    backgroundColor: "#0a0a0a", borderRadius: 12, paddingVertical: 16,
+    backgroundColor: "#0a0a0a", borderRadius: s(12), paddingVertical: vs(16),
     flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 10, marginBottom: 4,
+    gap: s(10), marginBottom: vs(4),
   },
-  passkeyLoginText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  passkeyLoginText: { color: "#fff", fontSize: fs(16), fontWeight: "600" },
 
   /* Form */
   input: {
     backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd",
-    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-    fontSize: 16, color: "#111", marginBottom: 12,
+    borderRadius: s(12), paddingHorizontal: s(16), paddingVertical: vs(14),
+    fontSize: fs(16), color: "#111", marginBottom: vs(12),
   },
   passwordContainer: {
     flexDirection: "row", alignItems: "center", backgroundColor: "#fff",
-    borderWidth: 1, borderColor: "#ddd", borderRadius: 12, marginBottom: 12,
+    borderWidth: 1, borderColor: "#ddd", borderRadius: s(12), marginBottom: vs(12),
   },
-  passwordInput: { flex: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: "#111" },
-  eyeButton: { paddingHorizontal: 14, paddingVertical: 14, justifyContent: "center", alignItems: "center" },
-  button: { backgroundColor: "#0a0a0a", borderRadius: 12, paddingVertical: 16, alignItems: "center", marginTop: 8 },
+  passwordInput: { flex: 1, paddingHorizontal: s(16), paddingVertical: vs(14), fontSize: fs(16), color: "#111" },
+  eyeButton: { paddingHorizontal: s(14), paddingVertical: vs(14), justifyContent: "center", alignItems: "center" },
+  button: { backgroundColor: "#0a0a0a", borderRadius: s(12), paddingVertical: vs(16), alignItems: "center", marginTop: vs(8) },
   buttonDisabled: { opacity: 0.7 },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  buttonText: { color: "#fff", fontSize: fs(16), fontWeight: "600" },
 
   /* Dividers */
-  dividerRow: { flexDirection: "row", alignItems: "center", marginTop: 20, marginBottom: 20 },
+  dividerRow: { flexDirection: "row", alignItems: "center", marginTop: vs(20), marginBottom: vs(20) },
   dividerLine: { flex: 1, height: 1, backgroundColor: "#ddd" },
-  dividerText: { marginHorizontal: 12, fontSize: 13, color: "#999", fontWeight: "500" },
+  dividerText: { marginHorizontal: s(12), fontSize: fs(13), color: "#999", fontWeight: "500" },
 
   /* Create passkey button (shown when no passkey exists) */
   passkeySetupButton: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     backgroundColor: "#fff", borderWidth: 1, borderColor: "#ddd",
-    borderRadius: 12, paddingVertical: 14, gap: 10,
+    borderRadius: s(12), paddingVertical: vs(14), gap: s(10),
   },
-  passkeySetupText: { fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
+  passkeySetupText: { fontSize: fs(15), fontWeight: "600", color: "#0a0a0a" },
 });

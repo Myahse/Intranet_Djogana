@@ -21,6 +21,7 @@ export type UserPermissions = {
   can_create_direction: boolean
   can_delete_direction: boolean
   can_view_activity_log: boolean
+  can_set_folder_visibility: boolean
 }
 
 export type User = {
@@ -98,6 +99,7 @@ const adminPermissions: UserPermissions = {
   can_create_direction: true,
   can_delete_direction: true,
   can_view_activity_log: true,
+  can_set_folder_visibility: true,
 }
 
 function localFallbackLogin(

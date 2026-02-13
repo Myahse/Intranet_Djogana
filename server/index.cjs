@@ -194,6 +194,10 @@ async function initDb() {
       )
     } catch (_) { /* ignore if exists */ }
   }
+  // Folder visibility: 'public' (everyone) or 'direction_only' (only members of the folder's direction)
+  try {
+    await pool.query(`ALTER TABLE folders ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'`)
+  } catch (_) { /* ignore */ }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS files (
@@ -260,6 +264,7 @@ async function initDb() {
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_create_direction boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_delete_direction boolean NOT NULL DEFAULT false')
     await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_view_activity_log boolean NOT NULL DEFAULT false')
+    await pool.query('ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS can_set_folder_visibility boolean NOT NULL DEFAULT false')
   } catch (_) { /* ignore */ }
 
   // Activity / audit log: who did what, when (per direction for access control)
@@ -814,22 +819,39 @@ app.post('/api/auth/device/request', async (req, res) => {
             if (!deviceToken) continue
 
             try {
+              // ── Data-only message ──
+              // We intentionally omit the top-level `notification` field so that
+              // expo-notifications processes the message on Android (even in the
+              // background) and can attach the notification category with
+              // interactive Approve / Deny action buttons.
               const result = await messaging.send({
                 token: deviceToken,
-                notification: {
-                  title: 'Nouvelle demande de connexion',
-                  body: `Code: ${code}`,
-                },
+                // Data-only → expo-notifications reads title, body, categoryId, channelId
                 data: {
+                  title: 'Nouvelle demande de connexion',
+                  body: `Code: ${code} — Approuver ou refuser`,
                   requestId: String(requestId),
                   code: String(code),
+                  categoryId: 'approval_request',   // matches setNotificationCategoryAsync
+                  channelId: 'approval',             // high-priority Android channel
                 },
                 android: {
                   priority: 'high',
-                  notification: {
-                    channelId: 'default',
-                    sound: 'default',
-                    priority: 'high',
+                },
+                apns: {
+                  payload: {
+                    aps: {
+                      category: 'approval_request',  // iOS notification category
+                      sound: 'default',
+                      'content-available': 1,
+                      alert: {
+                        title: 'Nouvelle demande de connexion',
+                        body: `Code: ${code} — Approuver ou refuser`,
+                      },
+                    },
+                  },
+                  headers: {
+                    'apns-priority': '10',
                   },
                 },
               })
@@ -1186,13 +1208,14 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_create_direction: true,
       can_delete_direction: true,
       can_view_activity_log: true,
+      can_set_folder_visibility: true,
     }
   }
   const permRes = await pool.query(
     `
       SELECT p.can_create_folder, p.can_upload_file, p.can_delete_file, p.can_delete_folder,
              p.can_create_user, p.can_delete_user, p.can_create_direction, p.can_delete_direction,
-             p.can_view_activity_log
+             p.can_view_activity_log, p.can_set_folder_visibility
       FROM roles r
       JOIN role_permissions p ON p.role_id = r.id
       WHERE r.name = $1
@@ -1210,6 +1233,7 @@ async function getPermissionsForIdentifiant(identifiant) {
       can_create_direction: false,
       can_delete_direction: false,
       can_view_activity_log: false,
+      can_set_folder_visibility: false,
     }
   }
   const row = permRes.rows[0]
@@ -1223,6 +1247,7 @@ async function getPermissionsForIdentifiant(identifiant) {
     can_create_direction: !!row.can_create_direction,
     can_delete_direction: !!row.can_delete_direction,
     can_view_activity_log: !!row.can_view_activity_log,
+    can_set_folder_visibility: !!row.can_set_folder_visibility,
   }
 }
 
@@ -1241,7 +1266,8 @@ app.get('/api/roles', async (_req, res) => {
         COALESCE(p.can_delete_user, false) AS can_delete_user,
         COALESCE(p.can_create_direction, false) AS can_create_direction,
         COALESCE(p.can_delete_direction, false) AS can_delete_direction,
-        COALESCE(p.can_view_activity_log, false) AS can_view_activity_log
+        COALESCE(p.can_view_activity_log, false) AS can_view_activity_log,
+        COALESCE(p.can_set_folder_visibility, false) AS can_set_folder_visibility
       FROM roles r
       LEFT JOIN role_permissions p ON p.role_id = r.id
       ORDER BY r.created_at DESC
@@ -1315,6 +1341,7 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       canCreateDirection,
       canDeleteDirection,
       canViewActivityLog,
+      canSetFolderVisibility,
     } = req.body || {}
 
     // Ensure the role exists
@@ -1326,8 +1353,8 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
     // Upsert permissions row
     await pool.query(
       `
-        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log)
-        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false), COALESCE($10, false))
+        INSERT INTO role_permissions (role_id, can_create_folder, can_upload_file, can_delete_file, can_delete_folder, can_create_user, can_delete_user, can_create_direction, can_delete_direction, can_view_activity_log, can_set_folder_visibility)
+        VALUES ($1, COALESCE($2, false), COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), COALESCE($11, false))
         ON CONFLICT (role_id)
         DO UPDATE SET
           can_create_folder = COALESCE($2, role_permissions.can_create_folder),
@@ -1338,9 +1365,10 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           can_delete_user = COALESCE($7, role_permissions.can_delete_user),
           can_create_direction = COALESCE($8, role_permissions.can_create_direction),
           can_delete_direction = COALESCE($9, role_permissions.can_delete_direction),
-          can_view_activity_log = COALESCE($10, role_permissions.can_view_activity_log)
+          can_view_activity_log = COALESCE($10, role_permissions.can_view_activity_log),
+          can_set_folder_visibility = COALESCE($11, role_permissions.can_set_folder_visibility)
       `,
-      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection, canViewActivityLog]
+      [id, canCreateFolder, canUploadFile, canDeleteFile, canDeleteFolder, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection, canViewActivityLog, canSetFolderVisibility]
     )
 
     const updated = await pool.query(
@@ -1356,7 +1384,8 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
           p.can_delete_user,
           p.can_create_direction,
           p.can_delete_direction,
-          p.can_view_activity_log
+          p.can_view_activity_log,
+          p.can_set_folder_visibility
         FROM roles r
         JOIN role_permissions p ON p.role_id = r.id
         WHERE r.id = $1
@@ -1572,20 +1601,24 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
 })
 
 // Explicit folders / groups (each folder belongs to a direction)
+// Query params: role, direction_id (user's direction — used to filter direction_only folders)
 app.get('/api/folders', async (_req, res) => {
   try {
-    const { role } = _req.query
+    const { role, direction_id: userDirectionId } = _req.query
 
     let sql = `
-      SELECT f.id, f.name, f.direction_id, f.created_at, d.name AS direction_name
+      SELECT f.id, f.name, f.direction_id, f.created_at, f.visibility, d.name AS direction_name
       FROM folders f
       JOIN directions d ON d.id = f.direction_id
     `
     const params = []
+    const conditions = []
 
     if (role && role !== 'admin') {
-      sql += `
-        WHERE (
+      // Role-based folder visibility (existing feature)
+      params.push(role)
+      conditions.push(`
+        (
           NOT EXISTS (
             SELECT 1 FROM folder_role_visibility v
             JOIN roles r ON r.id = v.role_id
@@ -1594,11 +1627,22 @@ app.get('/api/folders', async (_req, res) => {
           OR EXISTS (
             SELECT 1 FROM folder_role_visibility v
             JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = f.name AND r.name = $1 AND v.can_view = true
+            WHERE v.folder_name = f.name AND r.name = $${params.length} AND v.can_view = true
           )
         )
-      `
-      params.push(role)
+      `)
+
+      // Direction-only visibility: hide folders marked 'direction_only' unless the user belongs to that direction
+      if (userDirectionId) {
+        params.push(userDirectionId)
+        conditions.push(`(f.visibility = 'public' OR f.direction_id = $${params.length})`)
+      } else {
+        conditions.push(`f.visibility = 'public'`)
+      }
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ')
     }
 
     sql += ' ORDER BY d.name, f.created_at DESC'
@@ -1610,6 +1654,7 @@ app.get('/api/folders', async (_req, res) => {
         name: row.name,
         direction_id: row.direction_id,
         direction_name: row.direction_name,
+        visibility: row.visibility || 'public',
         createdAt: row.created_at,
       }))
     )
@@ -1622,7 +1667,7 @@ app.get('/api/folders', async (_req, res) => {
 
 app.post('/api/folders', async (req, res) => {
   try {
-    const { folder, direction_id: directionId, identifiant } = req.body || {}
+    const { folder, direction_id: directionId, identifiant, visibility: rawVisibility } = req.body || {}
     const name = (folder || '').trim()
     if (!name) {
       return res.status(400).json({ error: 'Nom de dossier requis.' })
@@ -1630,8 +1675,10 @@ app.post('/api/folders', async (req, res) => {
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour créer un dossier.' })
     }
+    const visibility = rawVisibility === 'direction_only' ? 'direction_only' : 'public'
 
     // Permission: admin can create in any direction; others only in their own direction
+    let callerRole = null
     if (identifiant) {
       const userRes = await pool.query(
         'SELECT role, direction_id FROM users WHERE identifiant = $1',
@@ -1639,11 +1686,22 @@ app.post('/api/folders', async (req, res) => {
       )
       if (userRes.rows.length > 0) {
         const u = userRes.rows[0]
+        callerRole = u.role
         if (u.role !== 'admin' && u.direction_id !== directionId) {
           return res.status(403).json({
             error: 'Vous ne pouvez créer des dossiers que dans votre direction.',
           })
         }
+      }
+    }
+
+    // Only admin or users with can_set_folder_visibility can set visibility to 'direction_only'
+    if (visibility === 'direction_only' && callerRole !== 'admin' && identifiant) {
+      const perms = await getPermissionsForIdentifiant(identifiant)
+      if (!perms || !perms.can_set_folder_visibility) {
+        return res.status(403).json({
+          error: "Vous n'avez pas la permission de restreindre la visibilité du dossier.",
+        })
       }
     }
 
@@ -1655,11 +1713,11 @@ app.post('/api/folders', async (req, res) => {
     const id = uuidv4()
     await pool.query(
       `
-        INSERT INTO folders (id, name, direction_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO folders (id, name, direction_id, visibility)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (direction_id, name) DO NOTHING
       `,
-      [id, name, directionId]
+      [id, name, directionId, visibility]
     )
 
     let actorId = null
@@ -1674,10 +1732,10 @@ app.post('/api/folders', async (req, res) => {
       directionId,
       entityType: 'folder',
       entityId: id,
-      details: { name },
+      details: { name, visibility },
     })
 
-    return res.status(201).json({ id, name, direction_id: directionId })
+    return res.status(201).json({ id, name, direction_id: directionId, visibility })
   } catch (err) {
     if (err && err.code === '23505') {
       return res.status(409).json({ error: 'Un dossier avec ce nom existe déjà dans cette direction.' })
@@ -1688,9 +1746,68 @@ app.post('/api/folders', async (req, res) => {
   }
 })
 
+// Toggle folder visibility (public <-> direction_only)
+app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { visibility: rawVisibility } = req.body || {}
+    const visibility = rawVisibility === 'direction_only' ? 'direction_only' : 'public'
+    const identifiant = req.authIdentifiant
+
+    const userRes = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = userRes.rows[0]
+
+    // Only admin or users with can_set_folder_visibility permission
+    if (user.role !== 'admin') {
+      const perms = await getPermissionsForIdentifiant(identifiant)
+      if (!perms || !perms.can_set_folder_visibility) {
+        return res.status(403).json({
+          error: "Vous n'avez pas la permission de modifier la visibilité du dossier.",
+        })
+      }
+    }
+
+    // Verify folder exists and user belongs to the same direction (non-admin)
+    const folderRes = await pool.query('SELECT id, name, direction_id FROM folders WHERE id = $1', [id])
+    if (folderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Dossier introuvable.' })
+    }
+    const folder = folderRes.rows[0]
+    if (user.role !== 'admin' && user.direction_id !== folder.direction_id) {
+      return res.status(403).json({
+        error: 'Vous ne pouvez modifier que les dossiers de votre direction.',
+      })
+    }
+
+    await pool.query('UPDATE folders SET visibility = $1 WHERE id = $2', [visibility, id])
+
+    await insertActivityLog(pool, {
+      action: 'update_folder_visibility',
+      actorIdentifiant: identifiant,
+      actorId: null,
+      directionId: folder.direction_id,
+      entityType: 'folder',
+      entityId: id,
+      details: { name: folder.name, visibility },
+    })
+
+    return res.json({ id, name: folder.name, direction_id: folder.direction_id, visibility })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('folder visibility update error', err)
+    return res.status(500).json({ error: 'Erreur lors de la mise à jour de la visibilité.' })
+  }
+})
+
 app.get('/api/files', async (req, res) => {
   try {
-    const { folder, role } = req.query
+    const { folder, role, direction_id: userDirectionId } = req.query
 
     const params = []
     let sql = 'SELECT id, name, mime_type, size, folder, direction_id, created_at FROM files'
@@ -1722,6 +1839,27 @@ app.get('/api/files', async (req, res) => {
           )
         )
       `)
+
+      // Direction-only visibility: hide files in folders marked 'direction_only' unless user belongs to that direction
+      if (userDirectionId) {
+        params.push(userDirectionId)
+        conditions.push(`
+          NOT EXISTS (
+            SELECT 1 FROM folders ff
+            WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+              AND ff.visibility = 'direction_only'
+              AND ff.direction_id != $${params.length}
+          )
+        `)
+      } else {
+        conditions.push(`
+          NOT EXISTS (
+            SELECT 1 FROM folders ff
+            WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+              AND ff.visibility = 'direction_only'
+          )
+        `)
+      }
     }
 
     if (conditions.length > 0) {
@@ -2050,7 +2188,7 @@ app.post('/api/links', async (req, res) => {
 
 app.get('/api/links', async (req, res) => {
   try {
-    const { folder, role } = req.query
+    const { folder, role, direction_id: userDirectionId } = req.query
     const params = []
     let sql = `
       SELECT l.id, l.folder, l.direction_id, l.url, l.label, l.created_at
@@ -2081,6 +2219,27 @@ app.get('/api/links', async (req, res) => {
           )
         )
       `)
+
+      // Direction-only visibility: hide links in folders marked 'direction_only' unless user belongs to that direction
+      if (userDirectionId) {
+        params.push(userDirectionId)
+        conditions.push(`
+          NOT EXISTS (
+            SELECT 1 FROM folders ff
+            WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+              AND ff.visibility = 'direction_only'
+              AND ff.direction_id != $${params.length}
+          )
+        `)
+      } else {
+        conditions.push(`
+          NOT EXISTS (
+            SELECT 1 FROM folders ff
+            WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+              AND ff.visibility = 'direction_only'
+          )
+        `)
+      }
     }
 
     if (conditions.length > 0) {

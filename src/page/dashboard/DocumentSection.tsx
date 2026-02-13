@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
 import wordIcon from '@/assets/svgs/Group 57.svg'
+import pptIcon from '@/assets/svgs/powerpoint-2.svg'
+import excelIcon from '@/assets/svgs/excel-4.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
@@ -37,7 +39,9 @@ function isImageFile(fileName: string): boolean {
 function getFileIconSrc(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase()
   if (ext === 'pdf') return pdfIcon
-  if (ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx') return wordIcon
+  if (ext === 'doc' || ext === 'docx') return wordIcon
+  if (ext === 'ppt' || ext === 'pptx') return pptIcon
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return excelIcon
   return ''
 }
 

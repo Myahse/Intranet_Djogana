@@ -17,6 +17,7 @@ import { useNotification } from "@/components/notifications/NotificationContext"
 import { ConfirmModal } from "@/modals";
 import * as api from "@/api";
 import type { DeviceRequest } from "@/api";
+import { s, vs, ms, fs } from "@/responsive";
 
 /* ────────────────────────────────────────────
  *  Durée de validité d'une requête (secondes)
@@ -108,7 +109,7 @@ function RequestCard({
         <View style={styles.timerBadge}>
           <Ionicons
             name={expired ? "timer-outline" : "time-outline"}
-            size={14}
+            size={ms(14)}
             color={expired ? "#999" : timerColor}
           />
           <Text
@@ -254,8 +255,8 @@ export default function ApproveRequestsScreen() {
   };
 
   const handleExpired = useCallback((requestId: string) => {
-    // On garde la carte affichée mais désactivée pour montrer qu'elle a expiré
-    // Elle disparaitra au prochain refresh
+    // Remove the expired card from the list immediately
+    setRequests((prev) => prev.filter((r) => r.id !== requestId));
   }, []);
 
   const openLogoutModal = () => setLogoutModalVisible(true);
@@ -341,7 +342,7 @@ export default function ApproveRequestsScreen() {
         style={styles.securityButton}
         onPress={() => router.push("/security")}
       >
-        <Ionicons name="shield-checkmark-outline" size={18} color="#0a0a0a" />
+        <Ionicons name="shield-checkmark-outline" size={ms(18)} color="#0a0a0a" />
         <Text style={styles.securityButtonText}>Sécurité & Compte</Text>
       </TouchableOpacity>
 
@@ -367,31 +368,31 @@ export default function ApproveRequestsScreen() {
  *  Styles
  * ──────────────────────────────────────────── */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5", padding: 16 },
+  container: { flex: 1, backgroundColor: "#f5f5f5", padding: s(16) },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  hint: { fontSize: 14, color: "#666", marginBottom: 16 },
+  hint: { fontSize: fs(14), color: "#666", marginBottom: vs(16) },
   pushHint: {
-    fontSize: 13, color: "#b45309", marginBottom: 12,
-    backgroundColor: "#fffbeb", padding: 10, borderRadius: 8,
+    fontSize: fs(13), color: "#b45309", marginBottom: vs(12),
+    backgroundColor: "#fffbeb", padding: s(10), borderRadius: s(8),
   },
   errorBanner: {
-    backgroundColor: "#fef2f2", padding: 12, borderRadius: 8,
-    marginBottom: 16, borderWidth: 1, borderColor: "#fecaca",
+    backgroundColor: "#fef2f2", padding: s(12), borderRadius: s(8),
+    marginBottom: vs(16), borderWidth: 1, borderColor: "#fecaca",
   },
-  errorText: { fontSize: 14, color: "#b91c1c" },
+  errorText: { fontSize: fs(14), color: "#b91c1c" },
 
-  list: { paddingBottom: 24 },
+  list: { paddingBottom: vs(24) },
   emptyList: { flex: 1 },
-  empty: { padding: 32, alignItems: "center" },
-  emptyText: { fontSize: 15, color: "#888", textAlign: "center" },
+  empty: { padding: s(32), alignItems: "center" },
+  emptyText: { fontSize: fs(15), color: "#888", textAlign: "center" },
 
   /* ── Request card ── */
   card: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: s(12),
+    padding: s(16),
+    marginBottom: vs(12),
     borderWidth: 1,
     borderColor: "#eee",
   },
@@ -402,13 +403,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: vs(10),
   },
   code: {
-    fontSize: 22,
+    fontSize: fs(22),
     fontWeight: "700",
     fontVariant: ["tabular-nums"],
-    letterSpacing: 4,
+    letterSpacing: s(4),
     color: "#111",
   },
   codeExpired: {
@@ -420,54 +421,54 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#f5f5f5",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    gap: 4,
+    paddingHorizontal: s(10),
+    paddingVertical: vs(5),
+    borderRadius: s(20),
+    gap: s(4),
   },
   timerText: {
-    fontSize: 13,
+    fontSize: fs(13),
     fontWeight: "700",
     fontVariant: ["tabular-nums"],
   },
 
   /* Progress bar */
   progressTrack: {
-    height: 4,
+    height: vs(4),
     backgroundColor: "#f0f0f0",
-    borderRadius: 2,
-    marginBottom: 14,
+    borderRadius: s(2),
+    marginBottom: vs(14),
     overflow: "hidden",
   },
   progressBar: {
-    height: 4,
-    borderRadius: 2,
+    height: vs(4),
+    borderRadius: s(2),
   },
 
   expiredLabel: {
-    fontSize: 13,
+    fontSize: fs(13),
     color: "#999",
     textAlign: "center",
     fontStyle: "italic",
   },
 
   /* Action buttons */
-  actions: { flexDirection: "row", gap: 10 },
-  btn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  actions: { flexDirection: "row", gap: s(10) },
+  btn: { flex: 1, paddingVertical: vs(12), borderRadius: s(10), alignItems: "center" },
   btnApprove: { backgroundColor: "#0a0a0a" },
   btnDeny: { backgroundColor: "#f0f0f0" },
-  btnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  btnTextDeny: { color: "#333", fontSize: 15, fontWeight: "600" },
+  btnText: { color: "#fff", fontSize: fs(15), fontWeight: "600" },
+  btnTextDeny: { color: "#333", fontSize: fs(15), fontWeight: "600" },
 
   /* Security button */
   securityButton: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee",
-    borderRadius: 12, paddingVertical: 14, marginTop: 16, gap: 8,
+    borderRadius: s(12), paddingVertical: vs(14), marginTop: vs(16), gap: s(8),
   },
-  securityButtonText: { fontSize: 15, fontWeight: "600", color: "#0a0a0a" },
+  securityButtonText: { fontSize: fs(15), fontWeight: "600", color: "#0a0a0a" },
 
-  logout: { marginTop: 12, paddingVertical: 12, alignItems: "center" },
-  logoutText: { fontSize: 15, color: "#666" },
+  logout: { marginTop: vs(12), paddingVertical: vs(12), alignItems: "center" },
+  logoutText: { fontSize: fs(15), color: "#666" },
 
 });
