@@ -16,7 +16,7 @@ import logoDjogana from '@/assets/logo_djogana.png'
  */
 const ForceChangePasswordPage = (): ReactNode => {
   const navigate = useNavigate()
-  const { user, changePassword, logout } = useAuth()
+  const { user, changePassword, logout, refreshPermissions } = useAuth()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
@@ -54,8 +54,9 @@ const ForceChangePasswordPage = (): ReactNode => {
       if (ok) {
         setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Mot de passe mis à jour avec succès !' }))
         toast.success('Mot de passe mis à jour')
-        // Wait for the loading modal to auto-close, then navigate to dashboard
-        setTimeout(() => {
+        // Wait for the loading modal to auto-close, refresh server state, then navigate
+        setTimeout(async () => {
+          try { await refreshPermissions() } catch { /* best-effort */ }
           navigate('/dashboard', { replace: true })
         }, 1400)
       } else {

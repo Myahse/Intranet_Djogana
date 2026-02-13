@@ -579,6 +579,153 @@ function validateDirectionCode(raw) {
   return s
 }
 
+// ──────────── Admin analytics / stats ────────────
+app.get('/api/admin/stats', requireAuth, async (req, res) => {
+  try {
+    // Only admin can access
+    const perms = await getPermissionsForIdentifiant(req.user.identifiant)
+    if (!perms || perms.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' })
+    }
+
+    // Run all queries in parallel for speed
+    const [
+      usersCount,
+      usersByRole,
+      usersByDirection,
+      directionsCount,
+      foldersCount,
+      foldersByDirection,
+      filesCount,
+      filesByType,
+      filesByDirection,
+      storageTotal,
+      linksCount,
+      recentActivity,
+      topUploaders,
+      filesOverTime,
+    ] = await Promise.all([
+      // Total users
+      pool.query('SELECT COUNT(*)::int AS count FROM users'),
+      // Users grouped by role
+      pool.query('SELECT role, COUNT(*)::int AS count FROM users GROUP BY role ORDER BY count DESC'),
+      // Users grouped by direction
+      pool.query(`
+        SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(u.id)::int AS count
+        FROM users u LEFT JOIN directions d ON u.direction_id = d.id
+        GROUP BY d.name ORDER BY count DESC
+      `),
+      // Total directions
+      pool.query('SELECT COUNT(*)::int AS count FROM directions'),
+      // Total folders
+      pool.query('SELECT COUNT(*)::int AS count FROM folders'),
+      // Folders grouped by direction
+      pool.query(`
+        SELECT d.name AS direction, COUNT(f.id)::int AS count
+        FROM folders f JOIN directions d ON f.direction_id = d.id
+        GROUP BY d.name ORDER BY count DESC
+      `),
+      // Total files
+      pool.query('SELECT COUNT(*)::int AS count FROM files'),
+      // Files grouped by MIME type (category)
+      pool.query(`
+        SELECT
+          CASE
+            WHEN mime_type LIKE 'image/%' THEN 'Images'
+            WHEN mime_type LIKE 'video/%' THEN 'Vidéos'
+            WHEN mime_type LIKE 'audio/%' THEN 'Audio'
+            WHEN mime_type IN ('application/pdf') THEN 'PDF'
+            WHEN mime_type IN (
+              'application/msword',
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            ) THEN 'Word'
+            WHEN mime_type IN (
+              'application/vnd.ms-excel',
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'text/csv'
+            ) THEN 'Excel/CSV'
+            WHEN mime_type IN (
+              'application/vnd.ms-powerpoint',
+              'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            ) THEN 'PowerPoint'
+            WHEN mime_type LIKE 'text/%' THEN 'Texte'
+            ELSE 'Autre'
+          END AS category,
+          COUNT(*)::int AS count,
+          COALESCE(SUM(size), 0)::bigint AS total_size
+        FROM files
+        GROUP BY category
+        ORDER BY count DESC
+      `),
+      // Files grouped by direction
+      pool.query(`
+        SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
+               COALESCE(SUM(f.size), 0)::bigint AS total_size
+        FROM files f LEFT JOIN directions d ON f.direction_id = d.id
+        GROUP BY d.name ORDER BY count DESC
+      `),
+      // Total storage used
+      pool.query('SELECT COALESCE(SUM(size), 0)::bigint AS total FROM files'),
+      // Total links
+      pool.query('SELECT COUNT(*)::int AS count FROM links'),
+      // Recent activity (last 10)
+      pool.query(`
+        SELECT action, actor_identifiant, entity_type, details, created_at
+        FROM activity_log ORDER BY created_at DESC LIMIT 10
+      `),
+      // Top uploaders (top 5)
+      pool.query(`
+        SELECT u.identifiant, COUNT(f.id)::int AS uploads
+        FROM files f JOIN users u ON f.uploaded_by = u.id
+        GROUP BY u.identifiant ORDER BY uploads DESC LIMIT 5
+      `),
+      // Files created per month (last 6 months)
+      pool.query(`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+          COUNT(*)::int AS count,
+          COALESCE(SUM(size), 0)::bigint AS total_size
+        FROM files
+        WHERE created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY month
+        ORDER BY month ASC
+      `),
+    ])
+
+    res.json({
+      users: {
+        total: usersCount.rows[0].count,
+        byRole: usersByRole.rows,
+        byDirection: usersByDirection.rows,
+      },
+      directions: {
+        total: directionsCount.rows[0].count,
+      },
+      folders: {
+        total: foldersCount.rows[0].count,
+        byDirection: foldersByDirection.rows,
+      },
+      files: {
+        total: filesCount.rows[0].count,
+        byType: filesByType.rows,
+        byDirection: filesByDirection.rows,
+        overTime: filesOverTime.rows,
+      },
+      storage: {
+        totalBytes: Number(storageTotal.rows[0].total),
+      },
+      links: {
+        total: linksCount.rows[0].count,
+      },
+      recentActivity: recentActivity.rows,
+      topUploaders: topUploaders.rows,
+    })
+  } catch (err) {
+    console.error('admin stats error', err)
+    res.status(500).json({ error: 'Failed to load stats' })
+  }
+})
+
 app.get('/api/directions', async (_req, res) => {
   try {
     const result = await pool.query(
@@ -1171,6 +1318,34 @@ app.get('/api/auth/device/requests', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('device requests list error', err)
     return res.status(500).json({ error: 'Erreur lors de la récupération des demandes.' })
+  }
+})
+
+// List history of past login requests (approved, denied, expired) for the mobile app
+app.get('/api/auth/device/requests/history', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const result = await pool.query(
+      `SELECT id, code, status, created_at, expires_at
+       FROM login_requests
+       WHERE user_identifiant = $1
+         AND (status IN ('approved', 'denied') OR (status = 'pending' AND expires_at <= now()))
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [identifiant]
+    )
+    return res.json(
+      result.rows.map((r) => ({
+        id: r.id,
+        code: r.code,
+        status: r.status === 'pending' ? 'expired' : r.status,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+      }))
+    )
+  } catch (err) {
+    console.error('device requests history error', err)
+    return res.status(500).json({ error: "Erreur lors de la récupération de l'historique." })
   }
 })
 
