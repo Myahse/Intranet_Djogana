@@ -92,6 +92,7 @@ function loadStoredUser(): User | null {
           direction_id: data.direction_id ?? null,
           direction_name: data.direction_name ?? null,
           permissions: data.permissions ?? null,
+          must_change_password: Boolean(data.must_change_password),
         }
       : null
   } catch {
@@ -463,6 +464,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...getAuthHeaders(),
           },
           body: JSON.stringify({
             identifiant: user.identifiant,
@@ -477,8 +479,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const data = await res.json()
         if (data && data.success) {
-          // Clear the must_change_password flag after successful password change
+          // Clear the must_change_password flag immediately in local state
           setUser({ ...user, must_change_password: false })
+          // Also refresh from server to guarantee sync
+          try { await refreshPermissions() } catch { /* best-effort */ }
           return true
         }
         return false
@@ -486,7 +490,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return false
       }
     },
-    [user, setUser]
+    [user, setUser, getAuthHeaders, refreshPermissions]
   )
 
   // Auto-refresh permissions via WebSocket (real-time) + window focus fallback
@@ -494,6 +498,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   refreshRef.current = refreshPermissions
   const logoutRef = useRef(logout)
   logoutRef.current = logout
+
+  // On mount: sync user state with the server so stale sessionStorage values
+  // (like must_change_password) are corrected immediately
+  useEffect(() => {
+    refreshRef.current()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!user) return

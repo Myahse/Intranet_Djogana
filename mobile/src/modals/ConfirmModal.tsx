@@ -25,6 +25,9 @@ interface ConfirmModalProps {
 
   loading?: boolean;
 
+  /** When true, only the confirm button is shown (info/alert mode). */
+  singleButton?: boolean;
+
   children?: React.ReactNode;
 }
 
@@ -39,6 +42,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
   destructive = false,
   onConfirm,
   loading = false,
+  singleButton = false,
   children,
 }) => {
   return (
@@ -63,13 +67,15 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
           {children}
 
           <View style={styles.actions}>
-            <TouchableOpacity
-              style={[styles.btn, styles.btnCancel]}
-              onPress={onClose}
-              disabled={loading}
-            >
-              <Text style={styles.btnCancelText}>{cancelLabel}</Text>
-            </TouchableOpacity>
+            {!singleButton && (
+              <TouchableOpacity
+                style={[styles.btn, styles.btnCancel]}
+                onPress={onClose}
+                disabled={loading}
+              >
+                <Text style={styles.btnCancelText}>{cancelLabel}</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[
                 styles.btn,
