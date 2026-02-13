@@ -13,6 +13,12 @@ const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY ?? 'intranet_djog
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_token'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
+// Derive WebSocket URL from the API base (http→ws, https→wss)
+function getWsUrl(): string {
+  const base = API_BASE_URL || window.location.origin
+  return base.replace(/^http/, 'ws') + '/ws'
+}
+
 export type UserPermissions = {
   can_create_folder: boolean
   can_upload_file: boolean
@@ -472,18 +478,96 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   )
 
-  // Auto-refresh permissions on window focus and every 5 minutes
+  // Auto-refresh permissions via WebSocket (real-time) + window focus fallback
   const refreshRef = useRef(refreshPermissions)
   refreshRef.current = refreshPermissions
+  const logoutRef = useRef(logout)
+  logoutRef.current = logout
 
   useEffect(() => {
     if (!user) return
+
+    // --- Window focus: refresh as a safety net ---
     const onFocus = () => { refreshRef.current() }
     window.addEventListener('focus', onFocus)
+
+    // --- WebSocket: real-time updates ---
+    let ws: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let reconnectDelay = 1000 // start at 1s, exponential backoff
+    let alive = true
+
+    function connect() {
+      if (!alive) return
+      const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
+      if (!token) return
+
+      try {
+        ws = new WebSocket(`${getWsUrl()}?token=${encodeURIComponent(token)}`)
+      } catch {
+        scheduleReconnect()
+        return
+      }
+
+      ws.onopen = () => {
+        reconnectDelay = 1000 // reset backoff on successful connection
+        console.log('[ws] connected')
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'permissions_changed') {
+            // Admin changed permissions for our role → refresh immediately
+            console.log('[ws] permissions changed, refreshing…')
+            refreshRef.current()
+          }
+
+          if (data.type === 'user_deleted') {
+            // Our account was deleted → force logout
+            console.log('[ws] user deleted, logging out…')
+            logoutRef.current()
+          }
+        } catch {
+          // ignore malformed messages
+        }
+      }
+
+      ws.onclose = () => {
+        console.log('[ws] disconnected')
+        ws = null
+        scheduleReconnect()
+      }
+
+      ws.onerror = () => {
+        // onclose will fire after onerror, which will trigger reconnect
+        ws?.close()
+      }
+    }
+
+    function scheduleReconnect() {
+      if (!alive) return
+      reconnectTimer = setTimeout(() => {
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000) // max 30s
+        connect()
+      }, reconnectDelay)
+    }
+
+    connect()
+
+    // --- Fallback polling: every 5 minutes in case WS is down ---
     const interval = setInterval(() => { refreshRef.current() }, 5 * 60 * 1000)
+
     return () => {
+      alive = false
       window.removeEventListener('focus', onFocus)
       clearInterval(interval)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws) {
+        ws.onclose = null // prevent reconnect on intentional close
+        ws.close()
+      }
     }
   }, [user])
 

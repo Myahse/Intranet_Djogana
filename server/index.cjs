@@ -9,6 +9,8 @@ const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const admin = require('firebase-admin')
+const { WebSocketServer } = require('ws')
+const http = require('http')
 
 // ---------- Firebase Admin SDK ----------
 // Initialize using a service account JSON key.
@@ -382,6 +384,51 @@ async function insertActivityLog(pool, opts) {
   )
 }
 
+// ---------- WebSocket: real-time permission updates ----------
+// Each connected client is tracked with its identifiant and role.
+// When an admin changes permissions for a role, all clients with that role get notified.
+const wsClients = new Set()
+
+function authenticateWsClient(token) {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] })
+    return decoded && decoded.identifiant ? decoded.identifiant : null
+  } catch (_) {
+    return null
+  }
+}
+
+/**
+ * Broadcast a "refresh permissions" event to all connected clients
+ * whose role matches `roleName`. If roleName is null, broadcast to everyone.
+ */
+async function broadcastPermissionsChange(roleName) {
+  const message = JSON.stringify({ type: 'permissions_changed', role: roleName || null })
+  for (const client of wsClients) {
+    try {
+      // If roleName is specified, only notify clients with that role
+      if (roleName && client._userRole && client._userRole !== roleName) continue
+      if (client.readyState === 1 /* WebSocket.OPEN */) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore send errors */ }
+  }
+}
+
+/**
+ * Broadcast a "user_deleted" event to a specific identifiant (force logout)
+ */
+function broadcastUserDeleted(identifiant) {
+  const message = JSON.stringify({ type: 'user_deleted' })
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
   return jwt.sign(
@@ -595,6 +642,9 @@ app.delete('/api/users/:id', async (req, res) => {
       entityId: id,
       details: { identifiant: deletedUser.identifiant, role: deletedUser.role },
     })
+
+    // Notify the deleted user via WebSocket (force logout)
+    broadcastUserDeleted(deletedUser.identifiant)
 
     await pool.query('DELETE FROM users WHERE id = $1', [id])
     return res.status(204).send()
@@ -1438,6 +1488,11 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
       [id]
     )
 
+    // Broadcast to all clients with this role so they refresh permissions instantly
+    if (updated.rows[0]) {
+      broadcastPermissionsChange(updated.rows[0].name)
+    }
+
     return res.json(updated.rows[0])
   } catch (err) {
     console.error('update role permissions error', err)
@@ -1522,6 +1577,9 @@ app.post('/api/folder-permissions', async (req, res) => {
       `,
       [name, roleId, canView]
     )
+
+    // Broadcast so affected clients refresh their view
+    broadcastPermissionsChange(null)
 
     return res.status(201).json(result.rows[0])
   } catch (err) {
@@ -1841,6 +1899,9 @@ app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
       entityId: id,
       details: { name: folder.name, visibility },
     })
+
+    // Broadcast to all non-admin clients so they refresh visibility
+    broadcastPermissionsChange(null)
 
     return res.json({ id, name: folder.name, direction_id: folder.direction_id, visibility })
   } catch (err) {
@@ -2426,11 +2487,66 @@ app.delete('/api/links/:id', async (req, res) => {
 const defaultPort = 3000
 const port = parseInt(process.env.PORT, 10) || defaultPort
 
+// Create HTTP server from the Express app so we can attach WebSocket
+const server = http.createServer(app)
+
+// WebSocket server mounted on the same HTTP server (path: /ws)
+const wss = new WebSocketServer({ server, path: '/ws' })
+
+wss.on('connection', async (ws, req) => {
+  // Authenticate via query param: ws://host/ws?token=JWT
+  const url = new URL(req.url, `http://${req.headers.host}`)
+  const token = url.searchParams.get('token')
+  const identifiant = token ? authenticateWsClient(token) : null
+
+  if (!identifiant) {
+    ws.close(4001, 'Authentification requise.')
+    return
+  }
+
+  // Look up the user's role so we can target broadcasts
+  let userRole = null
+  try {
+    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [identifiant])
+    if (userRes.rows.length > 0) {
+      userRole = userRes.rows[0].role
+    }
+  } catch (_) { /* ignore */ }
+
+  ws._userIdentifiant = identifiant
+  ws._userRole = userRole
+  wsClients.add(ws)
+
+  // eslint-disable-next-line no-console
+  console.log(`[ws] client connected: ${identifiant} (role: ${userRole}) — ${wsClients.size} total`)
+
+  // Keep-alive ping every 30s
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === 1) ws.ping()
+  }, 30000)
+
+  ws.on('close', () => {
+    wsClients.delete(ws)
+    clearInterval(pingInterval)
+    // eslint-disable-next-line no-console
+    console.log(`[ws] client disconnected: ${identifiant} — ${wsClients.size} total`)
+  })
+
+  ws.on('error', () => {
+    wsClients.delete(ws)
+    clearInterval(pingInterval)
+  })
+
+  // Send a welcome message
+  ws.send(JSON.stringify({ type: 'connected', identifiant }))
+})
+
 initDb()
   .then(() => {
-    app.listen(port, '0.0.0.0', () => {
+    server.listen(port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
       console.log(`Server running at ${BASE_URL.replace(/:(\d+)$/, ':' + port)} (port ${port}) — accessible on LAN`)
+      console.log(`[ws] WebSocket server ready at ws://0.0.0.0:${port}/ws`)
     })
   })
   .catch((err) => {
