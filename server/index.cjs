@@ -583,7 +583,7 @@ function validateDirectionCode(raw) {
 app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
     // Only admin can access
-    const perms = await getPermissionsForIdentifiant(req.user.identifiant)
+    const perms = await getPermissionsForIdentifiant(req.authIdentifiant)
     if (!perms || perms.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' })
     }
