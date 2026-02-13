@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
 import wordIcon from '@/assets/svgs/Group 57.svg'
@@ -8,7 +8,7 @@ import excelIcon from '@/assets/svgs/excel-4.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
-import { FileText, Download, Trash2, X, Pencil, ExternalLink } from 'lucide-react'
+import { FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDashboardFilter } from '@/contexts/DashboardFilterContext'
@@ -28,6 +28,12 @@ import {
   ResizablePanelGroup,
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
+import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+
+/** Replace internal "::" separators with " / " for display */
+function formatName(name: string): string {
+  return name.replace(/::/g, ' / ')
+}
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])
 
@@ -363,10 +369,12 @@ const DocumentSection = () => {
   const lastSegment = segments[segments.length - 1] ?? ''
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot ? decodeURIComponent(lastSegment) : null
+  const navigate = useNavigate()
   const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
   const { user, isAdmin } = useAuth()
   const { contentFilter } = useDashboardFilter()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
+  const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
 
   // User can edit (delete/upload) only in their direction; view-only in other directions
   const canEditFolder = (key: string) => {
@@ -382,30 +390,41 @@ const DocumentSection = () => {
     if (isAdmin) return true
     return user?.direction_id != null && link.direction_id === user.direction_id
   }
-  const currentFolderLabel = folderKey ? (() => {
-    const opt = folderOptions.find((f) => f.value === folderKey)
-    if (opt?.direction_name) return `${parseFolderKey(folderKey).name} (${opt.direction_name})`
-    return parseFolderKey(folderKey).name
-  })() : ''
+  const currentFolderLabel = folderKey ? formatName(parseFolderKey(folderKey).name) : ''
 
   useEffect(() => {
     setSelectedFile(null)
   }, [folderKey])
 
-  // Detect if current non-root segment is a "group" (e.g. "Module 1") that
-  // has subfolders like "Module 1::Cours" but no direct files.
+  // ── Navigation detection ──
+  // folderKey can be:
+  //   - an exact folder value like "3::Procédures" (direction_id::name)
+  //   - a group name like "Module 1" (just the name part, no direction_id)
   const hasExactFolder = folderKey
     ? folderOptions.some((f) => f.value === folderKey)
     : false
-  const hasSubfolders =
-    folderKey && folderOptions.some((f) => f.value.startsWith(`${folderKey}::`))
-  const isGroupRoute = !isRoot && folderKey && !hasExactFolder && hasSubfolders
+
+  // Find subfolders matching by value prefix OR by name prefix
+  const subfolderEntries = folderKey
+    ? folderOptions.filter((f) => {
+        // By value prefix: "3::Procédures" → matches "3::Procédures::Sub"
+        if (f.value.startsWith(`${folderKey}::`)) return true
+        // By name prefix: "Module 1" → matches folder whose name is "Module 1::Cours"
+        const { name } = parseFolderKey(f.value)
+        return name.startsWith(`${folderKey}::`)
+      })
+    : []
+
+  const hasSubfolders = subfolderEntries.length > 0
+
+  // Show subfolders view when the route has child folders
+  const isGroupRoute = !isRoot && folderKey && hasSubfolders
 
   const title = isRoot
     ? 'Tous les dossiers'
     : isGroupRoute
-      ? folderKey || 'Documents'
-      : folderKey || 'Documents'
+      ? formatName(folderKey || 'Documents')
+      : formatName(folderKey || 'Documents')
 
   // Leaf folder: show files, links and delete actions
   if (!isRoot && folderKey && !isGroupRoute) {
@@ -420,6 +439,8 @@ const DocumentSection = () => {
     const directionLabel = folderOpt?.direction_name ?? ''
 
     return (
+      <>
+      <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
       <ResizablePanelGroup
         orientation="horizontal"
         className="h-full min-h-0 w-full flex-1"
@@ -434,7 +455,15 @@ const DocumentSection = () => {
           <div className="flex flex-1 flex-col overflow-auto p-6">
             <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-semibold">{currentFolderLabel || parseFolderKey(folderKey).name}</h1>
+                <button
+                  type="button"
+                  onClick={() => navigate(-1)}
+                  className="inline-flex items-center justify-center size-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
+                  aria-label="Retour"
+                >
+                  <ChevronLeft className="size-5" />
+                </button>
+                <h1 className="text-2xl font-semibold">{currentFolderLabel || formatName(parseFolderKey(folderKey).name)}</h1>
                 {directionLabel && (
                   <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {directionLabel}
@@ -457,12 +486,15 @@ const DocumentSection = () => {
                         'Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?'
                       )
                     ) {
+                      setLoading({ open: true, message: 'Suppression du dossier en cours…' })
                       try {
                         await removeFolder(folderKey)
+                        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
                         toast.success('Dossier supprimé')
                       } catch (err) {
                         // eslint-disable-next-line no-console
                         console.error(err)
+                        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du dossier' }))
                         toast.error('Erreur lors de la suppression du dossier')
                       }
                     }
@@ -481,12 +513,15 @@ const DocumentSection = () => {
                     link={link}
                     canEdit={canEditLink(link)}
                     onDelete={async (id) => {
+                      setLoading({ open: true, message: 'Suppression du lien…' })
                       try {
                         await removeLink(id)
+                        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien supprimé' }))
                         toast.success('Lien supprimé')
                       } catch (err) {
                         // eslint-disable-next-line no-console
                         console.error(err)
+                        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du lien' }))
                         toast.error('Erreur lors de la suppression du lien')
                       }
                     }}
@@ -500,24 +535,30 @@ const DocumentSection = () => {
                     canEdit={canEditFile(file)}
                     onSelect={setSelectedFile}
                     onDelete={async (id) => {
+                      setLoading({ open: true, message: 'Suppression du fichier…' })
                       try {
                         await removeFile(id)
                         if (selectedFile?.id === id) setSelectedFile(null)
+                        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
                         toast.success('Fichier supprimé')
                       } catch (err) {
                         // eslint-disable-next-line no-console
                         console.error(err)
+                        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
                         toast.error('Erreur lors de la suppression du fichier')
                       }
                     }}
                     onRename={async (id, name) => {
+                      setLoading({ open: true, message: 'Renommage du fichier…' })
                       try {
                         const newName = await renameFile(id, name)
+                        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier renommé' }))
                         toast.success('Fichier renommé')
                         if (selectedFile?.id === id) setSelectedFile((f) => (f ? { ...f, name: newName } : null))
                       } catch (err) {
                         // eslint-disable-next-line no-console
                         console.error(err)
+                        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors du renommage' }))
                         toast.error('Erreur lors du renommage')
                       }
                     }}
@@ -526,7 +567,7 @@ const DocumentSection = () => {
               </div>
             ) : (
               <p className="text-muted-foreground">
-                Aucun fichier ni lien dans ce dossier.{canEdit ? ' Vous pouvez en ajouter depuis le profil.' : ' Consultation uniquement (autre direction).'}
+                Aucun fichier ni lien dans ce dossier.{canEdit ? ' Vous pouvez en ajouter via le bouton + dans la barre latérale.' : ' Consultation uniquement (autre direction).'}
               </p>
             )}
           </div>
@@ -570,6 +611,7 @@ const DocumentSection = () => {
           </>
         )}
       </ResizablePanelGroup>
+      </>
     )
   }
 
@@ -579,37 +621,66 @@ const DocumentSection = () => {
     folderHasFiles[folder.value] = getFiles(folder.value).length > 0
   })
 
-  const rootFolders: typeof folderOptions = []
+  // Build groups from folder names: "Module 1::Cours" → group "Module 1", sub "Cours"
   const groups: Record<string, { name: string; subfolders: string[] }> = {}
-
   folderOptions.forEach((folder) => {
     const { name } = parseFolderKey(folder.value)
     const [group, ...subParts] = name.split('::')
     const sub = subParts.join('::')
-    if (!sub) {
-      rootFolders.push(folder)
-      return
+    if (sub) {
+      if (!groups[group]) {
+        groups[group] = { name: group, subfolders: [] }
+      }
+      groups[group].subfolders.push(folder.value)
     }
-    if (!groups[group]) {
-      groups[group] = { name: group, subfolders: [] }
-    }
-    groups[group].subfolders.push(folder.value)
+  })
+
+  // Root folders: only those whose name does NOT appear as a group prefix
+  const rootFolders = folderOptions.filter((folder) => {
+    const { name } = parseFolderKey(folder.value)
+    return !name.includes('::') && !groups[name]
   })
 
   const groupNames = Object.keys(groups)
 
-  // If we are on a group route (e.g. "Module 1"), show its subfolders as tiles.
+  // ── Group / subfolder route: show subfolder tiles ──
   if (isGroupRoute && folderKey) {
-    const subfolderKeys = groups[folderKey]?.subfolders ?? []
+    // Get subfolder values from the precomputed subfolderEntries
+    const subfolderKeys = subfolderEntries.map((f) => f.value)
+
+    // Derive the display name for the group
+    const parsed = parseFolderKey(folderKey)
+    const groupDisplayName = parsed.direction_id
+      ? formatName(parsed.name)
+      : formatName(folderKey)
+
+    // Derive subfolder label: strip the parent prefix from the name
+    const parentName = parsed.direction_id ? parsed.name : folderKey
+    const getSubLabel = (value: string) => {
+      const { name } = parseFolderKey(value)
+      if (name.startsWith(`${parentName}::`)) {
+        return formatName(name.slice(parentName.length + 2))
+      }
+      return formatName(name.includes('::') ? name.split('::').slice(1).join('::') : name)
+    }
 
     return (
       <div className="p-6">
-        <h1 className="mb-8 text-2xl font-semibold">{folderKey}</h1>
+        <div className="mb-8 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center justify-center size-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
+            aria-label="Retour"
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <h1 className="text-2xl font-semibold">{groupDisplayName}</h1>
+        </div>
         {subfolderKeys.length > 0 ? (
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {subfolderKeys.map((value) => {
-              const { name } = parseFolderKey(value)
-              const subLabel = name.includes('::') ? name.split('::').slice(1).join('::') : name
+              const subLabel = getSubLabel(value)
               return (
                 <Link
                   key={value}
@@ -635,6 +706,7 @@ const DocumentSection = () => {
     )
   }
 
+  // ── Root view: show folder tiles and group tiles ──
   return (
     <div className="p-6">
       <h1 className="mb-8 text-2xl font-semibold">{title}</h1>

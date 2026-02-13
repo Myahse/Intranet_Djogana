@@ -74,6 +74,15 @@ async function getApiBaseUrl(): Promise<string> {
   return cachedBaseUrl;
 }
 
+/**
+ * Derive the WebSocket URL from the HTTP API base URL.
+ * http → ws, https → wss, appended with /ws
+ */
+export async function getWsUrl(): Promise<string> {
+  const base = await getApiBaseUrl();
+  return base.replace(/^http/, "ws") + "/ws";
+}
+
 export type DeviceRequest = {
   id: string;
   code: string;

@@ -429,6 +429,30 @@ function broadcastUserDeleted(identifiant) {
   }
 }
 
+/**
+ * Broadcast a "new_device_request" event to a specific identifiant
+ * so their mobile app can display the request without manual refresh.
+ */
+function broadcastNewDeviceRequest(identifiant, request) {
+  const message = JSON.stringify({
+    type: 'new_device_request',
+    request: {
+      id: request.id,
+      code: request.code,
+      status: 'pending',
+      createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+    },
+  })
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
   return jwt.sign(
@@ -896,6 +920,14 @@ app.post('/api/auth/device/request', async (req, res) => {
        VALUES ($1, $2, $3, 'pending', $4)`,
       [requestId, ident, code, expiresAt]
     )
+
+    // Notify connected WebSocket clients (mobile app) in real-time
+    broadcastNewDeviceRequest(ident, {
+      id: requestId,
+      code,
+      createdAt: new Date().toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    })
 
     // Notify registered mobile devices for this identifiant via Firebase (fire-and-forget)
     const tokenRows = await pool.query(
@@ -1497,6 +1529,44 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
   } catch (err) {
     console.error('update role permissions error', err)
     return res.status(500).json({ error: 'Erreur lors de la mise à jour des permissions.' })
+  }
+})
+
+// Delete a role (cannot delete 'admin' or roles still assigned to users)
+app.delete('/api/roles/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    // Look up the role
+    const roleRes = await pool.query('SELECT id, name FROM roles WHERE id = $1', [id])
+    if (roleRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Rôle introuvable.' })
+    }
+    const roleName = roleRes.rows[0].name
+
+    // Prevent deleting the built-in 'admin' role
+    if (roleName === 'admin') {
+      return res.status(400).json({ error: 'Impossible de supprimer le rôle admin.' })
+    }
+
+    // Check if any users still have this role
+    const usersWithRole = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM users WHERE role = $1',
+      [roleName]
+    )
+    if (usersWithRole.rows[0].count > 0) {
+      return res.status(400).json({
+        error: `Impossible de supprimer ce rôle : ${usersWithRole.rows[0].count} utilisateur(s) l'utilisent encore. Réassignez-les d'abord.`,
+      })
+    }
+
+    // Delete (cascades to role_permissions and folder_role_visibility)
+    await pool.query('DELETE FROM roles WHERE id = $1', [id])
+
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('delete role error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression du rôle.' })
   }
 })
 

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/tooltip'
 import { FolderPlus, Upload, Link2, Plus, GitBranchPlus } from 'lucide-react'
 import { toast } from 'sonner'
+import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -113,6 +114,9 @@ export default function SidebarActions() {
   const [linkUrl, setLinkUrl] = useState('')
   const [linkLabel, setLinkLabel] = useState('')
 
+  // --- Loading modal state ---
+  const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
+
   // Formation groups from existing folders
   const formationGroupOptions = useMemo(
     () =>
@@ -141,14 +145,17 @@ export default function SidebarActions() {
     if (!selectedDirectionFolder) { toast.error('Veuillez sélectionner une direction'); return }
     const file = addFolderFileRef.current?.files?.[0]
     if (!file) { toast.error('Veuillez choisir un fichier à ajouter au dossier'); return }
+    setFolderOpen(false)
+    setLoading({ open: true, message: 'Création du dossier en cours…' })
     try {
       await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
       setNewFolderName('')
       setNewFolderVisibility('public')
       if (addFolderFileRef.current) addFolderFileRef.current.value = ''
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier créé et fichier ajouté' }))
       toast.success('Dossier créé et fichier ajouté')
-      setFolderOpen(false)
     } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du dossier' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du dossier')
       console.error(err)
     }
@@ -161,20 +168,24 @@ export default function SidebarActions() {
     if (!selectedDirectionFormation) { toast.error('Veuillez sélectionner une direction'); return }
     const file = formationFileRef.current?.files?.[0]
     const folderKey = `${group}::${sub}`
+    setSubfolderOpen(false)
+    setLoading({ open: true, message: 'Création du sous-dossier en cours…' })
     try {
       if (file) {
         await addFolder(folderKey, file, selectedDirectionFormation)
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé et fichier ajouté' }))
         toast.success('Sous-dossier créé et fichier ajouté')
       } else {
         await addFolderMeta(folderKey, selectedDirectionFormation)
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé' }))
         toast.success('Sous-dossier créé (sans fichier)')
       }
       setFormationGroupName('')
       setSelectedFormationGroup('')
       setFormationSubfolderName('')
       if (formationFileRef.current) formationFileRef.current.value = ''
-      setSubfolderOpen(false)
     } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du sous-dossier')
       console.error(err)
     }
@@ -184,13 +195,16 @@ export default function SidebarActions() {
     if (!selectedFolder) { toast.error('Veuillez sélectionner un dossier'); return }
     const file = uploadFileRef.current?.files?.[0]
     if (!file) { toast.error('Veuillez choisir un fichier'); return }
+    setUploadOpen(false)
+    setLoading({ open: true, message: 'Envoi du fichier en cours…' })
     try {
       await addFile(selectedFolder, file, uploadFileName.trim() || undefined)
       setUploadFileName('')
       if (uploadFileRef.current) uploadFileRef.current.value = ''
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier ajouté avec succès' }))
       toast.success('Fichier ajouté')
-      setUploadOpen(false)
     } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi du fichier" }))
       toast.error("Erreur lors de l'upload du fichier")
       console.error(err)
     }
@@ -203,13 +217,16 @@ export default function SidebarActions() {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       toast.error("L'URL doit commencer par http:// ou https://"); return
     }
+    setLinkOpen(false)
+    setLoading({ open: true, message: 'Ajout du lien en cours…' })
     try {
       await addLink(selectedFolderLink, url, linkLabel.trim() || url)
       setLinkUrl('')
       setLinkLabel('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien ajouté avec succès' }))
       toast.success('Lien ajouté')
-      setLinkOpen(false)
     } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'ajout du lien" }))
       toast.error(err instanceof Error ? err.message : "Erreur lors de l'ajout du lien")
       console.error(err)
     }
@@ -507,6 +524,9 @@ export default function SidebarActions() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ====== Loading Overlay ====== */}
+      <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
     </TooltipProvider>
   )
 }

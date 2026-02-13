@@ -65,20 +65,17 @@ function DashboardLayout() {
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
 
   // Group folders by "group::subfolder" convention. folder.value is "direction_id::name"; only split the name part.
-  const rootFolders: typeof folderOptions = []
   const groupedFolders: Record<
     string,
     { groupLabel: string; subfolders: { value: string; label: string }[] }
   > = {}
 
+  // First pass: identify all groups
   folderOptions.forEach((folder) => {
     const { name } = parseFolderKey(folder.value)
     const [group, ...subParts] = name.split('::')
     const sub = subParts.join('::')
-    if (!sub) {
-      rootFolders.push(folder)
-      return
-    }
+    if (!sub) return
 
     if (!groupedFolders[group]) {
       groupedFolders[group] = { groupLabel: group, subfolders: [] }
@@ -88,6 +85,12 @@ function DashboardLayout() {
       value: folder.value,
       label: sub,
     })
+  })
+
+  // Root folders: exclude those whose name is also a group prefix (they have subfolders)
+  const rootFolders = folderOptions.filter((folder) => {
+    const { name } = parseFolderKey(folder.value)
+    return !name.includes('::') && !groupedFolders[name]
   })
 
   const searchLower = sidebarSearch.trim().toLowerCase()
@@ -253,18 +256,20 @@ function DashboardLayout() {
                       const groupHasActive = group.subfolders.some((sf) =>
                         isFolderActive(sf.value)
                       )
+                      const isGroupActive = location.pathname === `/dashboard/documents/${encodeURIComponent(groupKey)}`
                       const isOpen = openGroups[groupKey] ?? groupHasActive
 
                       return (
                         <SidebarMenuItem key={groupKey}>
                           <SidebarMenuButton
-                            isActive={groupHasActive}
-                            onClick={() =>
+                            isActive={isGroupActive || groupHasActive}
+                            onClick={() => {
                               setOpenGroups((prev) => ({
                                 ...prev,
                                 [groupKey]: !isOpen,
                               }))
-                            }
+                              navigate(`/dashboard/documents/${encodeURIComponent(groupKey)}`)
+                            }}
                           >
                             {isOpen ? (
                               <ChevronDown className="size-4" />
@@ -371,7 +376,7 @@ function DashboardLayout() {
           <SheetHeader className="px-6 pt-4 pb-2">
             <SheetTitle>Profil</SheetTitle>
             <SheetDescription>
-              Gérez votre compte, les utilisateurs et les droits d&apos;accès.
+              Consultez vos informations et changez votre mot de passe.
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto min-h-0 pb-8">
