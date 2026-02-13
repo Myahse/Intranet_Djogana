@@ -354,7 +354,39 @@ export default function AdminPage() {
   const [usersDirSort, setUsersDirSort] = useState<SortOrder>('desc')
   const [activityFilter, setActivityFilter] = useState('all')
 
+  /* ── 10s cooldown between API requests ── */
+  const COOLDOWN_SEC = 10
+  const [cooldown, setCooldown] = useState(0)
+  const cooldownEndRef = useRef(0)
+  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  const pendingFetchRef = useRef<{ p: Period; range?: DateRange } | null>(null)
+
+  const startCooldown = useCallback(() => {
+    cooldownEndRef.current = Date.now() + COOLDOWN_SEC * 1000
+    setCooldown(COOLDOWN_SEC)
+    if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current)
+    cooldownTimerRef.current = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((cooldownEndRef.current - Date.now()) / 1000))
+      setCooldown(remaining)
+      if (remaining <= 0) {
+        clearInterval(cooldownTimerRef.current!)
+        cooldownTimerRef.current = undefined
+      }
+    }, 500)
+  }, [])
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => { if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current) }
+  }, [])
+
   const fetchStats = useCallback(async (p: Period = period, range?: DateRange) => {
+    // ── Cooldown: queue request if too soon ──
+    if (Date.now() < cooldownEndRef.current) {
+      pendingFetchRef.current = { p, range }
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
@@ -376,10 +408,33 @@ export default function AdminPage() {
       console.error(e)
     } finally {
       setLoading(false)
+      startCooldown()
     }
-  }, [getAuthHeaders, period, dateRange])
+  }, [getAuthHeaders, period, dateRange, startCooldown])
+
+  // Keep a ref to the latest fetchStats for the cooldown effect
+  const fetchStatsRef = useRef(fetchStats)
+  fetchStatsRef.current = fetchStats
+
+  // When cooldown expires, execute any pending request
+  useEffect(() => {
+    if (cooldown === 0) {
+      const pending = pendingFetchRef.current
+      if (pending) {
+        pendingFetchRef.current = null
+        fetchStatsRef.current(pending.p, pending.range)
+      }
+    }
+  }, [cooldown])
 
   useEffect(() => { fetchStats() }, [fetchStats])
+
+  // Real-time: auto-refresh stats when any data changes via WebSocket
+  useEffect(() => {
+    const handler = () => { fetchStats() }
+    window.addEventListener('ws:data_changed', handler)
+    return () => { window.removeEventListener('ws:data_changed', handler) }
+  }, [fetchStats])
 
   const handlePeriodChange = (p: Period) => {
     if (p !== 'custom') {
@@ -663,10 +718,15 @@ export default function AdminPage() {
           </div>
           <button
             onClick={() => { fetchStats(period) }}
-            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted transition-colors"
+            disabled={cooldown > 0}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+              cooldown > 0
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-muted'
+            }`}
           >
-            <RefreshCw className="h-4 w-4" />
-            Actualiser
+            <RefreshCw className={`h-4 w-4 ${cooldown > 0 ? 'animate-spin' : ''}`} />
+            {cooldown > 0 ? `${cooldown}s` : 'Actualiser'}
           </button>
         </div>
       </div>

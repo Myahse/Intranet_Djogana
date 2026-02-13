@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { History, Trash2, UserPlus, Building2 } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
@@ -88,72 +88,72 @@ const DashboardHome = (): ReactNode => {
   const [activityLogAction, setActivityLogAction] = useState<string>('')
 
   // ── Load users, roles, directions ──
-  useEffect(() => {
+  const loadUsersRolesDirections = useCallback(async () => {
     const canLoadUsers = isAdmin || canCreateUser || canDeleteUser
     const canLoadDirections = isAdmin || canCreateDirection || canDeleteDirection || canCreateUser
     if (!canLoadUsers && !canLoadDirections && !isAdmin) return
-    ;(async () => {
-      try {
-        setIsLoadingUsers(true)
-        if (canLoadUsers) {
-          const res = await fetch(`${API_BASE_URL}/api/users`)
-          if (res.ok) {
-            const data = (await res.json()) as Array<{
-              id: string
-              identifiant: string
-              role: string
-              direction_id?: string
-              direction_name?: string
-            }>
-            setUsers(data)
-          }
+    try {
+      setIsLoadingUsers(true)
+      if (canLoadUsers) {
+        const res = await fetch(`${API_BASE_URL}/api/users`)
+        if (res.ok) {
+          const data = (await res.json()) as Array<{
+            id: string
+            identifiant: string
+            role: string
+            direction_id?: string
+            direction_name?: string
+          }>
+          setUsers(data)
         }
-
-        if (isAdmin || canCreateUser) {
-          const rolesRes = await fetch(`${API_BASE_URL}/api/roles`)
-          if (rolesRes.ok) {
-            const rolesData = (await rolesRes.json()) as Array<{
-              id: string
-              name: string
-              can_create_folder?: boolean
-              can_upload_file?: boolean
-              can_delete_file?: boolean
-              can_delete_folder?: boolean
-              can_create_user?: boolean
-              can_delete_user?: boolean
-              can_create_direction?: boolean
-              can_delete_direction?: boolean
-              can_view_activity_log?: boolean
-              can_set_folder_visibility?: boolean
-              can_view_stats?: boolean
-            }>
-            setRoles(rolesData)
-            const defaultRole =
-              rolesData.find((r) => r.name === 'user')?.name ?? rolesData[0]?.name ?? 'user'
-            setSelectedRole(defaultRole)
-          }
-        }
-
-        if (canLoadDirections) {
-          const dirRes = await fetch(`${API_BASE_URL}/api/directions`)
-          if (dirRes.ok) {
-            const dirData = (await dirRes.json()) as Array<{ id: string; name: string; code?: string }>
-            setDirections(dirData)
-            if (dirData.length > 0 && !selectedDirection) {
-              setSelectedDirection(dirData[0].id)
-            }
-          }
-        }
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setIsLoadingUsers(false)
       }
-    })()
+
+      if (isAdmin || canCreateUser) {
+        const rolesRes = await fetch(`${API_BASE_URL}/api/roles`)
+        if (rolesRes.ok) {
+          const rolesData = (await rolesRes.json()) as Array<{
+            id: string
+            name: string
+            can_create_folder?: boolean
+            can_upload_file?: boolean
+            can_delete_file?: boolean
+            can_delete_folder?: boolean
+            can_create_user?: boolean
+            can_delete_user?: boolean
+            can_create_direction?: boolean
+            can_delete_direction?: boolean
+            can_view_activity_log?: boolean
+            can_set_folder_visibility?: boolean
+            can_view_stats?: boolean
+          }>
+          setRoles(rolesData)
+          const defaultRole =
+            rolesData.find((r) => r.name === 'user')?.name ?? rolesData[0]?.name ?? 'user'
+          setSelectedRole(defaultRole)
+        }
+      }
+
+      if (canLoadDirections) {
+        const dirRes = await fetch(`${API_BASE_URL}/api/directions`)
+        if (dirRes.ok) {
+          const dirData = (await dirRes.json()) as Array<{ id: string; name: string; code?: string }>
+          setDirections(dirData)
+          if (dirData.length > 0 && !selectedDirection) {
+            setSelectedDirection(dirData[0].id)
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsLoadingUsers(false)
+    }
   }, [isAdmin, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection])
 
+  useEffect(() => { loadUsersRolesDirections() }, [loadUsersRolesDirections])
+
   // ── Load activity log ──
-  useEffect(() => {
+  const loadActivityLog = useCallback(async () => {
     if (!canViewActivityLog) return
     const headers = getAuthHeaders()
     if (!headers || !('Authorization' in headers)) return
@@ -161,40 +161,60 @@ const DashboardHome = (): ReactNode => {
     if (activityLogDirectionId) params.set('direction_id', activityLogDirectionId)
     if (activityLogAction) params.set('action', activityLogAction)
     const qs = params.toString()
-    ;(async () => {
-      setActivityLogLoading(true)
-      try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/activity-log${qs ? `?${qs}` : ''}`,
-          { headers }
-        )
-        if (res.ok) {
-          const data = (await res.json()) as Array<{
-            id: string
-            action: string
-            actor_identifiant: string | null
-            direction_id: string | null
-            direction_name: string | null
-            entity_type: string | null
-            entity_id: string | null
-            details: Record<string, unknown> | null
-            created_at: string
-          }>
-          setActivityLog(data)
-        } else if (res.status === 401) {
-          logout()
-        } else {
-          const err = await res.json().catch(() => ({}))
-          toast.error((err as { error?: string }).error ?? 'Impossible de charger le journal')
-        }
-      } catch (err) {
-        console.error(err)
-        toast.error("Erreur lors du chargement du journal d'activité")
-      } finally {
-        setActivityLogLoading(false)
+    setActivityLogLoading(true)
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/activity-log${qs ? `?${qs}` : ''}`,
+        { headers }
+      )
+      if (res.ok) {
+        const data = (await res.json()) as Array<{
+          id: string
+          action: string
+          actor_identifiant: string | null
+          direction_id: string | null
+          direction_name: string | null
+          entity_type: string | null
+          entity_id: string | null
+          details: Record<string, unknown> | null
+          created_at: string
+        }>
+        setActivityLog(data)
+      } else if (res.status === 401) {
+        logout()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        toast.error((err as { error?: string }).error ?? 'Impossible de charger le journal')
       }
-    })()
+    } catch (err) {
+      console.error(err)
+      toast.error("Erreur lors du chargement du journal d'activité")
+    } finally {
+      setActivityLogLoading(false)
+    }
   }, [canViewActivityLog, activityLogDirectionId, activityLogAction, getAuthHeaders, logout])
+
+  useEffect(() => { loadActivityLog() }, [loadActivityLog])
+
+  // ── Real-time WebSocket refresh for users, roles, directions, activity ──
+  useEffect(() => {
+    const onUsersChanged = () => { loadUsersRolesDirections() }
+    const onRolesChanged = () => { loadUsersRolesDirections() }
+    const onDirectionsChanged = () => { loadUsersRolesDirections() }
+    // Any data change may produce a new activity log entry
+    const onAnyChange = () => { loadActivityLog() }
+
+    window.addEventListener('ws:users', onUsersChanged)
+    window.addEventListener('ws:roles', onRolesChanged)
+    window.addEventListener('ws:directions', onDirectionsChanged)
+    window.addEventListener('ws:data_changed', onAnyChange)
+    return () => {
+      window.removeEventListener('ws:users', onUsersChanged)
+      window.removeEventListener('ws:roles', onRolesChanged)
+      window.removeEventListener('ws:directions', onDirectionsChanged)
+      window.removeEventListener('ws:data_changed', onAnyChange)
+    }
+  }, [loadUsersRolesDirections, loadActivityLog])
 
   // ── Handlers ──
 

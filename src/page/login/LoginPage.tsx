@@ -6,15 +6,17 @@ import { useForm } from "react-hook-form"
 import { Button } from "@/components/ui/button"
 import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { useAuth } from "@/contexts/AuthContext"
+import { useAuth, getWsUrl } from "@/contexts/AuthContext"
 import logoDjogana from "@/assets/logo_djogana.png"
 import { User, Eye, EyeOff, RefreshCw, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
 
+const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_token'
+
 const Login = () => {
   const navigate = useNavigate()
-  const { user, requestDeviceLogin, pollDeviceRequest } = useAuth()
+  const { user, requestDeviceLogin, pollDeviceRequest, setUser: setAuthUser } = useAuth()
   const form = useForm({
     defaultValues: {
       identifiant: "",
@@ -32,57 +34,120 @@ const Login = () => {
   const [approvalStatus, setApprovalStatus] = useState<
     "pending" | "denied" | "expired" | "detruite" | null
   >(null)
+  const wsRef = useRef<WebSocket | null>(null)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Poll for approval status when there is a pending request
+  // Clean up WebSocket + polling
+  const cleanup = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.onerror = null
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+  }, [])
+
+  // WebSocket + fallback polling for approval status
   useEffect(() => {
     if (!pendingRequest || approvalStatus !== "pending") return
-    const poll = async () => {
-      const result = await pollDeviceRequest(pendingRequest.requestId)
-      if (result.status === "approved") {
-        stopPolling()
+
+    let alive = true
+
+    // ─── Handler for incoming WS status events ───
+    const handleStatusEvent = (data: Record<string, unknown>) => {
+      if (!alive) return
+      const status = data.status as string
+      if (status === "approved" && data.user) {
+        cleanup()
+        // Store JWT and set user, same as pollDeviceRequest does
+        if (data.token) {
+          try { sessionStorage.setItem(AUTH_TOKEN_KEY, data.token as string) } catch (_) { /* */ }
+        }
+        const u = data.user as Record<string, unknown>
+        setAuthUser({
+          identifiant: u.identifiant as string,
+          role: u.role as string,
+          direction_id: (u.direction_id as string) ?? null,
+          direction_name: (u.direction_name as string) ?? null,
+          permissions: u.role === 'admin' ? undefined : (u.permissions as Record<string, boolean> | null) ?? null,
+          must_change_password: Boolean(u.must_change_password),
+        } as Parameters<typeof setAuthUser>[0])
         setPendingRequest(null)
         setApprovalStatus(null)
         toast.success("Connexion approuvée")
-        if (result.user?.must_change_password) {
+        if (u.must_change_password) {
           navigate("/change-password")
         } else {
           navigate("/dashboard")
         }
         return
       }
-      if (result.status === "denied") {
-        stopPolling()
+      if (status === "denied") {
+        cleanup()
         setApprovalStatus("denied")
         toast.error("Connexion refusée")
       }
-      if (result.status === "expired") {
-        stopPolling()
+      if (status === "expired") {
+        cleanup()
         setApprovalStatus("expired")
         toast.error("La demande a expiré")
       }
-      if ((result.status as string) === "detruite") {
-        stopPolling()
+      if (status === "detruite") {
+        cleanup()
         setApprovalStatus("detruite")
       }
     }
-    poll()
-    pollIntervalRef.current = setInterval(poll, 2500)
-    return () => stopPolling()
-  }, [pendingRequest, approvalStatus, pollDeviceRequest, navigate])
 
-  const stopPolling = () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
+    // ─── Open WebSocket (primary, instant) ───
+    try {
+      const wsUrl = `${getWsUrl()}?watchRequest=${encodeURIComponent(pendingRequest.requestId)}`
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.type === "device_request_status") {
+            handleStatusEvent(data)
+          }
+        } catch { /* ignore */ }
+      }
+
+      ws.onclose = () => {
+        wsRef.current = null
+      }
+      ws.onerror = () => {
+        ws.close()
+      }
+    } catch {
+      // WebSocket failed to open – polling will cover us
     }
-  }
+
+    // ─── Fallback polling (in case WebSocket drops) ───
+    const poll = async () => {
+      if (!alive) return
+      const result = await pollDeviceRequest(pendingRequest.requestId)
+      handleStatusEvent({ ...result, status: result.status })
+    }
+    // Do one immediate poll, then every 4s (slower since WS is primary)
+    poll()
+    pollIntervalRef.current = setInterval(poll, 4000)
+
+    return () => {
+      alive = false
+      cleanup()
+    }
+  }, [pendingRequest, approvalStatus, pollDeviceRequest, navigate, cleanup, setAuthUser])
 
   const cancelRequest = useCallback(() => {
-    stopPolling()
+    cleanup()
     setPendingRequest(null)
     setApprovalStatus(null)
-  }, [])
+  }, [cleanup])
 
   const handleSubmit = async () => {
     const data = form.getValues()

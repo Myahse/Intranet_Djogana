@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo, useEffect } from 'react'
+import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { Button } from '@/components/ui/button'
@@ -52,16 +52,12 @@ const FILE_UPLOAD_ACCEPT =
 
 type Direction = { id: string; name: string; code?: string }
 
-/** Format a folder label: replace internal "::" with " / " for clean display */
+
 function formatFolderLabel(label: string): string {
   return label.replace(/::/g, ' / ')
 }
 
-/**
- * IDE-style action buttons for the sidebar "Dossiers" section.
- * Renders a row of icon buttons (or a "+" dropdown) that open dialog modals
- * for creating folders, subfolders, uploading files, and adding links.
- */
+
 export default function SidebarActions() {
   const { user, isAdmin } = useAuth()
   const { folderOptions, addFile, addLink, addFolder, addFolderMeta } = useDocuments()
@@ -72,18 +68,25 @@ export default function SidebarActions() {
 
   // Directions
   const [directions, setDirections] = useState<Direction[]>([])
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/directions`)
-        if (res.ok) {
-          setDirections(await res.json() as Direction[])
-        }
-      } catch {
-        // silent
+  const loadDirections = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/directions`)
+      if (res.ok) {
+        setDirections(await res.json() as Direction[])
       }
-    })()
+    } catch {
+      // silent
+    }
   }, [])
+
+  useEffect(() => { loadDirections() }, [loadDirections])
+
+  // Real-time refresh when directions change via WebSocket
+  useEffect(() => {
+    const handler = () => { loadDirections() }
+    window.addEventListener('ws:directions', handler)
+    return () => { window.removeEventListener('ws:directions', handler) }
+  }, [loadDirections])
 
   // Dialog open states
   const [folderOpen, setFolderOpen] = useState(false)
