@@ -32,7 +32,7 @@ import { BarChart3, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Hom
 import SidebarActions from '@/components/SidebarActions'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
-import ProfilePage from '@/page/dashboard/ProfilePage'
+import ProfilePage from '@/page/dashboard/profile/ProfilePage'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
