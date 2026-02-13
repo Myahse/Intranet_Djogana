@@ -1853,6 +1853,7 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       name: storedFileName,
       size: req.file.size,
       url: publicUrl,
+      view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
     })
   } catch (err) {
@@ -2142,6 +2143,7 @@ app.get('/api/files', async (req, res) => {
       folder: row.folder,
       direction_id: row.direction_id,
       url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+      view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
     }))
 
     return res.json(rows)
@@ -2165,9 +2167,29 @@ app.get('/files/:id', async (req, res) => {
 
     const file = result.rows[0]
 
-    // If stored on Cloudinary, redirect to the Cloudinary URL
+    // If stored on Cloudinary, proxy the content with correct headers.
+    // A redirect breaks MS Office Viewer because the Cloudinary URL has no
+    // file extension (public_id is a UUID), so the viewer cannot identify
+    // the document type.  By proxying we set the proper Content-Type.
     if (file.cloudinary_url) {
-      return res.redirect(file.cloudinary_url)
+      try {
+        const upstream = await fetch(file.cloudinary_url)
+        if (!upstream.ok) {
+          return res.status(502).send('Failed to fetch file from storage')
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer())
+        res.setHeader('Content-Type', file.mime_type || 'application/octet-stream')
+        res.setHeader('Content-Length', buf.length)
+        res.setHeader(
+          'Content-Disposition',
+          `inline; filename="${encodeURIComponent(file.name)}"`
+        )
+        return res.send(buf)
+      } catch (fetchErr) {
+        console.error('cloudinary proxy error', fetchErr)
+        // Fallback: redirect as before
+        return res.redirect(file.cloudinary_url)
+      }
     }
 
     // Legacy: serve from bytea column

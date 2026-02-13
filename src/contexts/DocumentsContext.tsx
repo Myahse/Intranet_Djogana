@@ -32,6 +32,8 @@ export type DocumentItem = {
   name: string
   size: number
   url: string
+  /** Server-proxied URL that serves the file with correct Content-Type headers (for Office Viewer) */
+  viewUrl?: string
   viewerUrl?: string
   folderKey: string
   direction_id?: string | null
@@ -76,8 +78,8 @@ function isOfficeDoc(fileName: string): boolean {
   return ext === 'doc' || ext === 'docx' || ext === 'ppt' || ext === 'pptx' || ext === 'xls' || ext === 'xlsx'
 }
 
-function buildOfficeViewerUrl(fileUrl: string) {
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
+function buildOfficeViewerUrl(viewUrl: string) {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(viewUrl)}`
 }
 
 async function uploadToServer(
@@ -103,7 +105,7 @@ async function uploadToServer(
     throw new Error(err?.error ?? 'Échec de l’upload du fichier')
   }
 
-  return (await res.json()) as { id: string; name: string; size: number; url: string }
+  return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
 }
 
 type FolderMeta = {
@@ -144,13 +146,16 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           name: string
           size: number
           url: string
+          view_url?: string
           folder: string
           direction_id?: string | null
         }>
 
         const loaded: DocumentItem[] = data.map((row) => {
-          const viewerUrl = isOfficeDoc(row.name)
-            ? buildOfficeViewerUrl(row.url)
+          // Use the server-proxied view_url for Office Viewer (serves correct Content-Type)
+          const viewUrl = row.view_url
+          const viewerUrl = isOfficeDoc(row.name) && viewUrl
+            ? buildOfficeViewerUrl(viewUrl)
             : undefined
           const dirId = row.direction_id ?? ''
           const folderKey = dirId ? `${dirId}::${row.folder}` : row.folder
@@ -160,6 +165,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
             name: row.name,
             size: row.size ?? 0,
             url: row.url,
+            viewUrl,
             viewerUrl,
             folderKey,
             direction_id: row.direction_id,
@@ -292,8 +298,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         throw new Error('Connexion ou direction requise pour l’upload.')
       }
       const uploaded = await uploadToServer(file, name, direction_id, user.identifiant, customName)
-      const viewerUrl = isOfficeDoc(uploaded.name)
-        ? buildOfficeViewerUrl(uploaded.url)
+      const viewUrl = uploaded.view_url
+      const viewerUrl = isOfficeDoc(uploaded.name) && viewUrl
+        ? buildOfficeViewerUrl(viewUrl)
         : undefined
 
       const newItem: DocumentItem = {
@@ -301,6 +308,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         name: uploaded.name,
         size: uploaded.size,
         url: uploaded.url,
+        viewUrl,
         viewerUrl,
         folderKey,
         direction_id,
@@ -366,8 +374,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       }
 
       const uploaded = await uploadToServer(file, name, directionId, user.identifiant)
-      const viewerUrl = isOfficeDoc(uploaded.name)
-        ? buildOfficeViewerUrl(uploaded.url)
+      const viewUrl = uploaded.view_url
+      const viewerUrl = isOfficeDoc(uploaded.name) && viewUrl
+        ? buildOfficeViewerUrl(viewUrl)
         : undefined
 
       const folderKey = `${directionId}::${name}`
@@ -376,6 +385,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         name: uploaded.name,
         size: uploaded.size,
         url: uploaded.url,
+        viewUrl,
         viewerUrl,
         folderKey,
         direction_id: directionId,
