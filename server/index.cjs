@@ -683,9 +683,9 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
     const [
       usersCount, usersByRole, usersByDirection,
       directionsCount, foldersCount, foldersByDirection,
-      filesCount, filesByType, filesByDirection,
+      filesCount, filesByType, filesByDirection, filesByDirectionAndType,
       storageTotal, linksCount,
-      recentActivity, topUploaders, filesOverTime,
+      recentActivity, topUploaders, filesOverTime, filesOverTimeByType,
     ] = await Promise.all([
       // ── Users (structural — not date-filtered, admin users hidden) ──
       q('SELECT COUNT(*)::int AS count FROM users __WHERE__', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
@@ -709,6 +709,14 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       q(`SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
                 COALESCE(SUM(f.size),0)::bigint AS total_size
          FROM files f LEFT JOIN directions d ON f.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
+        { joinAlias: 'f' }),
+      // ── Files by direction AND type (cross-tabulation for filtering) ──
+      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction,
+                ${mimeCase} AS category,
+                COUNT(f.id)::int AS count,
+                COALESCE(SUM(f.size),0)::bigint AS total_size
+         FROM files f LEFT JOIN directions d ON f.direction_id = d.id __WHERE__
+         GROUP BY d.name, category ORDER BY d.name, count DESC`,
         { joinAlias: 'f' }),
       // ── Storage (date + direction filtered) ──
       q('SELECT COALESCE(SUM(size),0)::bigint AS total FROM files __WHERE__'),
@@ -748,6 +756,31 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
           GROUP BY month ORDER BY month ASC
         `, params)
       })(),
+      // ── Files over time by type (for timeline type filtering) ──
+      (() => {
+        const clauses = []
+        const params = []
+        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+        if (fromDate) {
+          params.push(fromDate)
+          clauses.push(`created_at >= $${params.length}`)
+        } else {
+          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+          clauses.push(`created_at >= $${params.length}`)
+        }
+        if (toDate) {
+          params.push(toDate)
+          clauses.push(`created_at <= $${params.length}`)
+        }
+        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+        return pool.query(`
+          SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+                 ${mimeCase} AS category,
+                 COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
+          FROM files ${where}
+          GROUP BY month, category ORDER BY month ASC, count DESC
+        `, params)
+      })(),
     ])
 
     // For direction-scoped users, include the direction name
@@ -776,7 +809,9 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
         total: filesCount.rows[0].count,
         byType: filesByType.rows,
         byDirection: filesByDirection.rows,
+        byDirectionAndType: filesByDirectionAndType.rows,
         overTime: filesOverTime.rows,
+        overTimeByType: filesOverTimeByType.rows,
       },
       storage: {
         totalBytes: Number(storageTotal.rows[0].total),
