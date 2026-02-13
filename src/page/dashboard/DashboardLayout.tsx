@@ -31,7 +31,7 @@ import {
 import { ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
-import ProfilePage from '@/page/dashboard/ProfilePage'
+import ProfilePage from '@/page/dashboard/profile'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'

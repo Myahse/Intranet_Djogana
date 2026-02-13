@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   View,
-  StyleSheet,
   Modal as RNModal,
   Dimensions,
   Animated,
@@ -9,8 +8,8 @@ import {
   Platform,
   StatusBar,
 } from "react-native";
+import { styles, touchableOverlayStyle } from "./Modal.styles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { s, vs } from "@/responsive";
 
 interface ModalProps {
   visible: boolean;
@@ -82,7 +81,7 @@ const Modal: React.FC<ModalProps> = ({
       <View style={styles.overlay}>
         {/* Tap overlay to close */}
         <TouchableWithoutFeedback onPress={onClose}>
-          <View style={StyleSheet.absoluteFill} />
+          <View style={touchableOverlayStyle} />
         </TouchableWithoutFeedback>
 
         <Animated.View
@@ -106,31 +105,5 @@ const Modal: React.FC<ModalProps> = ({
     </RNModal>
   );
 };
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
-  },
-  container: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: s(20),
-    borderTopRightRadius: s(20),
-    width: "100%",
-    overflow: "hidden",
-  },
-  handleRow: {
-    alignItems: "center",
-    paddingTop: vs(10),
-    paddingBottom: vs(4),
-  },
-  handle: {
-    width: s(36),
-    height: vs(4),
-    borderRadius: s(2),
-    backgroundColor: "#ddd",
-  },
-});
 
 export default Modal;

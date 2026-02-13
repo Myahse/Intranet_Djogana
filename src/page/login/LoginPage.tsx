@@ -106,7 +106,12 @@ const Login = () => {
         }
         setModalOpen(false)
         toast.success("Connexion approuvée")
-        navigate("/dashboard")
+        // Redirect to password change page if first login, otherwise dashboard
+        if (result.user?.must_change_password) {
+          navigate("/change-password")
+        } else {
+          navigate("/dashboard")
+        }
         return
       }
       if (result.status === "denied") {

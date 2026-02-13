@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   TouchableOpacity,
-  StyleSheet,
   RefreshControl,
   ActivityIndicator,
   Alert,
@@ -18,8 +17,11 @@ import { useNotification } from "@/components/notifications/NotificationContext"
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 import { ConfirmModal } from "@/modals";
 import * as api from "@/api";
-import type { DeviceRequest } from "@/api";
-import { s, vs, ms, fs } from "@/responsive";
+import type { DeviceRequest, HistoryDeviceRequest } from "@/api";
+import { ms } from "@/responsive";
+import { styles, hStyles } from "./_styles/approve-requests";
+
+type TabKey = "requests" | "history";
 
 /* ────────────────────────────────────────────
  *  Durée de validité d'une requête (secondes)
@@ -220,12 +222,52 @@ function RequestCard({
 }
 
 /* ────────────────────────────────────────────
+ *  Composant : Carte historique
+ * ──────────────────────────────────────────── */
+function HistoryCard({ item }: { item: HistoryDeviceRequest }) {
+  const statusConfig: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+    approved: { label: "Approuvée", color: "#16a34a", icon: "checkmark-circle" },
+    denied:   { label: "Refusée",   color: "#dc2626", icon: "close-circle" },
+    expired:  { label: "Expirée",   color: "#9ca3af", icon: "time-outline" },
+  };
+  const cfg = statusConfig[item.status] ?? { label: item.status, color: "#666", icon: "help-circle" as keyof typeof Ionicons.glyphMap };
+
+  const formatDate = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("fr-FR", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  return (
+    <View style={hStyles.card}>
+      <View style={hStyles.cardHeader}>
+        <Text style={hStyles.code}>{item.code}</Text>
+        <View style={[hStyles.statusBadge, { backgroundColor: cfg.color + "18" }]}>
+          <Ionicons name={cfg.icon} size={ms(14)} color={cfg.color} />
+          <Text style={[hStyles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+        </View>
+      </View>
+      <View style={hStyles.dateRow}>
+        <Ionicons name="calendar-outline" size={ms(13)} color="#999" />
+        <Text style={hStyles.dateText}>{formatDate(item.createdAt)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/* ────────────────────────────────────────────
  *  Écran principal
  * ──────────────────────────────────────────── */
 export default function ApproveRequestsScreen() {
   const { token, logout } = useAuth();
   const { fcmToken, error: pushError } = useNotification();
   const router = useRouter();
+
+  /* ── Tab state ── */
+  const [activeTab, setActiveTab] = useState<TabKey>("requests");
+
   const [requests, setRequests] = useState<DeviceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -235,6 +277,12 @@ export default function ApproveRequestsScreen() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushRegistered, setPushRegistered] = useState<boolean | null>(null);
   const serverRegDone = useRef(false);
+
+  /* ── History state ── */
+  const [history, setHistory] = useState<HistoryDeviceRequest[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyLoaded = useRef(false);
 
   /** IDs of requests that arrived live (WebSocket / push) – triggers entrance animation */
   const [liveIds, setLiveIds] = useState<Set<string>>(new Set());
@@ -343,8 +391,40 @@ export default function ApproveRequestsScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     serverRegDone.current = false;
-    await load();
+    if (activeTab === "requests") {
+      await load();
+    } else {
+      await loadHistory();
+    }
     setRefreshing(false);
+  };
+
+  /* ── Load history ── */
+  const loadHistory = async () => {
+    if (!token) return;
+    setHistoryError(null);
+    setHistoryLoading(true);
+    const result = await api.listDeviceRequestHistory(token);
+    if (result.ok) {
+      setHistory(result.requests);
+    } else {
+      setHistory([]);
+      setHistoryError(
+        result.networkError
+          ? "Impossible de charger l'historique. Vérifiez votre connexion."
+          : "Erreur lors du chargement de l'historique."
+      );
+    }
+    setHistoryLoading(false);
+  };
+
+  /* ── Load history on first tab switch ── */
+  const handleTabChange = (tab: TabKey) => {
+    setActiveTab(tab);
+    if (tab === "history" && !historyLoaded.current) {
+      historyLoaded.current = true;
+      loadHistory();
+    }
   };
 
   const handleApprove = async (requestId: string) => {
@@ -414,59 +494,140 @@ export default function ApproveRequestsScreen() {
         </Text>
       </View>
 
-      <Text style={styles.hint}>
-        Connectez-vous avec le même identifiant que sur le site. Les demandes
-        en attente apparaissent ici.
-      </Text>
-
-      {pushError ? (
-        <Text style={styles.pushHint}>
-          Erreur notifications : {pushError.message}. Déconnectez-vous puis
-          reconnectez-vous en acceptant les notifications.
-        </Text>
-      ) : pushRegistered === false ? (
-        <Text style={styles.pushHint}>
-          Notifications non enregistrées. Déconnectez-vous puis reconnectez-vous
-          en acceptant les notifications pour recevoir une alerte à chaque
-          demande.
-        </Text>
-      ) : null}
-
-      {loadError ? (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{loadError}</Text>
-        </View>
-      ) : null}
-
-      <FlatList
-        data={requests}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              {loadError
-                ? "Tirez pour réessayer."
-                : "Aucune demande en attente. Faites une demande de connexion sur le site, elle apparaîtra automatiquement."}
-            </Text>
-          </View>
-        }
-        contentContainerStyle={
-          requests.length === 0 ? styles.emptyList : styles.list
-        }
-        renderItem={({ item }) => (
-          <RequestCard
-            item={item}
-            actingId={actingId}
-            onApprove={handleApprove}
-            onDeny={handleDeny}
-            onExpired={handleExpired}
-            isNew={liveIds.has(item.id)}
+      {/* ── Tab selector ── */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "requests" && styles.tabActive]}
+          onPress={() => handleTabChange("requests")}
+        >
+          <Ionicons
+            name="notifications-outline"
+            size={ms(16)}
+            color={activeTab === "requests" ? "#0a0a0a" : "#999"}
           />
-        )}
-      />
+          <Text
+            style={[styles.tabText, activeTab === "requests" && styles.tabTextActive]}
+          >
+            Requêtes
+          </Text>
+          {requests.length > 0 && activeTab !== "requests" && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{requests.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "history" && styles.tabActive]}
+          onPress={() => handleTabChange("history")}
+        >
+          <Ionicons
+            name="time-outline"
+            size={ms(16)}
+            color={activeTab === "history" ? "#0a0a0a" : "#999"}
+          />
+          <Text
+            style={[styles.tabText, activeTab === "history" && styles.tabTextActive]}
+          >
+            Historique
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Requests tab ── */}
+      {activeTab === "requests" && (
+        <>
+          <Text style={styles.hint}>
+            Les demandes de connexion en attente apparaissent ici.
+          </Text>
+
+          {pushError ? (
+            <Text style={styles.pushHint}>
+              Erreur notifications : {pushError.message}. Déconnectez-vous puis
+              reconnectez-vous en acceptant les notifications.
+            </Text>
+          ) : pushRegistered === false ? (
+            <Text style={styles.pushHint}>
+              Notifications non enregistrées. Déconnectez-vous puis
+              reconnectez-vous en acceptant les notifications pour recevoir une
+              alerte à chaque demande.
+            </Text>
+          ) : null}
+
+          {loadError ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{loadError}</Text>
+            </View>
+          ) : null}
+
+          <FlatList
+            data={requests}
+            keyExtractor={(item) => item.id}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>
+                  {loadError
+                    ? "Tirez pour réessayer."
+                    : "Aucune demande en attente. Faites une demande de connexion sur le site, elle apparaîtra automatiquement."}
+                </Text>
+              </View>
+            }
+            contentContainerStyle={
+              requests.length === 0 ? styles.emptyList : styles.list
+            }
+            renderItem={({ item }) => (
+              <RequestCard
+                item={item}
+                actingId={actingId}
+                onApprove={handleApprove}
+                onDeny={handleDeny}
+                onExpired={handleExpired}
+                isNew={liveIds.has(item.id)}
+              />
+            )}
+          />
+        </>
+      )}
+
+      {/* ── History tab ── */}
+      {activeTab === "history" && (
+        <>
+          {historyError ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{historyError}</Text>
+            </View>
+          ) : null}
+
+          {historyLoading && history.length === 0 ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" />
+            </View>
+          ) : (
+            <FlatList
+              data={history}
+              keyExtractor={(item) => item.id}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              }
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Text style={styles.emptyText}>
+                    {historyError
+                      ? "Tirez pour réessayer."
+                      : "Aucun historique de demandes pour le moment."}
+                  </Text>
+                </View>
+              }
+              contentContainerStyle={
+                history.length === 0 ? styles.emptyList : styles.list
+              }
+              renderItem={({ item }) => <HistoryCard item={item} />}
+            />
+          )}
+        </>
+      )}
 
       {/* Sécurité & Compte */}
       <TouchableOpacity
@@ -494,139 +655,3 @@ export default function ApproveRequestsScreen() {
     </View>
   );
 }
-
-/* ────────────────────────────────────────────
- *  Styles
- * ──────────────────────────────────────────── */
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5", padding: s(16) },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-
-  /* Connection indicator */
-  connectionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: s(6),
-    marginBottom: vs(8),
-  },
-  connectionDot: {
-    width: s(8),
-    height: s(8),
-    borderRadius: s(4),
-  },
-  connectionText: {
-    fontSize: fs(12),
-    color: "#999",
-    fontWeight: "500",
-  },
-
-  hint: { fontSize: fs(14), color: "#666", marginBottom: vs(16) },
-  pushHint: {
-    fontSize: fs(13), color: "#b45309", marginBottom: vs(12),
-    backgroundColor: "#fffbeb", padding: s(10), borderRadius: s(8),
-  },
-  errorBanner: {
-    backgroundColor: "#fef2f2", padding: s(12), borderRadius: s(8),
-    marginBottom: vs(16), borderWidth: 1, borderColor: "#fecaca",
-  },
-  errorText: { fontSize: fs(14), color: "#b91c1c" },
-
-  list: { paddingBottom: vs(24) },
-  emptyList: { flex: 1 },
-  empty: { padding: s(32), alignItems: "center" },
-  emptyText: { fontSize: fs(15), color: "#888", textAlign: "center" },
-
-  /* ── Request card ── */
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: s(12),
-    padding: s(16),
-    marginBottom: vs(12),
-    borderWidth: 1,
-    borderColor: "#eee",
-    overflow: "hidden",
-  },
-  /** Green glow overlay that fades out on new live cards */
-  newGlow: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(22, 163, 74, 0.08)",
-    borderRadius: s(12),
-    borderWidth: 2,
-    borderColor: "rgba(22, 163, 74, 0.35)",
-  },
-  cardExpired: {
-    opacity: 0.55,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: vs(10),
-  },
-  code: {
-    fontSize: fs(22),
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-    letterSpacing: s(4),
-    color: "#111",
-  },
-  codeExpired: {
-    color: "#aaa",
-  },
-
-  /* Timer badge */
-  timerBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f5f5f5",
-    paddingHorizontal: s(10),
-    paddingVertical: vs(5),
-    borderRadius: s(20),
-    gap: s(4),
-  },
-  timerText: {
-    fontSize: fs(13),
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-  },
-
-  /* Progress bar */
-  progressTrack: {
-    height: vs(4),
-    backgroundColor: "#f0f0f0",
-    borderRadius: s(2),
-    marginBottom: vs(14),
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: vs(4),
-    borderRadius: s(2),
-  },
-
-  expiredLabel: {
-    fontSize: fs(13),
-    color: "#999",
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-
-  /* Action buttons */
-  actions: { flexDirection: "row", gap: s(10) },
-  btn: { flex: 1, paddingVertical: vs(12), borderRadius: s(10), alignItems: "center" },
-  btnApprove: { backgroundColor: "#0a0a0a" },
-  btnDeny: { backgroundColor: "#f0f0f0" },
-  btnText: { color: "#fff", fontSize: fs(15), fontWeight: "600" },
-  btnTextDeny: { color: "#333", fontSize: fs(15), fontWeight: "600" },
-
-  /* Security button */
-  securityButton: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    backgroundColor: "#fff", borderWidth: 1, borderColor: "#eee",
-    borderRadius: s(12), paddingVertical: vs(14), marginTop: vs(16), gap: s(8),
-  },
-  securityButtonText: { fontSize: fs(15), fontWeight: "600", color: "#0a0a0a" },
-
-  logout: { marginTop: vs(12), paddingVertical: vs(12), alignItems: "center" },
-  logoutText: { fontSize: fs(15), color: "#666" },
-
-});
