@@ -37,7 +37,7 @@ import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } f
 import logoDjogana from '@/assets/logo_djogana.png'
 
 const Dashboard = () => (
-  <SidebarProvider>
+  <SidebarProvider className="!h-svh !max-h-svh overflow-hidden">
     <DashboardFilterProvider>
       <DashboardLayout />
     </DashboardFilterProvider>
@@ -363,7 +363,7 @@ function DashboardLayout() {
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="min-w-0">
+          <SidebarInset className="min-w-0 min-h-0 overflow-auto">
             <Outlet />
           </SidebarInset>
         </div>

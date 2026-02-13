@@ -9,8 +9,19 @@ const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const admin = require('firebase-admin')
+const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
+
+// ---------- Cloudinary ----------
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+})
+if (!process.env.CLOUDINARY_CLOUD_NAME) {
+  console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME not set. File uploads will fail.')
+}
 
 // ---------- Firebase Admin SDK ----------
 // Initialize using a service account JSON key.
@@ -78,6 +89,50 @@ const connectionString =
 const pool = new Pool({
   connectionString,
 })
+
+/**
+ * Background migration: uploads all files that still have bytea data
+ * (no cloudinary_url) to Cloudinary, then NULLs out the bytea column.
+ */
+async function migrateLegacyFilesToCloudinary(pool) {
+  const legacy = await pool.query(
+    `SELECT f.id, f.name, f.mime_type, f.folder, f.data,
+            COALESCE(d.code, 'DEF') AS direction_code
+     FROM files f
+     LEFT JOIN directions d ON d.id = f.direction_id
+     WHERE f.data IS NOT NULL AND f.cloudinary_url IS NULL
+     LIMIT 50`
+  )
+  if (legacy.rows.length === 0) {
+    console.log('[cloudinary-migration] No legacy bytea files to migrate.')
+    return
+  }
+  console.log(`[cloudinary-migration] Migrating ${legacy.rows.length} legacy files…`)
+
+  for (const row of legacy.rows) {
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: `intranet/${row.direction_code}/${row.folder}`,
+            public_id: row.id,
+            resource_type: 'auto',
+          },
+          (err, res) => (err ? reject(err) : resolve(res))
+        )
+        stream.end(row.data)
+      })
+      await pool.query(
+        `UPDATE files SET cloudinary_url = $1, cloudinary_public_id = $2, data = NULL WHERE id = $3`,
+        [result.secure_url, result.public_id, row.id]
+      )
+      console.log(`[cloudinary-migration] ✓ ${row.name}`)
+    } catch (err) {
+      console.error(`[cloudinary-migration] ✗ ${row.name}:`, err?.message || err)
+    }
+  }
+  console.log('[cloudinary-migration] Batch complete.')
+}
 
 async function initDb() {
   // Directions: admin creates directions; each has a code (3-4 chars, uppercase) for file naming
@@ -210,7 +265,9 @@ async function initDb() {
       folder text NOT NULL,
       direction_id uuid REFERENCES directions(id) ON DELETE CASCADE,
       uploaded_by uuid,
-      data bytea NOT NULL,
+      data bytea,
+      cloudinary_url text,
+      cloudinary_public_id text,
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT fk_uploaded_by
         FOREIGN KEY (uploaded_by)
@@ -218,6 +275,18 @@ async function initDb() {
         ON DELETE SET NULL
     );
   `)
+  // Migration: add Cloudinary columns to existing tables
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS cloudinary_url text') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS cloudinary_public_id text') } catch (_) { /* ignore */ }
+  // Make data column nullable for Cloudinary-stored files
+  try { await pool.query('ALTER TABLE files ALTER COLUMN data DROP NOT NULL') } catch (_) { /* ignore */ }
+
+  // Background migration: move existing bytea files to Cloudinary
+  if (process.env.CLOUDINARY_CLOUD_NAME) {
+    migrateLegacyFilesToCloudinary(pool).catch(err =>
+      console.error('[cloudinary-migration] error:', err?.message || err)
+    )
+  }
 
   try {
     await pool.query(`
@@ -1730,10 +1799,29 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       [folderId, folder, directionId]
     )
 
+    // Upload to Cloudinary
+    const cloudinaryResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: `intranet/${directionCode}/${folder}`,
+          public_id: id,
+          resource_type: 'auto',
+        },
+        (error, result) => {
+          if (error) reject(error)
+          else resolve(result)
+        }
+      )
+      stream.end(fileBuffer)
+    })
+
+    const cloudinaryUrl = cloudinaryResult.secure_url
+    const cloudinaryPublicId = cloudinaryResult.public_id
+
     await pool.query(
       `
-        INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, data)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         id,
@@ -1743,11 +1831,12 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
         folder,
         directionId,
         uploadedBy,
-        fileBuffer,
+        cloudinaryUrl,
+        cloudinaryPublicId,
       ]
     )
 
-    const publicUrl = `${BASE_URL}/files/${encodeURIComponent(id)}`
+    const publicUrl = cloudinaryUrl
 
     await insertActivityLog(pool, {
       action: 'upload_file',
@@ -1986,7 +2075,7 @@ app.get('/api/files', async (req, res) => {
     const { folder, role, direction_id: userDirectionId } = req.query
 
     const params = []
-    let sql = 'SELECT id, name, mime_type, size, folder, direction_id, created_at FROM files'
+    let sql = 'SELECT id, name, mime_type, size, folder, direction_id, cloudinary_url, created_at FROM files'
 
     const conditions = []
 
@@ -2052,7 +2141,7 @@ app.get('/api/files', async (req, res) => {
       size: Number(row.size) || 0,
       folder: row.folder,
       direction_id: row.direction_id,
-      url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+      url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
     }))
 
     return res.json(rows)
@@ -2067,7 +2156,7 @@ app.get('/files/:id', async (req, res) => {
   try {
     const { id } = req.params
     const result = await pool.query(
-      'SELECT name, mime_type, data FROM files WHERE id = $1',
+      'SELECT name, mime_type, data, cloudinary_url FROM files WHERE id = $1',
       [id]
     )
     if (result.rows.length === 0) {
@@ -2075,12 +2164,23 @@ app.get('/files/:id', async (req, res) => {
     }
 
     const file = result.rows[0]
-    res.setHeader('Content-Type', file.mime_type)
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${encodeURIComponent(file.name)}"`
-    )
-    return res.send(file.data)
+
+    // If stored on Cloudinary, redirect to the Cloudinary URL
+    if (file.cloudinary_url) {
+      return res.redirect(file.cloudinary_url)
+    }
+
+    // Legacy: serve from bytea column
+    if (file.data) {
+      res.setHeader('Content-Type', file.mime_type)
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${encodeURIComponent(file.name)}"`
+      )
+      return res.send(file.data)
+    }
+
+    return res.status(404).send('File data not found')
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('file fetch error', err)
@@ -2166,7 +2266,7 @@ app.delete('/api/files/:id', async (req, res) => {
     const identifiant = req.query.identifiant || req.body?.identifiant
 
     const fileRes = await pool.query(
-      'SELECT name, folder, direction_id FROM files WHERE id = $1',
+      'SELECT name, folder, direction_id, cloudinary_public_id FROM files WHERE id = $1',
       [id]
     )
     if (fileRes.rows.length === 0) {
@@ -2187,6 +2287,17 @@ app.delete('/api/files/:id', async (req, res) => {
             error: 'Vous ne pouvez supprimer que les fichiers de votre direction.',
           })
         }
+      }
+    }
+
+    // Delete from Cloudinary if stored there
+    if (fileRow.cloudinary_public_id) {
+      try {
+        await cloudinary.uploader.destroy(fileRow.cloudinary_public_id, { resource_type: 'raw' })
+      } catch (cloudErr) {
+        console.warn('[cloudinary] failed to delete', fileRow.cloudinary_public_id, cloudErr?.message)
+        // Also try as image/video in case resource_type differs
+        try { await cloudinary.uploader.destroy(fileRow.cloudinary_public_id) } catch (_) { /* ignore */ }
       }
     }
 
@@ -2249,6 +2360,17 @@ app.delete('/api/folders/:folder', async (req, res) => {
       entityId: null,
       details: { folder, direction_id: directionId },
     })
+
+    // Delete Cloudinary resources for all files in the folder
+    {
+      const filesToDelete = directionId
+        ? await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL', [folder, directionId])
+        : await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND cloudinary_public_id IS NOT NULL', [folder])
+      for (const f of filesToDelete.rows) {
+        try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
+        try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
+      }
+    }
 
     if (directionId) {
       await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [
