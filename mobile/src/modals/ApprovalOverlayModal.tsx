@@ -12,15 +12,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { ms } from "@/responsive";
 import { styles } from "./ApprovalOverlayModal.styles";
 
-const REQUEST_VALIDITY_SECONDS = 15;
-
-function remainingSeconds(createdAt: string): number {
-  const created = new Date(createdAt).getTime();
-  const now = Date.now();
-  const elapsed = Math.floor((now - created) / 1000);
-  return Math.max(0, REQUEST_VALIDITY_SECONDS - elapsed);
-}
-
 export interface ApprovalRequest {
   id: string;
   code: string;
@@ -37,7 +28,6 @@ interface ApprovalOverlayModalProps {
   onClose: () => void;
 }
 
-
 const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
   visible,
   request,
@@ -45,29 +35,18 @@ const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
   onDeny,
   onClose,
 }) => {
-  const [seconds, setSeconds] = useState(0);
   const [acting, setActing] = useState<"approve" | "deny" | null>(null);
   const [result, setResult] = useState<"approved" | "denied" | "error" | null>(
     null
   );
-  const progressAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(0.85)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
-  const expired = seconds <= 0 && result === null;
-
-  // Auto-close the modal when the timer expires
-  useEffect(() => {
-    if (visible && expired && request) {
-   
-      const timeout = setTimeout(onClose, 600);
-      return () => clearTimeout(timeout);
-    }
-  }, [visible, expired, request, onClose]);
-
-
+  // Reset state when modal opens
   useEffect(() => {
     if (visible) {
+      setResult(null);
+      setActing(null);
       scaleAnim.setValue(0.85);
       opacityAnim.setValue(0);
       Animated.parallel([
@@ -84,57 +63,10 @@ const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
         }),
       ]).start();
     }
-  }, [visible]);
-
-  // Timer countdown
-  useEffect(() => {
-    if (!visible || !request) return;
-
-    const initial = remainingSeconds(request.createdAt);
-    setSeconds(initial);
-    setResult(null);
-    setActing(null);
-
-    progressAnim.setValue(initial / REQUEST_VALIDITY_SECONDS);
-
-    if (initial <= 0) return;
-
-    // Smooth progress bar animation
-    Animated.timing(progressAnim, {
-      toValue: 0,
-      duration: initial * 1000,
-      useNativeDriver: false,
-    }).start();
-
-    const interval = setInterval(() => {
-      setSeconds((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
-          clearInterval(interval);
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [visible, request]);
-
-  const timerColor =
-    seconds > 10 ? "#16a34a" : seconds > 5 ? "#ea580c" : "#dc2626";
-
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
-
-  const progressBarColor = progressAnim.interpolate({
-    inputRange: [0, 0.33, 0.66, 1],
-    outputRange: ["#dc2626", "#ea580c", "#f59e0b", "#16a34a"],
-  });
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApprove = async () => {
-    if (!request || acting || expired) return;
+    if (!request || acting) return;
     setActing("approve");
     const ok = await onApprove(request.id);
     setActing(null);
@@ -147,7 +79,7 @@ const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
   };
 
   const handleDeny = async () => {
-    if (!request || acting || expired) return;
+    if (!request || acting) return;
     setActing("deny");
     const ok = await onDeny(request.id);
     setActing(null);
@@ -247,41 +179,20 @@ const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
               </View>
             )}
 
-            {/* ── Timer + progress ── */}
-            {!result && !expired && (
+            {/* ── Waiting indicator (replaces timer) ── */}
+            {!result && (
               <View style={styles.timerSection}>
                 <View style={styles.timerRow}>
-                  <Ionicons name="time-outline" size={ms(14)} color={timerColor} />
-                  <Text style={[styles.timerText, { color: timerColor }]}>
-                    {seconds}s restantes
+                  <Ionicons name="hourglass-outline" size={ms(14)} color="#f59e0b" />
+                  <Text style={[styles.timerText, { color: "#f59e0b" }]}>
+                    En attente de validation
                   </Text>
                 </View>
-                <View style={styles.progressTrack}>
-                  <Animated.View
-                    style={[
-                      styles.progressBar,
-                      {
-                        width: progressWidth,
-                        backgroundColor: progressBarColor,
-                      },
-                    ]}
-                  />
-                </View>
-              </View>
-            )}
-
-            {/* ── Expired state ── */}
-            {expired && !result && (
-              <View style={styles.expiredBanner}>
-                <Ionicons name="timer-outline" size={ms(18)} color="#b45309" />
-                <Text style={styles.expiredText}>
-                  Cette demande a expiré. Générez-en une nouvelle sur le site.
-                </Text>
               </View>
             )}
 
             {/* ── Action buttons ── */}
-            {!result && !expired && (
+            {!result && (
               <View style={styles.actions}>
                 <TouchableOpacity
                   style={[styles.btn, styles.btnApprove]}
@@ -323,8 +234,8 @@ const ApprovalOverlayModal: React.FC<ApprovalOverlayModalProps> = ({
               </View>
             )}
 
-            {/* ── Close button for expired/error ── */}
-            {(expired || result === "error") && (
+            {/* ── Close button for error state ── */}
+            {result === "error" && (
               <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
                 <Text style={styles.closeBtnText}>Fermer</Text>
               </TouchableOpacity>

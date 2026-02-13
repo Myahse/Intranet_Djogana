@@ -619,9 +619,27 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
 
     // ── Period filter ──
     // Accepted: 7d, 30d, 3m, 6m, 1y, all (default: all)
+    // Also supports custom range: ?from=YYYY-MM-DD&to=YYYY-MM-DD
     const periodIntervals = { '7d': '7 days', '30d': '30 days', '3m': '3 months', '6m': '6 months', '1y': '1 year' }
     const periodParam = (req.query.period || 'all').toString()
-    const pgInterval = periodIntervals[periodParam] || null // null = all time
+
+    const customFrom = req.query.from ? new Date(req.query.from.toString()) : null
+    const customTo   = req.query.to   ? new Date(req.query.to.toString())   : null
+    const hasCustomRange = customFrom && customTo && !isNaN(customFrom.getTime()) && !isNaN(customTo.getTime())
+
+    let fromDate = null
+    let toDate = null
+    if (hasCustomRange) {
+      fromDate = customFrom.toISOString()
+      const end = new Date(customTo)
+      end.setHours(23, 59, 59, 999)
+      toDate = end.toISOString()
+    } else {
+      const pgInterval = periodIntervals[periodParam] || null
+      if (pgInterval) {
+        fromDate = new Date(Date.now() - parsePgInterval(pgInterval)).toISOString()
+      }
+    }
 
     // Helper: build { sql, params } with optional direction + date filters
     // Each query builds its own param array so indices are always correct.
@@ -633,10 +651,15 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
         const col = joinAlias ? `${joinAlias}.direction_id` : 'direction_id'
         clauses.push(`${col} = $${params.length}`)
       }
-      if (pgInterval && dateCol) {
-        params.push(new Date(Date.now() - parsePgInterval(pgInterval)).toISOString())
+      if (fromDate && dateCol) {
+        params.push(fromDate)
         const col = joinAlias ? `${joinAlias}.${dateCol}` : dateCol
         clauses.push(`${col} >= $${params.length}`)
+      }
+      if (toDate && dateCol) {
+        params.push(toDate)
+        const col = joinAlias ? `${joinAlias}.${dateCol}` : dateCol
+        clauses.push(`${col} <= $${params.length}`)
       }
       const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
       return pool.query(baseSql.replace('__WHERE__', where), params)
@@ -700,18 +723,22 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
          FROM files f JOIN users u ON f.uploaded_by = u.id __WHERE__
          GROUP BY u.identifiant ORDER BY uploads DESC LIMIT 5`,
         { joinAlias: 'f', extraWhere: ["u.role <> 'admin'"] }),
-      // ── Files over time (always use period or default to 6 months) ──
+      // ── Files over time (always use period or custom range, default to 12 months) ──
       (() => {
         const clauses = []
         const params = []
         if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
-        if (pgInterval) {
-          params.push(new Date(Date.now() - parsePgInterval(pgInterval)).toISOString())
+        if (fromDate) {
+          params.push(fromDate)
           clauses.push(`created_at >= $${params.length}`)
         } else {
           // Default: show last 12 months for the timeline even when period is "all"
           params.push(new Date(Date.now() - 365 * 86400000).toISOString())
           clauses.push(`created_at >= $${params.length}`)
+        }
+        if (toDate) {
+          params.push(toDate)
+          clauses.push(`created_at <= $${params.length}`)
         }
         const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
         return pool.query(`
@@ -1191,8 +1218,9 @@ app.post('/api/auth/device/request', async (req, res) => {
     const expiresAt = new Date(Date.now() + DEVICE_REQUEST_EXPIRY_MINUTES * 60 * 1000)
 
     // Cancel all previous pending requests for this user so only the latest one is active
+    // Mark them as 'detruite' (destroyed/superseded) – visible in history
     await pool.query(
-      `UPDATE login_requests SET status = 'denied'
+      `UPDATE login_requests SET status = 'detruite'
        WHERE user_identifiant = $1 AND status = 'pending'`,
       [ident]
     )
@@ -1386,7 +1414,7 @@ app.get('/api/auth/device/requests/history', requireAuth, async (req, res) => {
       `SELECT id, code, status, created_at, expires_at
        FROM login_requests
        WHERE user_identifiant = $1
-         AND (status IN ('approved', 'denied') OR (status = 'pending' AND expires_at <= now()))
+         AND (status IN ('approved', 'denied', 'detruite') OR (status = 'pending' AND expires_at <= now()))
        ORDER BY created_at DESC
        LIMIT 50`,
       [identifiant]
@@ -1543,6 +1571,10 @@ app.get('/api/auth/device/poll/:requestId', async (req, res) => {
         return res.json({ status: 'expired', message: 'Demande expirée.' })
       }
       return res.json({ status: 'pending' })
+    }
+
+    if (row.status === 'detruite') {
+      return res.json({ status: 'detruite', message: 'Cette demande a été remplacée par une nouvelle.' })
     }
 
     if (row.status === 'denied') {

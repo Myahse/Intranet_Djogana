@@ -89,7 +89,7 @@ export const styles = StyleSheet.create({
     color: "#0a0a0a",
   },
 
-  /* Timer */
+  /* Waiting indicator */
   timerSection: {
     marginBottom: vs(20),
   },
@@ -103,35 +103,6 @@ export const styles = StyleSheet.create({
   timerText: {
     fontSize: fs(13),
     fontWeight: "600",
-    fontVariant: ["tabular-nums"],
-  },
-  progressTrack: {
-    height: vs(4),
-    backgroundColor: "#f0f0f0",
-    borderRadius: s(2),
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: vs(4),
-    borderRadius: s(2),
-  },
-
-  /* Expired */
-  expiredBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: s(8),
-    backgroundColor: "#fffbeb",
-    paddingVertical: vs(12),
-    paddingHorizontal: s(14),
-    borderRadius: s(10),
-    marginBottom: vs(16),
-  },
-  expiredText: {
-    flex: 1,
-    fontSize: fs(13),
-    color: "#b45309",
-    lineHeight: fs(18),
   },
 
   /* Buttons */

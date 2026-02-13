@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, AreaChart, Area,
@@ -6,9 +6,13 @@ import {
 import {
   Users, Building2, FolderOpen, FileText, HardDrive, Link2,
   TrendingUp, Upload, Activity, RefreshCw, CalendarDays,
+  Search, ArrowUpDown, X, CalendarRange,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Calendar } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuth } from '@/contexts/AuthContext'
+import type { DateRange } from 'react-day-picker'
 
 /* ─── period presets ─── */
 const PERIODS = [
@@ -19,7 +23,7 @@ const PERIODS = [
   { value: '1y', label: '12 derniers mois' },
   { value: 'all', label: 'Depuis le début' },
 ] as const
-type Period = (typeof PERIODS)[number]['value']
+type Period = (typeof PERIODS)[number]['value'] | 'custom'
 
 const API = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -99,22 +103,54 @@ interface Stats {
 }
 
 /* ─── sub-components ─── */
-function StatCard({ icon: Icon, label, value, sub, color = 'text-primary' }: {
+function AnimatedNumber({ value, duration = 1200 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(0)
+  const rafRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => {
+    const startValue = 0
+    const startTime = performance.now()
+    const tick = (now: number) => {
+      const elapsed = now - startTime
+      const progress = Math.min(elapsed / duration, 1)
+      // Cubic ease-out for a satisfying deceleration
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setDisplay(Math.round(startValue + (value - startValue) * eased))
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(tick)
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [value, duration])
+
+  return <>{display.toLocaleString('fr-FR')}</>
+}
+
+function StatCard({ icon: Icon, label, value, sub, color = 'text-primary', delay = 0 }: {
   icon: React.ElementType
   label: string
   value: string | number
   sub?: string
   color?: string
+  delay?: number
 }) {
+  const isNumeric = typeof value === 'number'
+
   return (
-    <Card>
+    <Card
+      className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both"
+      style={{ animationDelay: `${delay}ms` }}
+    >
       <CardContent className="flex items-center gap-4 p-5">
-        <div className={`rounded-xl bg-muted p-3 ${color}`}>
+        <div className={`rounded-xl bg-muted p-3 ${color} transition-transform hover:scale-110`}>
           <Icon className="h-6 w-6" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm text-muted-foreground truncate">{label}</p>
-          <p className="text-2xl font-bold tracking-tight">{value}</p>
+          <p className="text-2xl font-bold tracking-tight">
+            {isNumeric ? <AnimatedNumber value={value} /> : value}
+          </p>
           {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
         </div>
       </CardContent>
@@ -138,6 +174,95 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
   )
 }
 
+/* ─── reusable filter sub-components ─── */
+type SortOrder = 'desc' | 'asc'
+type ViewMode = 'count' | 'size'
+
+function SearchFilter({ value, onChange, placeholder = 'Rechercher…' }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  return (
+    <div className="relative">
+      <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-7 w-36 rounded-md border bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+      />
+      {value && (
+        <button
+          onClick={() => onChange('')}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+function SortButton({ order, onToggle }: { order: SortOrder; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className="inline-flex items-center gap-1 h-7 rounded-md border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      title={order === 'desc' ? 'Tri décroissant' : 'Tri croissant'}
+    >
+      <ArrowUpDown className="h-3 w-3" />
+      {order === 'desc' ? '↓' : '↑'}
+    </button>
+  )
+}
+
+function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode) => void }) {
+  return (
+    <div className="inline-flex h-7 rounded-md border bg-background p-0.5">
+      <button
+        onClick={() => onChange('count')}
+        className={`rounded px-2 text-xs font-medium transition-colors ${
+          mode === 'count'
+            ? 'bg-primary text-primary-foreground shadow-sm'
+            : 'text-muted-foreground hover:text-foreground'
+        }`}
+      >
+        Nombre
+      </button>
+      <button
+        onClick={() => onChange('size')}
+        className={`rounded px-2 text-xs font-medium transition-colors ${
+          mode === 'size'
+            ? 'bg-primary text-primary-foreground shadow-sm'
+            : 'text-muted-foreground hover:text-foreground'
+        }`}
+      >
+        Taille
+      </button>
+    </div>
+  )
+}
+
+function InlineSelect({ value, onChange, options }: {
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-7 rounded-md border bg-background px-2 pr-6 text-xs text-muted-foreground hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  )
+}
+
 /* ─── main page ─── */
 export default function AdminPage() {
   const { user, getAuthHeaders } = useAuth()
@@ -145,12 +270,34 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('all')
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
 
-  const fetchStats = useCallback(async (p: Period = period) => {
+  /* ── Per-card filter state ── */
+  const [fileTypeView, setFileTypeView] = useState<ViewMode>('count')
+  const [filesDirSearch, setFilesDirSearch] = useState('')
+  const [filesDirSort, setFilesDirSort] = useState<SortOrder>('desc')
+  const [filesDirView, setFilesDirView] = useState<ViewMode>('count')
+  const [foldersDirSearch, setFoldersDirSearch] = useState('')
+  const [foldersDirSort, setFoldersDirSort] = useState<SortOrder>('desc')
+  const [usersDirSearch, setUsersDirSearch] = useState('')
+  const [usersDirSort, setUsersDirSort] = useState<SortOrder>('desc')
+  const [activityFilter, setActivityFilter] = useState('all')
+
+  const fetchStats = useCallback(async (p: Period = period, range?: DateRange) => {
     setLoading(true)
     setError(null)
     try {
-      const url = `${API}/api/admin/stats${p !== 'all' ? `?period=${p}` : ''}`
+      const params = new URLSearchParams()
+      const effectiveRange = range ?? dateRange
+      if (p === 'custom' && effectiveRange?.from && effectiveRange?.to) {
+        params.set('from', effectiveRange.from.toISOString().split('T')[0])
+        params.set('to', effectiveRange.to.toISOString().split('T')[0])
+      } else if (p !== 'all' && p !== 'custom') {
+        params.set('period', p)
+      }
+      const qs = params.toString()
+      const url = `${API}/api/admin/stats${qs ? `?${qs}` : ''}`
       const res = await fetch(url, { headers: getAuthHeaders() })
       if (!res.ok) throw new Error(`${res.status}`)
       setStats(await res.json())
@@ -160,14 +307,30 @@ export default function AdminPage() {
     } finally {
       setLoading(false)
     }
-  }, [getAuthHeaders, period])
+  }, [getAuthHeaders, period, dateRange])
 
   useEffect(() => { fetchStats() }, [fetchStats])
 
   const handlePeriodChange = (p: Period) => {
+    if (p !== 'custom') {
+      setDateRange(undefined)
+    }
     setPeriod(p)
     fetchStats(p)
   }
+
+  const handleDateRangeSelect = (range: DateRange | undefined) => {
+    setDateRange(range)
+    if (range?.from && range?.to) {
+      setPeriod('custom')
+      setDatePickerOpen(false)
+      fetchStats('custom', range)
+    }
+  }
+
+  /* ── Date formatter ── */
+  const formatDateShort = (d: Date) =>
+    d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
 
   /* loading / error */
   if (loading) {
@@ -220,6 +383,39 @@ export default function AdminPage() {
     return { name: monthNames[mm] ?? m.month, fichiers: m.count, taille: Number(m.total_size) }
   })
 
+  /* ── Apply per-card filters ── */
+  const filteredFileTypeData = fileTypeData
+    .map((d) => ({
+      ...d,
+      displayValue: fileTypeView === 'count' ? d.value : d.size,
+    }))
+    .sort((a, b) => b.displayValue - a.displayValue)
+
+  const filteredFilesByDir = filesByDirData
+    .filter((d) => !filesDirSearch || d.name.toLowerCase().includes(filesDirSearch.toLowerCase()))
+    .sort((a, b) =>
+      filesDirSort === 'desc'
+        ? (filesDirView === 'count' ? b.fichiers - a.fichiers : b.taille - a.taille)
+        : (filesDirView === 'count' ? a.fichiers - b.fichiers : a.taille - b.taille)
+    )
+
+  const filteredFoldersByDir = foldersByDirData
+    .filter((d) => !foldersDirSearch || d.name.toLowerCase().includes(foldersDirSearch.toLowerCase()))
+    .sort((a, b) =>
+      foldersDirSort === 'desc' ? b.dossiers - a.dossiers : a.dossiers - b.dossiers
+    )
+
+  const filteredUsersByDir = usersByDirData
+    .filter((d) => !usersDirSearch || d.name.toLowerCase().includes(usersDirSearch.toLowerCase()))
+    .sort((a, b) =>
+      usersDirSort === 'desc' ? b.utilisateurs - a.utilisateurs : a.utilisateurs - b.utilisateurs
+    )
+
+  const activityActions = Array.from(new Set(stats.recentActivity.map((a) => a.action)))
+  const filteredActivity = stats.recentActivity.filter(
+    (a) => activityFilter === 'all' || a.action === activityFilter
+  )
+
   return (
     <div className="flex-1 space-y-6 p-6 overflow-auto">
       {/* Header */}
@@ -255,6 +451,37 @@ export default function AdminPage() {
                 {p.label}
               </button>
             ))}
+            {/* Custom date range picker */}
+            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 ${
+                    period === 'custom'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  <CalendarRange className="h-3.5 w-3.5" />
+                  {period === 'custom' && dateRange?.from && dateRange?.to
+                    ? `${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)}`
+                    : 'Personnalisé'}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <div className="p-3 pb-1">
+                  <p className="text-sm font-medium">Choisir une période</p>
+                  <p className="text-xs text-muted-foreground">Sélectionnez une date de début et de fin</p>
+                </div>
+                <Calendar
+                  mode="range"
+                  selected={dateRange}
+                  onSelect={handleDateRangeSelect}
+                  numberOfMonths={2}
+                  disabled={{ after: new Date() }}
+                  defaultMonth={dateRange?.from ?? new Date(Date.now() - 30 * 86400000)}
+                />
+              </PopoverContent>
+            </Popover>
           </div>
           <button
             onClick={() => { fetchStats(period) }}
@@ -268,15 +495,19 @@ export default function AdminPage() {
 
       {/* ── KPI cards ── */}
       {(() => {
-        const periodLabel = period !== 'all' ? PERIODS.find(p => p.value === period)?.label : undefined
+        const periodLabel = period === 'custom' && dateRange?.from && dateRange?.to
+          ? `${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)}`
+          : period !== 'all'
+            ? PERIODS.find(p => p.value === period)?.label
+            : undefined
         return (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-            <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" />
-            <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" />
-            <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" />
-            <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" sub={periodLabel} />
-            <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" sub={periodLabel} />
-            <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" sub={periodLabel} />
+            <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" delay={0} />
+            <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" delay={60} />
+            <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" delay={120} />
+            <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" sub={periodLabel} delay={180} />
+            <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" sub={periodLabel} delay={240} />
+            <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" sub={periodLabel} delay={300} />
           </div>
         )
       })()}
@@ -286,34 +517,41 @@ export default function AdminPage() {
         {/* File types donut */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <FileText className="h-4 w-4" /> Types de fichiers
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Types de fichiers
+              </CardTitle>
+              <ViewToggle mode={fileTypeView} onChange={setFileTypeView} />
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={fileTypeData}
+                    data={filteredFileTypeData}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
                     outerRadius={100}
                     paddingAngle={2}
-                    dataKey="value"
+                    dataKey="displayValue"
                     nameKey="name"
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     labelLine={false}
+                    isAnimationActive={true}
+                    animationBegin={200}
+                    animationDuration={1400}
+                    animationEasing="ease-out"
                   >
-                    {fileTypeData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    {filteredFileTypeData.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} className="drop-shadow-sm transition-opacity hover:opacity-80" />
                     ))}
                   </Pie>
                   <Tooltip
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null
-                      const d = payload[0].payload as { name: string; value: number; size: number }
+                      const d = payload[0].payload as { name: string; value: number; size: number; displayValue: number }
                       return (
                         <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
                           <p className="font-medium">{d.name}</p>
@@ -334,7 +572,13 @@ export default function AdminPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Fichiers uploadés {period === 'all' ? '(12 derniers mois)' : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`}
+              <TrendingUp className="h-4 w-4" /> Fichiers uploadés {
+                period === 'custom' && dateRange?.from && dateRange?.to
+                  ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
+                  : period === 'all'
+                    ? '(12 derniers mois)'
+                    : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`
+              }
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -358,6 +602,10 @@ export default function AdminPage() {
                     stroke="#0ea5e9"
                     fill="url(#gradientFichiers)"
                     strokeWidth={2}
+                    isAnimationActive={true}
+                    animationBegin={300}
+                    animationDuration={1200}
+                    animationEasing="ease-out"
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -370,43 +618,81 @@ export default function AdminPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Building2 className="h-4 w-4" /> Fichiers par direction
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Building2 className="h-4 w-4" /> Fichiers par direction
+              </CardTitle>
+              <div className="flex items-center gap-1.5">
+                <SearchFilter value={filesDirSearch} onChange={setFilesDirSearch} placeholder="Filtrer directions…" />
+                <SortButton order={filesDirSort} onToggle={() => setFilesDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
+                <ViewToggle mode={filesDirView} onChange={setFilesDirView} />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={filesByDirData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
-                  <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="fichiers" name="Fichiers" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {filteredFilesByDir.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">Aucun résultat</p>
+            ) : (
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={filteredFilesByDir} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null
+                        const d = payload[0].payload as { name: string; fichiers: number; taille: number }
+                        return (
+                          <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
+                            <p className="font-medium">{d.name}</p>
+                            <p className="text-muted-foreground">{d.fichiers} fichier{d.fichiers > 1 ? 's' : ''}</p>
+                            <p className="text-muted-foreground">{formatBytes(d.taille)}</p>
+                          </div>
+                        )
+                      }}
+                    />
+                    <Bar
+                      dataKey={filesDirView === 'count' ? 'fichiers' : 'taille'}
+                      name={filesDirView === 'count' ? 'Fichiers' : 'Taille'}
+                      fill="#8b5cf6"
+                      radius={[0, 4, 4, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <FolderOpen className="h-4 w-4" /> Dossiers par direction
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <FolderOpen className="h-4 w-4" /> Dossiers par direction
+              </CardTitle>
+              <div className="flex items-center gap-1.5">
+                <SearchFilter value={foldersDirSearch} onChange={setFoldersDirSearch} placeholder="Filtrer directions…" />
+                <SortButton order={foldersDirSort} onToggle={() => setFoldersDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={foldersByDirData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
-                  <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="dossiers" name="Dossiers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {filteredFoldersByDir.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">Aucun résultat</p>
+            ) : (
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={filteredFoldersByDir} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="dossiers" name="Dossiers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -416,22 +702,32 @@ export default function AdminPage() {
         {/* Users by direction */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Users className="h-4 w-4" /> Utilisateurs par direction
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Users className="h-4 w-4" /> Utilisateurs par direction
+              </CardTitle>
+              <div className="flex items-center gap-1.5">
+                <SearchFilter value={usersDirSearch} onChange={setUsersDirSearch} placeholder="Filtrer directions…" />
+                <SortButton order={usersDirSort} onToggle={() => setUsersDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={usersByDirData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-35} textAnchor="end" height={60} />
-                  <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="utilisateurs" name="Utilisateurs" fill="#10b981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {filteredUsersByDir.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">Aucun résultat</p>
+            ) : (
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={filteredUsersByDir}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-35} textAnchor="end" height={60} />
+                    <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="utilisateurs" name="Utilisateurs" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -493,9 +789,13 @@ export default function AdminPage() {
                     nameKey="name"
                     label={({ name, value }) => `${name} (${value})`}
                     labelLine
+                    isAnimationActive={true}
+                    animationBegin={400}
+                    animationDuration={1400}
+                    animationEasing="ease-out"
                   >
                     {stats.users.byRole.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} className="drop-shadow-sm transition-opacity hover:opacity-80" />
                     ))}
                   </Pie>
                   <Tooltip />
@@ -510,16 +810,29 @@ export default function AdminPage() {
       {/* ── Row 4: Recent activity ── */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Activity className="h-4 w-4" /> Activité récente
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Activity className="h-4 w-4" /> Activité récente
+            </CardTitle>
+            <InlineSelect
+              value={activityFilter}
+              onChange={setActivityFilter}
+              options={[
+                { value: 'all', label: 'Toutes les actions' },
+                ...activityActions.map((a) => ({
+                  value: a,
+                  label: ACTION_LABELS[a] ?? a,
+                })),
+              ]}
+            />
+          </div>
         </CardHeader>
         <CardContent>
-          {stats.recentActivity.length === 0 ? (
+          {filteredActivity.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">Aucune activité récente</p>
           ) : (
             <div className="divide-y">
-              {stats.recentActivity.map((a, i) => {
+              {filteredActivity.map((a, i) => {
                 const details = a.details as Record<string, string> | null
                 const entityName = details?.name || details?.file_name || details?.folder_name || ''
                 return (
