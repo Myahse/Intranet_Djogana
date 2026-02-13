@@ -88,7 +88,9 @@ interface Stats {
     total: number
     byType: { category: string; count: number; total_size: string }[]
     byDirection: { direction: string; count: number; total_size: string }[]
+    byDirectionAndType: { direction: string; category: string; count: number; total_size: string }[]
     overTime: { month: string; count: number; total_size: string }[]
+    overTimeByType: { month: string; category: string; count: number; total_size: string }[]
   }
   storage: { totalBytes: number }
   links: { total: number }
@@ -263,6 +265,68 @@ function InlineSelect({ value, onChange, options }: {
   )
 }
 
+/** Multi-select chip toggles for file types */
+function TypeChips({ types, selected, onToggle, onSelectAll, onClear, colorMap }: {
+  types: string[]
+  selected: Set<string>
+  onToggle: (t: string) => void
+  onSelectAll: () => void
+  onClear: () => void
+  colorMap: Record<string, string>
+}) {
+  const allSelected = types.length === selected.size
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button
+        onClick={allSelected ? onClear : onSelectAll}
+        className="h-6 rounded-full px-2.5 text-[10px] font-semibold border transition-colors bg-muted/50 text-muted-foreground hover:bg-muted"
+      >
+        {allSelected ? 'Aucun' : 'Tous'}
+      </button>
+      {types.map((t) => {
+        const active = selected.has(t)
+        const color = colorMap[t] ?? '#6b7280'
+        return (
+          <button
+            key={t}
+            onClick={() => onToggle(t)}
+            className="h-6 rounded-full px-2.5 text-[10px] font-semibold border transition-all"
+            style={{
+              backgroundColor: active ? color + '20' : 'transparent',
+              borderColor: active ? color : '#e5e7eb',
+              color: active ? color : '#9ca3af',
+              opacity: active ? 1 : 0.6,
+            }}
+          >
+            <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ backgroundColor: color }} />
+            {t}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** File type filter dropdown (for direction / timeline cards) */
+function TypeFilterSelect({ types, value, onChange }: {
+  types: string[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-7 rounded-md border bg-background px-2 pr-6 text-xs text-muted-foreground hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
+    >
+      <option value="all">Tous les types</option>
+      {types.map((t) => (
+        <option key={t} value={t}>{t}</option>
+      ))}
+    </select>
+  )
+}
+
 /* ─── main page ─── */
 export default function AdminPage() {
   const { user, getAuthHeaders } = useAuth()
@@ -275,9 +339,15 @@ export default function AdminPage() {
 
   /* ── Per-card filter state ── */
   const [fileTypeView, setFileTypeView] = useState<ViewMode>('count')
+  const [fileTypeSearch, setFileTypeSearch] = useState('')
+  const [fileTypeSort, setFileTypeSort] = useState<SortOrder>('desc')
+  const [fileTypeSelected, setFileTypeSelected] = useState<Set<string>>(new Set())
+  const [fileTypesInitialized, setFileTypesInitialized] = useState(false)
   const [filesDirSearch, setFilesDirSearch] = useState('')
   const [filesDirSort, setFilesDirSort] = useState<SortOrder>('desc')
   const [filesDirView, setFilesDirView] = useState<ViewMode>('count')
+  const [filesDirTypeFilter, setFilesDirTypeFilter] = useState('all')
+  const [timelineTypeFilter, setTimelineTypeFilter] = useState('all')
   const [foldersDirSearch, setFoldersDirSearch] = useState('')
   const [foldersDirSort, setFoldersDirSort] = useState<SortOrder>('desc')
   const [usersDirSearch, setUsersDirSearch] = useState('')
@@ -319,13 +389,24 @@ export default function AdminPage() {
     fetchStats(p)
   }
 
+  // Draft range: what the user is currently picking in the calendar (not yet applied)
+  const [draftDateRange, setDraftDateRange] = useState<DateRange | undefined>(undefined)
+
   const handleDateRangeSelect = (range: DateRange | undefined) => {
-    setDateRange(range)
-    if (range?.from && range?.to) {
-      setPeriod('custom')
-      setDatePickerOpen(false)
-      fetchStats('custom', range)
-    }
+    setDraftDateRange(range)
+  }
+
+  const handleDateRangeConfirm = () => {
+    if (!draftDateRange?.from || !draftDateRange?.to) return
+    setDateRange(draftDateRange)
+    setPeriod('custom')
+    setDatePickerOpen(false)
+    fetchStats('custom', draftDateRange)
+  }
+
+  const handleDateRangeCancel = () => {
+    setDraftDateRange(dateRange) // revert to the previously applied range
+    setDatePickerOpen(false)
   }
 
   /* ── Date formatter ── */
@@ -357,6 +438,19 @@ export default function AdminPage() {
     size: Number(t.total_size),
   }))
 
+  // All available file type categories (for chips & dropdowns)
+  const allFileTypes = fileTypeData.map((d) => d.name)
+
+  // Initialize selected types on first load
+  if (!fileTypesInitialized && allFileTypes.length > 0) {
+    setFileTypeSelected(new Set(allFileTypes))
+    setFileTypesInitialized(true)
+  }
+
+  // Color map for file type chips (stable assignment by index)
+  const fileTypeColorMap: Record<string, string> = {}
+  allFileTypes.forEach((t, i) => { fileTypeColorMap[t] = COLORS[i % COLORS.length] })
+
   const filesByDirData = stats.files.byDirection.map((d) => ({
     name: d.direction,
     fichiers: d.count,
@@ -384,20 +478,64 @@ export default function AdminPage() {
   })
 
   /* ── Apply per-card filters ── */
+
+  // File types pie: search + selected chips + sort
   const filteredFileTypeData = fileTypeData
+    .filter((d) => fileTypeSelected.has(d.name))
+    .filter((d) => !fileTypeSearch || d.name.toLowerCase().includes(fileTypeSearch.toLowerCase()))
     .map((d) => ({
       ...d,
       displayValue: fileTypeView === 'count' ? d.value : d.size,
     }))
-    .sort((a, b) => b.displayValue - a.displayValue)
+    .sort((a, b) => fileTypeSort === 'desc' ? b.displayValue - a.displayValue : a.displayValue - b.displayValue)
 
-  const filteredFilesByDir = filesByDirData
-    .filter((d) => !filesDirSearch || d.name.toLowerCase().includes(filesDirSearch.toLowerCase()))
-    .sort((a, b) =>
-      filesDirSort === 'desc'
-        ? (filesDirView === 'count' ? b.fichiers - a.fichiers : b.taille - a.taille)
-        : (filesDirView === 'count' ? a.fichiers - b.fichiers : a.taille - b.taille)
-    )
+  // Files by direction: with file type cross-filter
+  const filteredFilesByDir = (() => {
+    if (filesDirTypeFilter === 'all') {
+      return filesByDirData
+        .filter((d) => !filesDirSearch || d.name.toLowerCase().includes(filesDirSearch.toLowerCase()))
+        .sort((a, b) =>
+          filesDirSort === 'desc'
+            ? (filesDirView === 'count' ? b.fichiers - a.fichiers : b.taille - a.taille)
+            : (filesDirView === 'count' ? a.fichiers - b.fichiers : a.taille - b.taille)
+        )
+    }
+    // Aggregate from byDirectionAndType for the selected type
+    const crossData = (stats.files.byDirectionAndType || [])
+      .filter((r) => r.category === filesDirTypeFilter)
+      .map((r) => ({
+        name: r.direction,
+        fichiers: r.count,
+        taille: Number(r.total_size),
+      }))
+    return crossData
+      .filter((d) => !filesDirSearch || d.name.toLowerCase().includes(filesDirSearch.toLowerCase()))
+      .sort((a, b) =>
+        filesDirSort === 'desc'
+          ? (filesDirView === 'count' ? b.fichiers - a.fichiers : b.taille - a.taille)
+          : (filesDirView === 'count' ? a.fichiers - b.fichiers : a.taille - b.taille)
+      )
+  })()
+
+  // Timeline: with file type filter
+  const filteredTimelineData = (() => {
+    if (timelineTypeFilter === 'all') return timelineData
+    const byType = (stats.files.overTimeByType || [])
+      .filter((r) => r.category === timelineTypeFilter)
+    // Re-aggregate by month
+    const monthMap = new Map<string, { fichiers: number; taille: number }>()
+    for (const r of byType) {
+      const [, mm] = r.month.split('-')
+      const label = monthNames[mm] ?? r.month
+      const prev = monthMap.get(label) ?? { fichiers: 0, taille: 0 }
+      monthMap.set(label, { fichiers: prev.fichiers + r.count, taille: prev.taille + Number(r.total_size) })
+    }
+    // Keep the same month order as the full timeline
+    return timelineData.map((m) => {
+      const d = monthMap.get(m.name)
+      return { name: m.name, fichiers: d?.fichiers ?? 0, taille: d?.taille ?? 0 }
+    })
+  })()
 
   const filteredFoldersByDir = foldersByDirData
     .filter((d) => !foldersDirSearch || d.name.toLowerCase().includes(foldersDirSearch.toLowerCase()))
@@ -415,6 +553,18 @@ export default function AdminPage() {
   const filteredActivity = stats.recentActivity.filter(
     (a) => activityFilter === 'all' || a.action === activityFilter
   )
+
+  // Helpers for type chip toggles
+  const toggleFileType = (t: string) => {
+    setFileTypeSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(t)) next.delete(t)
+      else next.add(t)
+      return next
+    })
+  }
+  const selectAllFileTypes = () => setFileTypeSelected(new Set(allFileTypes))
+  const clearFileTypes = () => setFileTypeSelected(new Set())
 
   return (
     <div className="flex-1 space-y-6 p-6 overflow-auto">
@@ -452,7 +602,10 @@ export default function AdminPage() {
               </button>
             ))}
             {/* Custom date range picker */}
-            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+            <Popover open={datePickerOpen} onOpenChange={(open) => {
+              if (open) setDraftDateRange(dateRange) // initialize draft with current applied range
+              setDatePickerOpen(open)
+            }}>
               <PopoverTrigger asChild>
                 <button
                   className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 ${
@@ -474,12 +627,37 @@ export default function AdminPage() {
                 </div>
                 <Calendar
                   mode="range"
-                  selected={dateRange}
+                  selected={draftDateRange}
                   onSelect={handleDateRangeSelect}
                   numberOfMonths={2}
                   disabled={{ after: new Date() }}
-                  defaultMonth={dateRange?.from ?? new Date(Date.now() - 30 * 86400000)}
+                  defaultMonth={draftDateRange?.from ?? dateRange?.from ?? new Date(Date.now() - 30 * 86400000)}
                 />
+                {/* Selected range summary + confirm/cancel */}
+                <div className="border-t p-3 flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    {draftDateRange?.from && draftDateRange?.to
+                      ? `${formatDateShort(draftDateRange.from)} — ${formatDateShort(draftDateRange.to)}`
+                      : draftDateRange?.from
+                        ? `${formatDateShort(draftDateRange.from)} — …`
+                        : 'Aucune période sélectionnée'}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleDateRangeCancel}
+                      className="rounded-md px-3 py-1.5 text-xs font-medium border text-muted-foreground hover:bg-muted transition-colors"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      onClick={handleDateRangeConfirm}
+                      disabled={!draftDateRange?.from || !draftDateRange?.to}
+                      className="rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Valider
+                    </button>
+                  </div>
+                </div>
               </PopoverContent>
             </Popover>
           </div>
@@ -521,70 +699,108 @@ export default function AdminPage() {
               <CardTitle className="text-base flex items-center gap-2">
                 <FileText className="h-4 w-4" /> Types de fichiers
               </CardTitle>
-              <ViewToggle mode={fileTypeView} onChange={setFileTypeView} />
+              <div className="flex items-center gap-1.5">
+                <SearchFilter value={fileTypeSearch} onChange={setFileTypeSearch} placeholder="Filtrer types…" />
+                <SortButton order={fileTypeSort} onToggle={() => setFileTypeSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
+                <ViewToggle mode={fileTypeView} onChange={setFileTypeView} />
+              </div>
+            </div>
+            {/* Type chips */}
+            <div className="mt-2">
+              <TypeChips
+                types={allFileTypes}
+                selected={fileTypeSelected}
+                onToggle={toggleFileType}
+                onSelectAll={selectAllFileTypes}
+                onClear={clearFileTypes}
+                colorMap={fileTypeColorMap}
+              />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={filteredFileTypeData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={2}
-                    dataKey="displayValue"
-                    nameKey="name"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}
-                    isAnimationActive={true}
-                    animationBegin={200}
-                    animationDuration={1400}
-                    animationEasing="ease-out"
-                  >
-                    {filteredFileTypeData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} className="drop-shadow-sm transition-opacity hover:opacity-80" />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null
-                      const d = payload[0].payload as { name: string; value: number; size: number; displayValue: number }
-                      return (
-                        <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
-                          <p className="font-medium">{d.name}</p>
-                          <p className="text-muted-foreground">{d.value} fichier{d.value > 1 ? 's' : ''}</p>
-                          <p className="text-muted-foreground">{formatBytes(d.size)}</p>
-                        </div>
-                      )
-                    }}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            {filteredFileTypeData.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">Aucun type sélectionné</p>
+            ) : (
+              <>
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={filteredFileTypeData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={90}
+                        paddingAngle={2}
+                        dataKey="displayValue"
+                        nameKey="name"
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={false}
+                        isAnimationActive={true}
+                        animationBegin={200}
+                        animationDuration={1400}
+                        animationEasing="ease-out"
+                      >
+                        {filteredFileTypeData.map((d) => (
+                          <Cell key={d.name} fill={fileTypeColorMap[d.name] ?? '#6b7280'} className="drop-shadow-sm transition-opacity hover:opacity-80" />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null
+                          const d = payload[0].payload as { name: string; value: number; size: number; displayValue: number }
+                          return (
+                            <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
+                              <p className="font-medium">{d.name}</p>
+                              <p className="text-muted-foreground">{d.value} fichier{d.value > 1 ? 's' : ''}</p>
+                              <p className="text-muted-foreground">{formatBytes(d.size)}</p>
+                            </div>
+                          )
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                {/* Detailed breakdown table */}
+                <div className="mt-2 divide-y text-xs max-h-[140px] overflow-auto">
+                  {filteredFileTypeData.map((d) => (
+                    <div key={d.name} className="flex items-center justify-between py-1.5 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: fileTypeColorMap[d.name] ?? '#6b7280' }} />
+                        <span className="font-medium truncate">{d.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
+                        <span>{d.value} fichier{d.value > 1 ? 's' : ''}</span>
+                        <span className="tabular-nums">{formatBytes(d.size)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
         {/* Files over time */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Fichiers uploadés {
-                period === 'custom' && dateRange?.from && dateRange?.to
-                  ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
-                  : period === 'all'
-                    ? '(12 derniers mois)'
-                    : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`
-              }
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" /> Fichiers uploadés {
+                  period === 'custom' && dateRange?.from && dateRange?.to
+                    ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
+                    : period === 'all'
+                      ? '(12 derniers mois)'
+                      : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`
+                }
+              </CardTitle>
+              <TypeFilterSelect types={allFileTypes} value={timelineTypeFilter} onChange={setTimelineTypeFilter} />
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={timelineData}>
+                <AreaChart data={filteredTimelineData}>
                   <defs>
                     <linearGradient id="gradientFichiers" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3} />
@@ -623,6 +839,7 @@ export default function AdminPage() {
                 <Building2 className="h-4 w-4" /> Fichiers par direction
               </CardTitle>
               <div className="flex items-center gap-1.5">
+                <TypeFilterSelect types={allFileTypes} value={filesDirTypeFilter} onChange={setFilesDirTypeFilter} />
                 <SearchFilter value={filesDirSearch} onChange={setFilesDirSearch} placeholder="Filtrer directions…" />
                 <SortButton order={filesDirSort} onToggle={() => setFilesDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
                 <ViewToggle mode={filesDirView} onChange={setFilesDirView} />
