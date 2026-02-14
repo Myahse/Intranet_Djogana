@@ -3087,10 +3087,12 @@ app.get('/api/files', async (req, res) => {
       id: row.id,
       name: row.name,
       size: Number(row.size) || 0,
+      mime_type: row.mime_type || '',
       folder: row.folder,
       direction_id: row.direction_id,
       url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
       view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+      created_at: row.created_at,
     }))
 
     return res.json(rows)
