@@ -443,7 +443,11 @@ async function initDb() {
   )
 }
 
-const upload = multer({ storage: multer.memoryStorage() })
+const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB max upload
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+})
 
 // ---------- Activity log (audit trail) ----------
 async function insertActivityLog(pool, opts) {
@@ -2550,7 +2554,18 @@ app.post('/api/folder-permissions', async (req, res) => {
 // ---------- Files ----------
 
 // Accepts any file type: APK, images, video, MP3, Excel, documents, etc. (no fileFilter)
-app.post('/api/files', upload.single('file'), async (req, res) => {
+app.post('/api/files', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        const maxMB = Math.round(MAX_FILE_SIZE / 1024 / 1024)
+        return res.status(413).json({ error: `Le fichier est trop volumineux. Taille maximum : ${maxMB} Mo.` })
+      }
+      return res.status(400).json({ error: err.message || 'Erreur lors du traitement du fichier.' })
+    }
+    next()
+  })
+}, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' })
@@ -2617,30 +2632,42 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
       [folderId, folder, directionId]
     )
 
-    // Upload to Cloudinary
-    const cloudinaryResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          folder: `intranet/${directionCode}/${folder}`,
-          public_id: id,
-          resource_type: 'auto',
-        },
-        (error, result) => {
-          if (error) reject(error)
-          else resolve(result)
-        }
-      )
-      stream.end(fileBuffer)
-    })
+    // Determine Cloudinary resource_type from mime
+    let resourceType = 'raw'
+    if (mimeType.startsWith('image/')) resourceType = 'image'
+    else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) resourceType = 'video'
 
-    const cloudinaryUrl = cloudinaryResult.secure_url
-    const cloudinaryPublicId = cloudinaryResult.public_id
+    // Cloudinary plan limits: image/raw = 20 MB, video = 2 GB
+    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : 20 * 1024 * 1024
+    const useCloudinary = fileBuffer.length <= cloudinaryLimit
 
+    let cloudinaryUrl = null
+    let cloudinaryPublicId = null
+
+    if (useCloudinary) {
+      // Upload to Cloudinary
+      const cloudinaryOpts = {
+        folder: `intranet/${directionCode}/${folder}`,
+        public_id: id,
+        resource_type: resourceType,
+      }
+      const cloudinaryResult = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          cloudinaryOpts,
+          (error, result) => {
+            if (error) reject(error)
+            else resolve(result)
+          }
+        ).end(fileBuffer)
+      })
+      cloudinaryUrl = cloudinaryResult.secure_url
+      cloudinaryPublicId = cloudinaryResult.public_id
+    }
+
+    // Store in DB — large files go in the `data` bytea column, small files use Cloudinary URL
     await pool.query(
-      `
-        INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      `,
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         id,
         storedFileName,
@@ -2651,10 +2678,12 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
         uploadedBy,
         cloudinaryUrl,
         cloudinaryPublicId,
+        useCloudinary ? null : fileBuffer, // store bytea only for large files
       ]
     )
 
-    const publicUrl = cloudinaryUrl
+    // The view_url always works because /files/:id serves from Cloudinary OR bytea
+    const publicUrl = cloudinaryUrl || `${BASE_URL}/files/${encodeURIComponent(id)}`
 
     await insertActivityLog(pool, {
       action: 'upload_file',
@@ -2677,8 +2706,9 @@ app.post('/api/files', upload.single('file'), async (req, res) => {
     })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('file upload error', err?.message || err, err?.code)
-    return res.status(500).json({ error: 'Erreur lors de l’upload du fichier.' })
+    console.error("file upload error", err?.message || err, err?.code, err?.stack)
+    const detail = err?.message || "Unknown error"
+    return res.status(500).json({ error: "Erreur lors de l'upload: " + detail })
   }
 })
 

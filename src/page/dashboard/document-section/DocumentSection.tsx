@@ -6,6 +6,8 @@ import wordIcon from '@/assets/svgs/Group 57.svg'
 import pptIcon from '@/assets/svgs/powerpoint-2.svg'
 import excelIcon from '@/assets/svgs/excel-4.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
+import rarIcon from '@/assets/svgs/rar-icon.svg'
+import zipIcon from '@/assets/svgs/zip-icon.svg'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
 import { FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft } from 'lucide-react'
@@ -48,6 +50,8 @@ function getFileIconSrc(fileName: string): string {
   if (ext === 'doc' || ext === 'docx') return wordIcon
   if (ext === 'ppt' || ext === 'pptx') return pptIcon
   if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return excelIcon
+  if (ext === 'rar') return rarIcon
+  if (ext === 'zip' || ext === '7z') return zipIcon
   return ''
 }
 
