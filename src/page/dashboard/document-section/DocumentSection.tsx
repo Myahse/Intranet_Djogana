@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { useConfirmDialog } from '@/components/ConfirmDialog'
 
 /** Replace internal "::" separators with " / " for display */
 function formatName(name: string): string {
@@ -380,6 +381,7 @@ const DocumentSection = () => {
   const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
   const { user, isAdmin, sendWs } = useAuth()
   const { contentFilter } = useDashboardFilter()
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
 
@@ -571,6 +573,7 @@ const DocumentSection = () => {
 
     return (
       <>
+      <ConfirmDialog />
       <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
       <ResizablePanelGroup
         orientation="horizontal"
@@ -611,12 +614,13 @@ const DocumentSection = () => {
                   variant="outline"
                   className="border-destructive text-destructive hover:bg-destructive/10"
                   onClick={async () => {
-                    if (
-                      // eslint-disable-next-line no-alert
-                      window.confirm(
-                        'Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?'
-                      )
-                    ) {
+                    const ok = await confirm({
+                      title: 'Supprimer ce dossier ?',
+                      description: 'Tous les fichiers et liens de ce dossier seront déplacés vers la corbeille.',
+                      confirmLabel: 'Supprimer',
+                      variant: 'destructive',
+                    })
+                    if (ok) {
                       setLoading({ open: true, message: 'Suppression du dossier en cours…' })
                       try {
                         await removeFolder(folderKey)

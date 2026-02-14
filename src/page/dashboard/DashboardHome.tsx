@@ -296,25 +296,35 @@ const DashboardHome = (): ReactNode => {
   }
 
   const handleDeleteRole = async (role: { id: string; name: string }) => {
-    if (
-      !window.confirm(
-        `Supprimer le rôle "${role.name}" ? Les utilisateurs utilisant ce rôle doivent être réassignés au préalable.`
-      )
-    ) {
+    const usersWithRole = users.filter((u) => u.role === role.name)
+    const count = usersWithRole.length
+
+    const confirmMsg = count > 0
+      ? `Supprimer le rôle "${role.name}" ?\n\n${count} utilisateur(s) utilisent ce rôle et seront supprimés et déconnectés immédiatement :\n${usersWithRole.map((u) => `  • ${u.identifiant}`).join('\n')}\n\nCette action est irréversible.`
+      : `Supprimer le rôle "${role.name}" ? Cette action est irréversible.`
+
+    if (!globalThis.confirm?.(confirmMsg)) {
       return
     }
-    setLoading({ open: true, message: `Suppression du rôle "${role.name}"…` })
+    setLoading({ open: true, message: `Suppression du rôle "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
     try {
-      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}`, {
+      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data?.error ?? 'Échec de la suppression')
       }
+      const data = await res.json().catch(() => ({}))
       setRoles((prev) => prev.filter((r) => r.id !== role.id))
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Rôle supprimé' }))
-      toast.success('Rôle supprimé')
+      if (data.deletedUsers > 0) {
+        setUsers((prev) => prev.filter((u) => u.role !== role.name))
+      }
+      const msg = data.deletedUsers > 0
+        ? `Rôle supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+        : 'Rôle supprimé'
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
+      toast.success(msg)
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur lors de la suppression' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
@@ -390,9 +400,7 @@ const DashboardHome = (): ReactNode => {
 
   const handleDeleteDirection = async (dir: { id: string; name: string }) => {
     if (
-      !window.confirm(
-        `Supprimer la direction "${dir.name}" ? Les utilisateurs et dossiers rattachés peuvent être affectés.`
-      )
+      !globalThis.confirm?.(`Supprimer la direction "${dir.name}" ? Les utilisateurs et dossiers rattachés peuvent être affectés.`)
     ) {
       return
     }
@@ -457,9 +465,7 @@ const DashboardHome = (): ReactNode => {
 
   const handleDeleteUser = async (targetUser: { id: string; identifiant: string }) => {
     if (
-      !window.confirm(
-        `Supprimer l'utilisateur "${targetUser.identifiant}" ? Cette action est irréversible.`
-      )
+      !globalThis.confirm?.(`Supprimer l'utilisateur "${targetUser.identifiant}" ? Cette action est irréversible.`)
     ) {
       return
     }

@@ -478,10 +478,7 @@ const DocumentSection = () => {
                   className="border-destructive text-destructive hover:bg-destructive/10"
                   onClick={async () => {
                     if (
-                      // eslint-disable-next-line no-alert
-                      window.confirm(
-                        'Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?'
-                      )
+                      globalThis.confirm?.('Êtes-vous sûr de vouloir supprimer tous les fichiers de ce dossier ?')
                     ) {
                       setLoading({ open: true, message: 'Suppression du dossier en cours…' })
                       try {

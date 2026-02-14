@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
-import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, Trash, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
@@ -29,6 +29,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
+import { useConfirmDialog } from '@/components/ConfirmDialog'
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
@@ -62,6 +63,7 @@ function DashboardLayout() {
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
   const { isAdmin, isDirectionChief, user, logout, sendWs } = useAuth()
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const canViewStats = isAdmin || user?.permissions?.can_view_stats
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
@@ -217,6 +219,7 @@ function DashboardLayout() {
 
   return (
     <>
+      <ConfirmDialog />
       <div className="dashboard-with-top-nav flex flex-1 flex-col min-h-0 w-full">
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 w-full">
           <div className="flex items-center gap-3 min-w-0">
@@ -233,10 +236,14 @@ function DashboardLayout() {
             </Link>
           </div>
           <button
-            onClick={() => {
-              if (window.confirm('Voulez-vous vraiment vous déconnecter ?')) {
-                logout()
-              }
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Déconnexion',
+                description: 'Voulez-vous vraiment vous déconnecter ?',
+                confirmLabel: 'Se déconnecter',
+                variant: 'default',
+              })
+              if (ok) logout()
             }}
             className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground shrink-0"
           >
@@ -518,6 +525,17 @@ function DashboardLayout() {
                 </div>
               )}
               <SidebarMenu>
+                {isAdmin && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={location.pathname === '/dashboard/corbeille'}
+                      onClick={() => navigate('/dashboard/corbeille')}
+                    >
+                      <Trash className="size-4" />
+                      <span>Corbeille</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     onClick={() => setProfileOpen(true)}
