@@ -144,16 +144,16 @@ function StatCard({ icon: Icon, label, value, sub, color = 'text-primary', delay
       className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <CardContent className="flex items-center gap-4 p-5">
-        <div className={`rounded-xl bg-muted p-3 ${color} transition-transform hover:scale-110`}>
-          <Icon className="h-6 w-6" />
+      <CardContent className="flex items-center gap-3 sm:gap-4 p-3 sm:p-5">
+        <div className={`rounded-xl bg-muted p-2 sm:p-3 ${color} transition-transform hover:scale-110`}>
+          <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted-foreground truncate">{label}</p>
-          <p className="text-2xl font-bold tracking-tight">
+          <p className="text-xs sm:text-sm text-muted-foreground truncate">{label}</p>
+          <p className="text-lg sm:text-2xl font-bold tracking-tight truncate">
             {isNumeric ? <AnimatedNumber value={value} /> : value}
           </p>
-          {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+          {sub && <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5 truncate">{sub}</p>}
         </div>
       </CardContent>
     </Card>
@@ -193,7 +193,7 @@ function SearchFilter({ value, onChange, placeholder = 'Rechercher…' }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-7 w-36 rounded-md border bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        className="h-7 w-24 sm:w-36 rounded-md border bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
       />
       {value && (
         <button
@@ -622,32 +622,46 @@ export default function AdminPage() {
   const clearFileTypes = () => setFileTypeSelected(new Set())
 
   return (
-    <div className="flex-1 space-y-6 p-6 overflow-auto">
+    <div className="flex-1 space-y-4 sm:space-y-6 p-3 sm:p-6 overflow-auto">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Tableau de bord
-            {stats.scopedDirection && (
-              <span className="text-muted-foreground font-normal text-lg"> &mdash; {stats.scopedDirection}</span>
-            )}
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            {stats.scopedDirection
-              ? `Statistiques de votre direction — connecté en tant que `
-              : `Vue d'ensemble de l'intranet — connecté en tant que `}
-            <span className="font-semibold">{user?.identifiant}</span>
-          </p>
+      <div className="flex flex-col gap-3 sm:gap-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate">
+              Tableau de bord
+              {stats.scopedDirection && (
+                <span className="text-muted-foreground font-normal text-base sm:text-lg"> &mdash; {stats.scopedDirection}</span>
+              )}
+            </h1>
+            <p className="text-muted-foreground text-xs sm:text-sm truncate">
+              {stats.scopedDirection
+                ? `Statistiques de votre direction — connecté en tant que `
+                : `Vue d'ensemble de l'intranet — connecté en tant que `}
+              <span className="font-semibold">{user?.identifiant}</span>
+            </p>
+          </div>
+          <button
+            onClick={() => { fetchStats(period) }}
+            disabled={cooldown > 0}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors shrink-0 self-start sm:self-auto ${
+              cooldown > 0
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-muted'
+            }`}
+          >
+            <RefreshCw className={`h-4 w-4 ${cooldown > 0 ? 'animate-spin' : ''}`} />
+            {cooldown > 0 ? `${cooldown}s` : 'Actualiser'}
+          </button>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Period filter */}
-          <div className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-1 py-1">
-            <CalendarDays className="h-4 w-4 text-muted-foreground ml-2" />
+        {/* Period filter - horizontally scrollable on mobile */}
+        <div className="-mx-3 sm:mx-0 px-3 sm:px-0 overflow-x-auto scrollbar-none">
+          <div className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-1 py-1 min-w-max">
+            <CalendarDays className="h-4 w-4 text-muted-foreground ml-2 shrink-0" />
             {PERIODS.map((p) => (
               <button
                 key={p.value}
                 onClick={() => handlePeriodChange(p.value)}
-                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                className={`rounded-md px-2 sm:px-2.5 py-1.5 text-[11px] sm:text-xs font-medium transition-colors whitespace-nowrap ${
                   period === p.value
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -663,13 +677,13 @@ export default function AdminPage() {
             }}>
               <PopoverTrigger asChild>
                 <button
-                  className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors inline-flex items-center gap-1.5 ${
+                  className={`rounded-md px-2 sm:px-2.5 py-1.5 text-[11px] sm:text-xs font-medium transition-colors inline-flex items-center gap-1.5 whitespace-nowrap ${
                     period === 'custom'
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}
                 >
-                  <CalendarRange className="h-3.5 w-3.5" />
+                  <CalendarRange className="h-3.5 w-3.5 shrink-0" />
                   {period === 'custom' && dateRange?.from && dateRange?.to
                     ? `${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)}`
                     : 'Personnalisé'}
@@ -716,18 +730,6 @@ export default function AdminPage() {
               </PopoverContent>
             </Popover>
           </div>
-          <button
-            onClick={() => { fetchStats(period) }}
-            disabled={cooldown > 0}
-            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-              cooldown > 0
-                ? 'opacity-50 cursor-not-allowed'
-                : 'hover:bg-muted'
-            }`}
-          >
-            <RefreshCw className={`h-4 w-4 ${cooldown > 0 ? 'animate-spin' : ''}`} />
-            {cooldown > 0 ? `${cooldown}s` : 'Actualiser'}
-          </button>
         </div>
       </div>
 
@@ -739,7 +741,7 @@ export default function AdminPage() {
             ? PERIODS.find(p => p.value === period)?.label
             : undefined
         return (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-6">
             <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" delay={0} />
             <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" delay={60} />
             <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" delay={120} />
@@ -751,15 +753,15 @@ export default function AdminPage() {
       })()}
 
       {/* ── Row 1: File types pie + Files over time ── */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
         {/* File types donut */}
         <Card>
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-base flex items-center gap-2">
-                <FileText className="h-4 w-4" /> Types de fichiers
+                <FileText className="h-4 w-4 shrink-0" /> Types de fichiers
               </CardTitle>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <SearchFilter value={fileTypeSearch} onChange={setFileTypeSearch} placeholder="Filtrer types…" />
                 <SortButton order={fileTypeSort} onToggle={() => setFileTypeSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
                 <ViewToggle mode={fileTypeView} onChange={setFileTypeView} />
@@ -844,21 +846,24 @@ export default function AdminPage() {
         {/* Files over time */}
         <Card>
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <CardTitle className="text-base flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" /> Fichiers uploadés {
-                  period === 'custom' && dateRange?.from && dateRange?.to
-                    ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
-                    : period === 'all'
-                      ? '(12 derniers mois)'
-                      : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`
-                }
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <TrendingUp className="h-4 w-4 shrink-0" />
+                <span className="truncate">
+                  Fichiers uploadés {
+                    period === 'custom' && dateRange?.from && dateRange?.to
+                      ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
+                      : period === 'all'
+                        ? '(12 derniers mois)'
+                        : `(${PERIODS.find(p => p.value === period)?.label ?? ''})`
+                  }
+                </span>
               </CardTitle>
               <TypeFilterSelect types={allFileTypes} value={timelineTypeFilter} onChange={setTimelineTypeFilter} />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[280px]">
+            <div className="h-[220px] sm:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={filteredTimelineData}>
                   <defs>
@@ -891,16 +896,16 @@ export default function AdminPage() {
       </div>
 
       {/* ── Row 2: Files by direction + Folders by direction ── */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-base flex items-center gap-2">
-                <Building2 className="h-4 w-4" /> Fichiers par direction
+                <Building2 className="h-4 w-4 shrink-0" /> Fichiers par direction
               </CardTitle>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <TypeFilterSelect types={allFileTypes} value={filesDirTypeFilter} onChange={setFilesDirTypeFilter} />
-                <SearchFilter value={filesDirSearch} onChange={setFilesDirSearch} placeholder="Filtrer directions…" />
+                <SearchFilter value={filesDirSearch} onChange={setFilesDirSearch} placeholder="Filtrer…" />
                 <SortButton order={filesDirSort} onToggle={() => setFilesDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
                 <ViewToggle mode={filesDirView} onChange={setFilesDirView} />
               </div>
@@ -910,12 +915,12 @@ export default function AdminPage() {
             {filteredFilesByDir.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-10">Aucun résultat</p>
             ) : (
-              <div className="h-[280px]">
+              <div className="h-[280px] -ml-2 sm:ml-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={filteredFilesByDir} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={80} />
                     <Tooltip
                       content={({ active, payload }) => {
                         if (!active || !payload?.length) return null
@@ -944,12 +949,12 @@ export default function AdminPage() {
 
         <Card>
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-base flex items-center gap-2">
-                <FolderOpen className="h-4 w-4" /> Dossiers par direction
+                <FolderOpen className="h-4 w-4 shrink-0" /> Dossiers par direction
               </CardTitle>
               <div className="flex items-center gap-1.5">
-                <SearchFilter value={foldersDirSearch} onChange={setFoldersDirSearch} placeholder="Filtrer directions…" />
+                <SearchFilter value={foldersDirSearch} onChange={setFoldersDirSearch} placeholder="Filtrer…" />
                 <SortButton order={foldersDirSort} onToggle={() => setFoldersDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
               </div>
             </div>
@@ -958,12 +963,12 @@ export default function AdminPage() {
             {filteredFoldersByDir.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-10">Aucun résultat</p>
             ) : (
-              <div className="h-[280px]">
+              <div className="h-[280px] -ml-2 sm:ml-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={filteredFoldersByDir} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={120} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={80} />
                     <Tooltip content={<CustomTooltip />} />
                     <Bar dataKey="dossiers" name="Dossiers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
                   </BarChart>
@@ -975,16 +980,16 @@ export default function AdminPage() {
       </div>
 
       {/* ── Row 3: Users by direction + Top uploaders + Roles ── */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* Users by direction */}
         <Card>
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-base flex items-center gap-2">
-                <Users className="h-4 w-4" /> Utilisateurs par direction
+                <Users className="h-4 w-4 shrink-0" /> Utilisateurs par direction
               </CardTitle>
               <div className="flex items-center gap-1.5">
-                <SearchFilter value={usersDirSearch} onChange={setUsersDirSearch} placeholder="Filtrer directions…" />
+                <SearchFilter value={usersDirSearch} onChange={setUsersDirSearch} placeholder="Filtrer…" />
                 <SortButton order={usersDirSort} onToggle={() => setUsersDirSort((s) => (s === 'desc' ? 'asc' : 'desc'))} />
               </div>
             </div>
@@ -1087,9 +1092,9 @@ export default function AdminPage() {
       {/* ── Row 4: Recent activity ── */}
       <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base flex items-center gap-2">
-              <Activity className="h-4 w-4" /> Activité récente
+              <Activity className="h-4 w-4 shrink-0" /> Activité récente
             </CardTitle>
             <InlineSelect
               value={activityFilter}
