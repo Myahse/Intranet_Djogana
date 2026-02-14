@@ -814,10 +814,11 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       q('SELECT COALESCE(SUM(size),0)::bigint AS total FROM files __WHERE__'),
       // ── Links (date + direction filtered) ──
       q('SELECT COUNT(*)::int AS count FROM links __WHERE__'),
-      // ── Activity (date + direction filtered, admin actors hidden) ──
+      // ── Activity (date + direction filtered) ──
+      // Admin viewers see all activity; non-admin viewers don't see admin actions
       q(`SELECT action, actor_identifiant, entity_type, details, created_at
-         FROM activity_log __WHERE__ ORDER BY created_at DESC LIMIT 10`,
-        { extraWhere: ["(actor_identifiant IS NULL OR actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
+         FROM activity_log __WHERE__ ORDER BY created_at DESC LIMIT 20`,
+        isAdmin ? {} : { extraWhere: ["(actor_identifiant IS NULL OR actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
       // ── Top uploaders (date + direction filtered, admin hidden) ──
       q(`SELECT u.identifiant, COUNT(f.id)::int AS uploads
          FROM files f JOIN users u ON f.uploaded_by = u.id __WHERE__
@@ -1817,7 +1818,7 @@ app.get('/api/auth/device/requests/history', requireAuth, async (req, res) => {
       `SELECT id, code, status, created_at, expires_at
        FROM login_requests
        WHERE user_identifiant = $1
-         AND (status IN ('approved', 'denied', 'detruite') OR (status = 'pending' AND expires_at <= now()))
+         AND (status IN ('approved', 'denied', 'detruite', 'consumed') OR (status = 'pending' AND expires_at <= now()))
        ORDER BY created_at DESC
        LIMIT 50`,
       [identifiant]
@@ -1826,7 +1827,9 @@ app.get('/api/auth/device/requests/history', requireAuth, async (req, res) => {
       result.rows.map((r) => ({
         id: r.id,
         code: r.code,
-        status: r.status === 'pending' ? 'expired' : r.status,
+        // 'consumed' means it was approved and used — show as 'approved' in history
+        // 'pending' past expiry means it expired
+        status: r.status === 'pending' ? 'expired' : r.status === 'consumed' ? 'approved' : r.status,
         createdAt: r.created_at,
         expiresAt: r.expires_at,
       }))

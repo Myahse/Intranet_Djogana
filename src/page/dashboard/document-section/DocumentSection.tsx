@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
 import wordIcon from '@/assets/svgs/Group 57.svg'
@@ -365,10 +365,13 @@ function LinkCard({
 const DocumentSection = () => {
   const location = useLocation()
   const pathname = location.pathname
+  const params = useParams<{ directionId?: string }>()
   const segments = pathname.split('/').filter(Boolean)
   const lastSegment = segments[segments.length - 1] ?? ''
+  const isDirectionRoute = pathname.startsWith('/dashboard/direction/')
+  const directionId = params.directionId ?? null
   const isRoot = pathname === '/dashboard/documents'
-  const folderKey = !isRoot ? decodeURIComponent(lastSegment) : null
+  const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
   const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
   const { user, isAdmin } = useAuth()
@@ -394,7 +397,134 @@ const DocumentSection = () => {
 
   useEffect(() => {
     setSelectedFile(null)
-  }, [folderKey])
+  }, [folderKey, directionId])
+
+  // ── Fetch direction name when on direction route ──
+  const [directionName, setDirectionName] = useState<string>('')
+  const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
+      ? import.meta.env.VITE_API_BASE_URL
+      : import.meta.env.DEV
+        ? ''
+        : 'http://localhost:3000'
+
+  const loadDirectionName = useCallback(async () => {
+    if (!directionId) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/directions`)
+      if (!res.ok) return
+      const dirs = (await res.json()) as Array<{ id: string; name: string }>
+      const found = dirs.find((d) => d.id === directionId)
+      setDirectionName(found?.name ?? '')
+    } catch { /* silent */ }
+  }, [directionId, API_BASE_URL])
+
+  useEffect(() => {
+    loadDirectionName()
+  }, [loadDirectionName])
+
+  // ── Direction-level view: show all folders belonging to a direction ──
+  if (isDirectionRoute && directionId) {
+    const dirFolders = folderOptions.filter((f) => f.direction_id === directionId)
+
+    // Build folder-has-files map
+    const dirFolderHasFiles: Record<string, boolean> = {}
+    dirFolders.forEach((folder) => {
+      dirFolderHasFiles[folder.value] = getFiles(folder.value).length > 0
+    })
+
+    // Group folders: "Module 1::Cours" → group "Module 1", subfolder "Cours"
+    const dirGroups: Record<string, { name: string; subfolders: string[] }> = {}
+    dirFolders.forEach((folder) => {
+      const { name } = parseFolderKey(folder.value)
+      const [group, ...subParts] = name.split('::')
+      const sub = subParts.join('::')
+      if (sub) {
+        if (!dirGroups[group]) {
+          dirGroups[group] = { name: group, subfolders: [] }
+        }
+        dirGroups[group].subfolders.push(folder.value)
+      }
+    })
+
+    // Root folders for this direction (not part of any group)
+    const dirRootFolders = dirFolders.filter((folder) => {
+      const { name } = parseFolderKey(folder.value)
+      return !name.includes('::') && !dirGroups[name]
+    })
+
+    const dirGroupNames = Object.keys(dirGroups)
+
+    // Use fetched direction name, or fallback from folder data
+    const displayName = directionName || (() => {
+      const firstWithName = dirFolders.find((f) => f.direction_name)
+      if (firstWithName?.direction_name) return firstWithName.direction_name
+      return 'Direction'
+    })()
+
+    return (
+      <div className="p-6">
+        <div className="mb-8 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard/documents')}
+            className="inline-flex items-center justify-center size-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
+            aria-label="Retour"
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <h1 className="text-2xl font-semibold">{displayName}</h1>
+        </div>
+        {dirRootFolders.length > 0 || dirGroupNames.length > 0 ? (
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {dirRootFolders.map((folder) => (
+              <Link
+                key={folder.value}
+                to={`/dashboard/documents/${encodeURIComponent(folder.value)}`}
+                className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
+              >
+                <img
+                  src={dirFolderHasFiles[folder.value] ? folderFilledSvg : folderSvg}
+                  alt=""
+                  className="h-24 w-auto max-w-full sm:h-28"
+                />
+                <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={folder.label}>
+                  {folder.label}
+                </span>
+              </Link>
+            ))}
+            {dirGroupNames.map((groupName) => {
+              const subfolders = dirGroups[groupName]?.subfolders ?? []
+              const hasAnyFile = subfolders.some((value) => dirFolderHasFiles[value])
+              const firstSub = subfolders[0]
+              const { direction_id: gDirId } = parseFolderKey(firstSub || '')
+              const groupKey = gDirId ? `${gDirId}::${groupName}` : groupName
+              return (
+                <Link
+                  key={groupName}
+                  to={`/dashboard/documents/${encodeURIComponent(groupKey)}`}
+                  className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
+                >
+                  <img
+                    src={hasAnyFile ? folderFilledSvg : folderSvg}
+                    alt=""
+                    className="h-24 w-auto max-w-full sm:h-28"
+                  />
+                  <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={groupName}>
+                    {groupName}
+                  </span>
+                </Link>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="text-muted-foreground">
+            Aucun dossier dans cette direction pour le moment.
+          </p>
+        )}
+      </div>
+    )
+  }
 
   // ── Navigation detection ──
   // folderKey can be:
