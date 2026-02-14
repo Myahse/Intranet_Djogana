@@ -128,7 +128,7 @@ type FolderEntry = { key: string; label: string; hasFiles?: boolean }
 
 function sortFolders(
   folders: FolderEntry[],
-  sortField: SortField,
+  _sortField: SortField,
   sortDir: SortDirection,
 ): FolderEntry[] {
   const sorted = [...folders]
