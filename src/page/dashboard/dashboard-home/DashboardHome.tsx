@@ -769,14 +769,14 @@ const DashboardHome = (): ReactNode => {
     }
 
     return (
-      <div className="max-h-64 overflow-y-auto border rounded-md">
-        <table className="w-full text-sm">
-          <thead className="bg-muted">
+      <div className="max-h-64 overflow-auto border rounded-md">
+        <table className="w-full text-sm min-w-[520px]">
+          <thead className="bg-muted sticky top-0">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
               <th className="px-3 py-2 text-left font-medium">Rôle</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
-              {isAdmin && <th className="px-3 py-2 text-center font-medium">Chef</th>}
+              {isAdmin && <th className="px-3 py-2 text-center font-medium whitespace-nowrap">Chef de direction</th>}
               <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
             </tr>
           </thead>
