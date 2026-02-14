@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2, Pencil, Check, X } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -100,6 +100,11 @@ const DashboardHome = (): ReactNode => {
   const [activityLogLoading, setActivityLogLoading] = useState(false)
   const [activityLogDirectionId, setActivityLogDirectionId] = useState<string>('')
   const [activityLogAction, setActivityLogAction] = useState<string>('')
+
+  // ── Online users (admin only — silent tracking) ──
+  const [onlineUsers, setOnlineUsers] = useState<
+    Array<{ identifiant: string; role: string; connectedAt: string | null }>
+  >([])
 
   // ── Load users, roles, directions ──
   const loadUsersRolesDirections = useCallback(async () => {
@@ -229,6 +234,37 @@ const DashboardHome = (): ReactNode => {
       window.removeEventListener('ws:data_changed', onAnyChange)
     }
   }, [loadUsersRolesDirections, loadActivityLog])
+
+  // ── Online users: initial fetch + real-time WebSocket updates (admin only) ──
+  useEffect(() => {
+    if (!isAdmin) return
+
+    const fetchOnlineUsers = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/online-users`, {
+          headers: getAuthHeaders(),
+        })
+        if (res.ok) {
+          setOnlineUsers(await res.json())
+        }
+      } catch {
+        // silently ignore
+      }
+    }
+
+    fetchOnlineUsers()
+
+    const onOnlineUsersUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { users: Array<{ identifiant: string; role: string; connectedAt: string | null }> }
+      if (detail?.users) {
+        setOnlineUsers(detail.users)
+      }
+    }
+    window.addEventListener('ws:online_users', onOnlineUsersUpdate)
+    return () => {
+      window.removeEventListener('ws:online_users', onOnlineUsersUpdate)
+    }
+  }, [isAdmin, getAuthHeaders])
 
   // ── Handlers ──
 
@@ -928,6 +964,64 @@ const DashboardHome = (): ReactNode => {
   return (
     <div className="p-6 space-y-8">
       <h1 className="text-2xl font-semibold">Tableau de bord</h1>
+
+      {/* ── Online users (admin only — silent tracking) ── */}
+      {isAdmin && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Circle className="size-3 fill-emerald-500 text-emerald-500 animate-pulse" />
+            <h2 className="text-lg font-semibold">Utilisateurs en ligne</h2>
+            <span className="text-sm text-muted-foreground">
+              ({onlineUsers.length})
+            </span>
+          </div>
+
+          {onlineUsers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Aucun utilisateur en ligne pour le moment.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {onlineUsers.map((ou) => {
+                const directionUser = users.find((u) => u.identifiant === ou.identifiant)
+                return (
+                  <Card key={ou.identifiant} className="relative overflow-hidden">
+                    {/* green top bar */}
+                    <div className="absolute inset-x-0 top-0 h-1 bg-emerald-500" />
+                    <CardContent className="flex items-start gap-3 p-4 pt-5">
+                      {/* avatar circle */}
+                      <div className="relative shrink-0">
+                        <div className="flex size-10 items-center justify-center rounded-full bg-muted">
+                          <User className="size-5 text-muted-foreground" />
+                        </div>
+                        {/* green dot */}
+                        <span className="absolute -bottom-0.5 -right-0.5 flex size-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full size-3 bg-emerald-500 ring-2 ring-background" />
+                        </span>
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-sm leading-tight">
+                          {ou.identifiant}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs capitalize text-muted-foreground">
+                          {ou.role}
+                        </p>
+                        {directionUser?.direction_name && (
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {directionUser.direction_name}
+                          </p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Directions ── */}
       {(canCreateDirection || canDeleteDirection) && (
