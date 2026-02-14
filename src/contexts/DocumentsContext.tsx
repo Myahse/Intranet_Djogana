@@ -437,8 +437,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           },
         ]
       })
+      sendWs({ type: 'action', action: 'create_folder', detail: name })
     },
-    [items, user?.identifiant]
+    [items, user?.identifiant, sendWs]
   )
 
   const addFolderMeta = useCallback(
