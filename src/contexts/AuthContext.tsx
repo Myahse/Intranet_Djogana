@@ -80,6 +80,7 @@ type AuthContextValue = {
   approveDeviceRequest: (requestId: string) => Promise<boolean>
   denyDeviceRequest: (requestId: string) => Promise<boolean>
   getAuthHeaders: () => HeadersInit
+  sendWs: (data: Record<string, unknown>) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -155,6 +156,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       sessionStorage.removeItem(AUTH_STORAGE_KEY)
     }
+  }, [])
+
+  // WebSocket ref for sending messages (presence/actions) from anywhere
+  const wsRef = useRef<WebSocket | null>(null)
+  const sendWs = useCallback((data: Record<string, unknown>) => {
+    try {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify(data))
+      }
+    } catch { /* ignore */ }
   }, [])
 
   const login = useCallback(
@@ -550,6 +561,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ws.onopen = () => {
         reconnectDelay = 1000 // reset backoff on successful connection
         console.log('[ws] connected')
+        wsRef.current = ws
       }
 
       ws.onmessage = (event) => {
@@ -575,6 +587,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             )
           }
 
+          // Live surveillance events (admin only)
+          if (data.type === 'live_presence') {
+            window.dispatchEvent(
+              new CustomEvent('ws:live_presence', { detail: { users: data.users } })
+            )
+          }
+          if (data.type === 'live_action') {
+            window.dispatchEvent(
+              new CustomEvent('ws:live_action', { detail: data })
+            )
+          }
+
           // Generic data-change events → re-dispatch as DOM CustomEvents
           // so every page/context can subscribe independently.
           if (data.type === 'data_changed' && data.resource) {
@@ -595,6 +619,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ws.onclose = () => {
         console.log('[ws] disconnected')
         ws = null
+        wsRef.current = null
         scheduleReconnect()
       }
 
@@ -646,6 +671,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       approveDeviceRequest,
       denyDeviceRequest,
       getAuthHeaders,
+      sendWs,
     }),
     [
       user,
@@ -661,6 +687,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       approveDeviceRequest,
       denyDeviceRequest,
       getAuthHeaders,
+      sendWs,
     ]
   )
 
