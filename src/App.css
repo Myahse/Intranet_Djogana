@@ -122,6 +122,15 @@
   }
 }
 
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Sidebar starts below the top navbar on dashboard */
 .dashboard-with-top-nav [data-slot="sidebar-container"] {
   top: 3.5rem;

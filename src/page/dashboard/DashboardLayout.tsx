@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { BarChart3, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
@@ -68,55 +68,87 @@ function DashboardLayout() {
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
 
-  // Group folders by "group::subfolder" convention. folder.value is "direction_id::name"; only split the name part.
-  const groupedFolders: Record<
-    string,
-    { groupLabel: string; subfolders: { value: string; label: string }[] }
-  > = {}
+  // ── Organise folders by direction, then by group::subfolder within each direction ──
+  const [openDirections, setOpenDirections] = useState<Record<string, boolean>>({})
 
-  // First pass: identify all groups
-  folderOptions.forEach((folder) => {
-    const { name } = parseFolderKey(folder.value)
-    const [group, ...subParts] = name.split('::')
-    const sub = subParts.join('::')
-    if (!sub) return
+  type DirectionEntry = {
+    directionId: string
+    directionName: string
+    rootFolders: { value: string; label: string }[]
+    groupedFolders: Record<string, { groupLabel: string; subfolders: { value: string; label: string }[] }>
+  }
 
-    if (!groupedFolders[group]) {
-      groupedFolders[group] = { groupLabel: group, subfolders: [] }
+  const directionMap = useMemo(() => {
+    const map: Record<string, DirectionEntry> = {}
+
+    folderOptions.forEach((folder) => {
+      const dirId = folder.direction_id ?? 'unknown'
+      const dirName = folder.direction_name || dirId
+
+      if (!map[dirId]) {
+        map[dirId] = { directionId: dirId, directionName: dirName, rootFolders: [], groupedFolders: {} }
+      }
+
+      const { name } = parseFolderKey(folder.value)
+      const [group, ...subParts] = name.split('::')
+      const sub = subParts.join('::')
+
+      if (sub) {
+        // It's a grouped subfolder
+        if (!map[dirId].groupedFolders[group]) {
+          map[dirId].groupedFolders[group] = { groupLabel: group, subfolders: [] }
+        }
+        map[dirId].groupedFolders[group].subfolders.push({ value: folder.value, label: sub })
+      } else {
+        // It's a root folder – but exclude if its name is also a group prefix
+        map[dirId].rootFolders.push({ value: folder.value, label: folder.label })
+      }
+    })
+
+    // Remove root folders whose name is also a group key (they act as group prefixes)
+    for (const entry of Object.values(map)) {
+      entry.rootFolders = entry.rootFolders.filter(
+        (f) => !entry.groupedFolders[f.label]
+      )
     }
 
-    groupedFolders[group].subfolders.push({
-      value: folder.value,
-      label: sub,
-    })
-  })
+    return map
+  }, [folderOptions])
 
-  // Root folders: exclude those whose name is also a group prefix (they have subfolders)
-  const rootFolders = folderOptions.filter((folder) => {
-    const { name } = parseFolderKey(folder.value)
-    return !name.includes('::') && !groupedFolders[name]
-  })
+  // Sort directions alphabetically
+  const sortedDirections = useMemo(
+    () => Object.values(directionMap).sort((a, b) => a.directionName.localeCompare(b.directionName)),
+    [directionMap]
+  )
 
   const searchLower = sidebarSearch.trim().toLowerCase()
-  const filteredRootFolders = useMemo(
-    () =>
-      searchLower
-        ? rootFolders.filter((f) => f.label.toLowerCase().includes(searchLower))
-        : rootFolders,
-    [rootFolders, searchLower]
-  )
-  const filteredGroupedFolders = useMemo(() => {
-    if (!searchLower) return groupedFolders
-    const out: Record<string, { groupLabel: string; subfolders: { value: string; label: string }[] }> = {}
-    for (const [key, group] of Object.entries(groupedFolders)) {
-      const matchGroup = group.groupLabel.toLowerCase().includes(searchLower)
-      const subfolders = group.subfolders.filter(
-        (s) => matchGroup || s.label.toLowerCase().includes(searchLower)
-      )
-      if (subfolders.length > 0) out[key] = { groupLabel: group.groupLabel, subfolders }
-    }
-    return out
-  }, [groupedFolders, searchLower])
+
+  // Filter directions and their contents by search
+  const filteredDirections = useMemo(() => {
+    return sortedDirections
+      .map((dir) => {
+        const matchDir = dir.directionName.toLowerCase().includes(searchLower)
+
+        const rootFolders = dir.rootFolders.filter(
+          (f) => matchDir || f.label.toLowerCase().includes(searchLower)
+        )
+
+        const groupedFolders: Record<string, { groupLabel: string; subfolders: { value: string; label: string }[] }> = {}
+        for (const [key, group] of Object.entries(dir.groupedFolders)) {
+          const matchGroup = matchDir || group.groupLabel.toLowerCase().includes(searchLower)
+          const subfolders = group.subfolders.filter(
+            (s) => matchGroup || s.label.toLowerCase().includes(searchLower)
+          )
+          if (subfolders.length > 0) groupedFolders[key] = { groupLabel: group.groupLabel, subfolders }
+        }
+
+        const hasContent = rootFolders.length > 0 || Object.keys(groupedFolders).length > 0
+        if (!hasContent) return null
+
+        return { ...dir, rootFolders, groupedFolders }
+      })
+      .filter(Boolean) as DirectionEntry[]
+  }, [sortedDirections, searchLower])
 
   return (
     <>
@@ -215,150 +247,181 @@ function DashboardLayout() {
                     <SidebarMenuItem>
                       <SidebarMenuButton asChild isActive={isDocumentsRoot}>
                         <Link to="/dashboard/documents">
+                          <FolderOpen className="size-4" />
                           <span>Tous les dossiers</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    {filteredRootFolders.map((folder) => {
-                      const rootFiles = getFiles(folder.value)
-                      const rootLinks = getLinks(folder.value)
-                      const rootHasContent = rootFiles.length > 0 || rootLinks.length > 0
-                      const rootIsExpanded = openFolders[folder.value] ?? isFolderActive(folder.value)
-
-                      return (
-                        <SidebarMenuItem key={folder.value}>
-                          <SidebarMenuButton
-                            isActive={isFolderActive(folder.value)}
-                            onClick={() => {
-                              if (rootHasContent) setOpenFolders((prev) => ({ ...prev, [folder.value]: !rootIsExpanded }))
-                              navigate(`/dashboard/documents/${encodeURIComponent(folder.value)}`)
-                            }}
-                          >
-                            {rootHasContent ? (
-                              rootIsExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />
-                            ) : null}
-                            <span>{folder.label}</span>
-                          </SidebarMenuButton>
-                          {rootIsExpanded && rootHasContent && (
-                            <SidebarMenuSub>
-                              {rootFiles.map((file) => (
-                                <SidebarMenuSubItem key={file.id}>
-                                  <SidebarMenuSubButton asChild size="sm">
-                                    <a href={file.url} target="_blank" rel="noopener noreferrer" title={file.name}>
-                                      <FileText className="size-3.5" />
-                                      <span className="truncate">{file.name}</span>
-                                    </a>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              ))}
-                              {rootLinks.map((link) => (
-                                <SidebarMenuSubItem key={link.id}>
-                                  <SidebarMenuSubButton asChild size="sm">
-                                    <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.label}>
-                                      <Link2 className="size-3.5" />
-                                      <span className="truncate">{link.label}</span>
-                                    </a>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              ))}
-                            </SidebarMenuSub>
-                          )}
-                        </SidebarMenuItem>
-                      )
-                    })}
-                    {Object.entries(filteredGroupedFolders).map(([groupKey, group]) => {
-                      const groupHasActive = group.subfolders.some((sf) =>
-                        isFolderActive(sf.value)
-                      )
-                      const isGroupActive = location.pathname === `/dashboard/documents/${encodeURIComponent(groupKey)}`
-                      const isOpen = openGroups[groupKey] ?? groupHasActive
-
-                      return (
-                        <SidebarMenuItem key={groupKey}>
-                          <SidebarMenuButton
-                            isActive={isGroupActive || groupHasActive}
-                            onClick={() => {
-                              setOpenGroups((prev) => ({
-                                ...prev,
-                                [groupKey]: !isOpen,
-                              }))
-                              navigate(`/dashboard/documents/${encodeURIComponent(groupKey)}`)
-                            }}
-                          >
-                            {isOpen ? (
-                              <ChevronDown className="size-4" />
-                            ) : (
-                              <ChevronRight className="size-4" />
-                            )}
-                            <span>{group.groupLabel}</span>
-                          </SidebarMenuButton>
-                          {isOpen && (
-                            <SidebarMenuSub>
-                              {group.subfolders.map((subfolder) => {
-                                const subFiles = getFiles(subfolder.value)
-                                const subLinks = getLinks(subfolder.value)
-                                const subHasContent = subFiles.length > 0 || subLinks.length > 0
-                                const subIsExpanded = openFolders[subfolder.value] ?? isFolderActive(subfolder.value)
-
-                                return (
-                                  <SidebarMenuSubItem key={subfolder.value}>
-                                    <SidebarMenuSubButton
-                                      isActive={isFolderActive(subfolder.value)}
-                                      onClick={(e) => {
-                                        e.preventDefault()
-                                        if (subHasContent) setOpenFolders((prev) => ({ ...prev, [subfolder.value]: !subIsExpanded }))
-                                        navigate(`/dashboard/documents/${encodeURIComponent(subfolder.value)}`)
-                                      }}
-                                      className="cursor-pointer"
-                                    >
-                                      {subHasContent ? (
-                                        subIsExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
-                                      ) : null}
-                                      <span>{subfolder.label}</span>
-                                    </SidebarMenuSubButton>
-                                    {subIsExpanded && subHasContent && (
-                                      <ul className="ml-3.5 mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-2.5">
-                                        {subFiles.map((file) => (
-                                          <li key={file.id}>
-                                            <a
-                                              href={file.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              title={file.name}
-                                              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
-                                            >
-                                              <FileText className="size-3 shrink-0" />
-                                              <span className="truncate">{file.name}</span>
-                                            </a>
-                                          </li>
-                                        ))}
-                                        {subLinks.map((link) => (
-                                          <li key={link.id}>
-                                            <a
-                                              href={link.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              title={link.label}
-                                              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
-                                            >
-                                              <Link2 className="size-3 shrink-0" />
-                                              <span className="truncate">{link.label}</span>
-                                            </a>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    )}
-                                  </SidebarMenuSubItem>
-                                )
-                              })}
-                            </SidebarMenuSub>
-                          )}
-                        </SidebarMenuItem>
-                      )
-                    })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
+
+              {/* ── Directions – each direction is a collapsible section ── */}
+              {filteredDirections.map((dir) => {
+                const dirKey = dir.directionId
+                const dirHasActive = [
+                  ...dir.rootFolders,
+                  ...Object.values(dir.groupedFolders).flatMap((g) => g.subfolders),
+                ].some((f) => isFolderActive(f.value))
+                const isDirOpen = openDirections[dirKey] ?? dirHasActive
+
+                return (
+                  <SidebarGroup key={dirKey} className="py-0">
+                    <SidebarGroupLabel
+                      className="cursor-pointer select-none hover:bg-sidebar-accent/50 rounded-md transition-colors"
+                      onClick={() => setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))}
+                    >
+                      <span className="flex items-center gap-2 flex-1 min-w-0">
+                        <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{dir.directionName}</span>
+                      </span>
+                      {isDirOpen
+                        ? <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                        : <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      }
+                    </SidebarGroupLabel>
+                    {isDirOpen && (
+                      <SidebarGroupContent>
+                        <SidebarMenu>
+                          {/* Root folders (no group) */}
+                          {dir.rootFolders.map((folder) => {
+                            const rootFiles = getFiles(folder.value)
+                            const rootLinks = getLinks(folder.value)
+                            const rootHasContent = rootFiles.length > 0 || rootLinks.length > 0
+                            const rootIsExpanded = openFolders[folder.value] ?? isFolderActive(folder.value)
+
+                            return (
+                              <SidebarMenuItem key={folder.value}>
+                                <SidebarMenuButton
+                                  isActive={isFolderActive(folder.value)}
+                                  onClick={() => {
+                                    if (rootHasContent) setOpenFolders((prev) => ({ ...prev, [folder.value]: !rootIsExpanded }))
+                                    navigate(`/dashboard/documents/${encodeURIComponent(folder.value)}`)
+                                  }}
+                                >
+                                  {rootHasContent ? (
+                                    rootIsExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />
+                                  ) : (
+                                    <FolderOpen className="size-4" />
+                                  )}
+                                  <span className="truncate">{folder.label}</span>
+                                </SidebarMenuButton>
+                                {rootIsExpanded && rootHasContent && (
+                                  <SidebarMenuSub>
+                                    {rootFiles.map((file) => (
+                                      <SidebarMenuSubItem key={file.id}>
+                                        <SidebarMenuSubButton asChild size="sm">
+                                          <a href={file.url} target="_blank" rel="noopener noreferrer" title={file.name}>
+                                            <FileText className="size-3.5" />
+                                            <span className="truncate">{file.name}</span>
+                                          </a>
+                                        </SidebarMenuSubButton>
+                                      </SidebarMenuSubItem>
+                                    ))}
+                                    {rootLinks.map((link) => (
+                                      <SidebarMenuSubItem key={link.id}>
+                                        <SidebarMenuSubButton asChild size="sm">
+                                          <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.label}>
+                                            <Link2 className="size-3.5" />
+                                            <span className="truncate">{link.label}</span>
+                                          </a>
+                                        </SidebarMenuSubButton>
+                                      </SidebarMenuSubItem>
+                                    ))}
+                                  </SidebarMenuSub>
+                                )}
+                              </SidebarMenuItem>
+                            )
+                          })}
+
+                          {/* Grouped folders */}
+                          {Object.entries(dir.groupedFolders).map(([groupKey, group]) => {
+                            const groupHasActive = group.subfolders.some((sf) => isFolderActive(sf.value))
+                            const isGroupActive = location.pathname === `/dashboard/documents/${encodeURIComponent(groupKey)}`
+                            const isOpen = openGroups[groupKey] ?? groupHasActive
+
+                            return (
+                              <SidebarMenuItem key={groupKey}>
+                                <SidebarMenuButton
+                                  isActive={isGroupActive || groupHasActive}
+                                  onClick={() => {
+                                    setOpenGroups((prev) => ({ ...prev, [groupKey]: !isOpen }))
+                                    navigate(`/dashboard/documents/${encodeURIComponent(groupKey)}`)
+                                  }}
+                                >
+                                  {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                  <span className="truncate">{group.groupLabel}</span>
+                                </SidebarMenuButton>
+                                {isOpen && (
+                                  <SidebarMenuSub>
+                                    {group.subfolders.map((subfolder) => {
+                                      const subFiles = getFiles(subfolder.value)
+                                      const subLinks = getLinks(subfolder.value)
+                                      const subHasContent = subFiles.length > 0 || subLinks.length > 0
+                                      const subIsExpanded = openFolders[subfolder.value] ?? isFolderActive(subfolder.value)
+
+                                      return (
+                                        <SidebarMenuSubItem key={subfolder.value}>
+                                          <SidebarMenuSubButton
+                                            isActive={isFolderActive(subfolder.value)}
+                                            onClick={(e) => {
+                                              e.preventDefault()
+                                              if (subHasContent) setOpenFolders((prev) => ({ ...prev, [subfolder.value]: !subIsExpanded }))
+                                              navigate(`/dashboard/documents/${encodeURIComponent(subfolder.value)}`)
+                                            }}
+                                            className="cursor-pointer"
+                                          >
+                                            {subHasContent ? (
+                                              subIsExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+                                            ) : null}
+                                            <span className="truncate">{subfolder.label}</span>
+                                          </SidebarMenuSubButton>
+                                          {subIsExpanded && subHasContent && (
+                                            <ul className="ml-3.5 mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-2.5">
+                                              {subFiles.map((file) => (
+                                                <li key={file.id}>
+                                                  <a
+                                                    href={file.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    title={file.name}
+                                                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                                                  >
+                                                    <FileText className="size-3 shrink-0" />
+                                                    <span className="truncate">{file.name}</span>
+                                                  </a>
+                                                </li>
+                                              ))}
+                                              {subLinks.map((link) => (
+                                                <li key={link.id}>
+                                                  <a
+                                                    href={link.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    title={link.label}
+                                                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                                                  >
+                                                    <Link2 className="size-3 shrink-0" />
+                                                    <span className="truncate">{link.label}</span>
+                                                  </a>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                        </SidebarMenuSubItem>
+                                      )
+                                    })}
+                                  </SidebarMenuSub>
+                                )}
+                              </SidebarMenuItem>
+                            )
+                          })}
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    )}
+                  </SidebarGroup>
+                )
+              })}
             </SidebarContent>
             <SidebarFooter>
               <SidebarMenu>
