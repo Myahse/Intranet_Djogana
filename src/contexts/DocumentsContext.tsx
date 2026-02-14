@@ -273,15 +273,31 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   useEffect(() => { loadAll() }, [loadAll])
 
   // Real-time reload when files, folders, or links change via WebSocket
+  // Debounced to prevent multiple rapid calls (e.g. folder delete triggers 3 events)
   useEffect(() => {
-    const handler = () => { loadAll() }
-    window.addEventListener('ws:files', handler)
-    window.addEventListener('ws:folders', handler)
-    window.addEventListener('ws:links', handler)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const debouncedReload = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { loadAll() }, 300)
+    }
+    // Specific resource events
+    window.addEventListener('ws:files', debouncedReload)
+    window.addEventListener('ws:folders', debouncedReload)
+    window.addEventListener('ws:links', debouncedReload)
+    // Catch-all: any data_changed event involving files/folders/links
+    const onAnyChange = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail
+      if (detail?.resource === 'files' || detail?.resource === 'folders' || detail?.resource === 'links') {
+        debouncedReload()
+      }
+    }
+    window.addEventListener('ws:data_changed', onAnyChange)
     return () => {
-      window.removeEventListener('ws:files', handler)
-      window.removeEventListener('ws:folders', handler)
-      window.removeEventListener('ws:links', handler)
+      if (timer) clearTimeout(timer)
+      window.removeEventListener('ws:files', debouncedReload)
+      window.removeEventListener('ws:folders', debouncedReload)
+      window.removeEventListener('ws:links', debouncedReload)
+      window.removeEventListener('ws:data_changed', onAnyChange)
     }
   }, [loadAll])
 

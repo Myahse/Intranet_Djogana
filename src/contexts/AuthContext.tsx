@@ -38,6 +38,7 @@ export type User = {
   role: string
   direction_id?: string | null
   direction_name?: string | null
+  is_direction_chief?: boolean
   permissions?: UserPermissions | null
   must_change_password?: boolean
 }
@@ -53,6 +54,7 @@ export type DeviceLoginRequest = {
 type AuthContextValue = {
   user: User | null
   isAdmin: boolean
+  isDirectionChief: boolean
   setUser: (user: User | null) => void
   login: (identifiant: string, motDePasse: string) => Promise<boolean>
   logout: () => void
@@ -175,6 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: string
           direction_id?: string | null
           direction_name?: string | null
+          is_direction_chief?: boolean
           permissions?: UserPermissions | null
           must_change_password?: boolean
           token?: string
@@ -194,6 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: data.role,
           direction_id: data.direction_id ?? null,
           direction_name: data.direction_name ?? null,
+          is_direction_chief: Boolean(data.is_direction_chief),
           permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
           must_change_password: Boolean(data.must_change_password),
         })
@@ -237,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: string
         direction_id?: string | null
         direction_name?: string | null
+        is_direction_chief?: boolean
         permissions?: UserPermissions | null
         must_change_password?: boolean
       }
@@ -246,6 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: data.role,
         direction_id: data.direction_id ?? null,
         direction_name: data.direction_name ?? null,
+        is_direction_chief: Boolean(data.is_direction_chief),
         permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
         must_change_password: Boolean(data.must_change_password),
       })
@@ -327,6 +333,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             role: data.user.role,
             direction_id: data.user.direction_id ?? null,
             direction_name: data.user.direction_name ?? null,
+            is_direction_chief: Boolean(data.user.is_direction_chief),
             permissions:
               data.user.role === 'admin'
                 ? adminPermissions
@@ -619,6 +626,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       isAdmin: user?.role === 'admin',
+      isDirectionChief: Boolean(user?.is_direction_chief),
       setUser,
       login,
       logout,

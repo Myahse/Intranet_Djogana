@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Sidebar,
@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { BarChart3, Building2, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
@@ -36,6 +36,13 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
+    ? import.meta.env.VITE_API_BASE_URL
+    : import.meta.env.DEV
+      ? ''
+      : 'http://localhost:3000'
 
 const Dashboard = () => (
   <SidebarProvider className="!h-svh !max-h-svh overflow-hidden">
@@ -62,11 +69,46 @@ function DashboardLayout() {
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
-  const { isAdmin, user } = useAuth()
+  const { isAdmin, isDirectionChief, user } = useAuth()
   const canViewStats = isAdmin || user?.permissions?.can_view_stats
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
+
+  // ── Fetch ALL directions from the API (admin sees all, including empty ones) ──
+  const [allDirections, setAllDirections] = useState<{ id: string; name: string }[]>([])
+
+  const loadDirections = useCallback(async () => {
+    if (!isAdmin) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/directions`)
+      if (!res.ok) return
+      const data = (await res.json()) as Array<{ id: string; name: string }>
+      setAllDirections(data)
+    } catch {
+      // silent
+    }
+  }, [isAdmin])
+
+  useEffect(() => { loadDirections() }, [loadDirections])
+
+  // Reload directions on WebSocket events (directions created/deleted)
+  useEffect(() => {
+    const handler = () => { loadDirections() }
+    window.addEventListener('ws:directions', handler)
+    // Also reload directions when any data changes that might affect them
+    const onAnyChange = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail
+      if (detail?.resource === 'directions' || detail?.resource === 'folders') {
+        loadDirections()
+      }
+    }
+    window.addEventListener('ws:data_changed', onAnyChange)
+    return () => {
+      window.removeEventListener('ws:directions', handler)
+      window.removeEventListener('ws:data_changed', onAnyChange)
+    }
+  }, [loadDirections])
 
   // ── Organise folders by direction, then by group::subfolder within each direction ──
   const [openDirections, setOpenDirections] = useState<Record<string, boolean>>({})
@@ -81,12 +123,25 @@ function DashboardLayout() {
   const directionMap = useMemo(() => {
     const map: Record<string, DirectionEntry> = {}
 
+    // For admin: seed the map with ALL directions so empty ones still appear
+    if (isAdmin) {
+      allDirections.forEach((d) => {
+        if (!map[d.id]) {
+          map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
+        }
+      })
+    }
+
     folderOptions.forEach((folder) => {
       const dirId = folder.direction_id ?? 'unknown'
       const dirName = folder.direction_name || dirId
 
       if (!map[dirId]) {
         map[dirId] = { directionId: dirId, directionName: dirName, rootFolders: [], groupedFolders: {} }
+      }
+      // Update name if it was empty (from the seed)
+      if (!map[dirId].directionName || map[dirId].directionName === dirId) {
+        map[dirId].directionName = dirName
       }
 
       const { name } = parseFolderKey(folder.value)
@@ -113,7 +168,7 @@ function DashboardLayout() {
     }
 
     return map
-  }, [folderOptions])
+  }, [folderOptions, isAdmin, allDirections])
 
   // Sort directions alphabetically
   const sortedDirections = useMemo(
@@ -128,6 +183,7 @@ function DashboardLayout() {
     return sortedDirections
       .map((dir) => {
         const matchDir = dir.directionName.toLowerCase().includes(searchLower)
+        if (!searchLower) return dir
 
         const rootFolders = dir.rootFolders.filter(
           (f) => matchDir || f.label.toLowerCase().includes(searchLower)
@@ -142,8 +198,9 @@ function DashboardLayout() {
           if (subfolders.length > 0) groupedFolders[key] = { groupLabel: group.groupLabel, subfolders }
         }
 
+        // For admin: always show the direction even if empty (when searching, hide if no match)
         const hasContent = rootFolders.length > 0 || Object.keys(groupedFolders).length > 0
-        if (!hasContent) return null
+        if (!matchDir && !hasContent) return null
 
         return { ...dir, rootFolders, groupedFolders }
       })
@@ -283,6 +340,14 @@ function DashboardLayout() {
                     {isDirOpen && (
                       <SidebarGroupContent>
                         <SidebarMenu>
+                          {/* Empty direction hint */}
+                          {dir.rootFolders.length === 0 && Object.keys(dir.groupedFolders).length === 0 && (
+                            <SidebarMenuItem>
+                              <p className="px-3 py-2 text-xs text-muted-foreground italic">
+                                Aucun dossier
+                              </p>
+                            </SidebarMenuItem>
+                          )}
                           {/* Root folders (no group) */}
                           {dir.rootFolders.map((folder) => {
                             const rootFiles = getFiles(folder.value)
@@ -424,6 +489,14 @@ function DashboardLayout() {
               })}
             </SidebarContent>
             <SidebarFooter>
+              {isDirectionChief && !isAdmin && (
+                <div className="px-3 pb-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                    <Crown className="size-3" />
+                    Chef de direction
+                  </span>
+                </div>
+              )}
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton

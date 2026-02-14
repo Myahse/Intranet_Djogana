@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2 } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, Pencil, Check, X } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -31,7 +31,7 @@ const DashboardHome = (): ReactNode => {
 
   // ── Users ──
   const [users, setUsers] = useState<
-    Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string }>
+    Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string; is_direction_chief?: boolean }>
   >([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
   const [newUserPhone, setNewUserPhone] = useState('')
@@ -65,6 +65,20 @@ const DashboardHome = (): ReactNode => {
   const [newDirectionCode, setNewDirectionCode] = useState('')
   const [isCreatingDirection, setIsCreatingDirection] = useState(false)
   const [selectedDirection, setSelectedDirection] = useState<string>('')
+
+  // ── Editing user ──
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [editingUserRole, setEditingUserRole] = useState('')
+  const [editingUserDirectionId, setEditingUserDirectionId] = useState('')
+
+  // ── Editing role name ──
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null)
+  const [editingRoleName, setEditingRoleName] = useState('')
+
+  // ── Editing direction ──
+  const [editingDirectionId, setEditingDirectionId] = useState<string | null>(null)
+  const [editingDirectionName, setEditingDirectionName] = useState('')
+  const [editingDirectionCode, setEditingDirectionCode] = useState('')
 
   // ── Loading modal ──
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
@@ -441,6 +455,182 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
+  // ── Update role name ──
+  const handleStartEditRole = (role: { id: string; name: string }) => {
+    setEditingRoleId(role.id)
+    setEditingRoleName(role.name)
+  }
+
+  const handleCancelEditRole = () => {
+    setEditingRoleId(null)
+    setEditingRoleName('')
+  }
+
+  const handleSaveRoleName = async () => {
+    if (!editingRoleId) return
+    const trimmed = editingRoleName.trim()
+    if (!trimmed) {
+      toast.error('Veuillez saisir un nom de rôle')
+      return
+    }
+    setLoading({ open: true, message: 'Mise à jour du rôle…' })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(editingRoleId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Impossible de renommer le rôle')
+      }
+      const updated = (await res.json()) as { id: string; name: string }
+      setRoles((prev) => prev.map((r) => (r.id === updated.id ? { ...r, name: updated.name } : r)))
+      setEditingRoleId(null)
+      setEditingRoleName('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Rôle renommé' }))
+      toast.success('Rôle renommé')
+    } catch (err) {
+      setLoading((s) => ({
+        ...s,
+        result: 'error',
+        resultMessage: err instanceof Error ? err.message : 'Erreur lors du renommage',
+      }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du renommage')
+      console.error(err)
+    }
+  }
+
+  // ── Update direction ──
+  const handleStartEditDirection = (dir: { id: string; name: string; code?: string }) => {
+    setEditingDirectionId(dir.id)
+    setEditingDirectionName(dir.name)
+    setEditingDirectionCode(dir.code ?? '')
+  }
+
+  const handleCancelEditDirection = () => {
+    setEditingDirectionId(null)
+    setEditingDirectionName('')
+    setEditingDirectionCode('')
+  }
+
+  const handleSaveDirection = async () => {
+    if (!editingDirectionId) return
+    const trimmedName = editingDirectionName.trim()
+    const trimmedCode = editingDirectionCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+    if (!trimmedName) {
+      toast.error('Veuillez saisir un nom de direction')
+      return
+    }
+    if (trimmedCode && (trimmedCode.length < 2 || trimmedCode.length > 4)) {
+      toast.error('Le code doit faire 2 à 4 caractères')
+      return
+    }
+    setLoading({ open: true, message: 'Mise à jour de la direction…' })
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/directions/${encodeURIComponent(editingDirectionId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: trimmedName,
+            code: trimmedCode || undefined,
+            identifiant: user?.identifiant ?? '',
+          }),
+        }
+      )
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Impossible de modifier la direction')
+      }
+      const updated = (await res.json()) as { id: string; name: string; code: string }
+      setDirections((prev) =>
+        prev.map((d) => (d.id === updated.id ? { ...d, name: updated.name, code: updated.code } : d))
+      )
+      setEditingDirectionId(null)
+      setEditingDirectionName('')
+      setEditingDirectionCode('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Direction mise à jour' }))
+      toast.success('Direction mise à jour')
+    } catch (err) {
+      setLoading((s) => ({
+        ...s,
+        result: 'error',
+        resultMessage: err instanceof Error ? err.message : 'Erreur lors de la mise à jour',
+      }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la mise à jour')
+      console.error(err)
+    }
+  }
+
+  // ── Update user (role & direction) ──
+  const handleStartEditUser = (u: { id: string; role: string; direction_id?: string }) => {
+    setEditingUserId(u.id)
+    setEditingUserRole(u.role)
+    setEditingUserDirectionId(u.direction_id ?? '')
+  }
+
+  const handleCancelEditUser = () => {
+    setEditingUserId(null)
+    setEditingUserRole('')
+    setEditingUserDirectionId('')
+  }
+
+  const handleSaveUser = async () => {
+    if (!editingUserId) return
+    setLoading({ open: true, message: "Mise à jour de l'utilisateur…" })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(editingUserId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: editingUserRole,
+          direction_id: editingUserRole === 'admin' ? null : (editingUserDirectionId || null),
+          caller_identifiant: user?.identifiant ?? '',
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? "Impossible de modifier l'utilisateur")
+      }
+      const updated = (await res.json()) as {
+        id: string
+        identifiant: string
+        role: string
+        direction_id: string | null
+        direction_name: string | null
+        is_direction_chief: boolean
+      }
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === updated.id
+            ? {
+                ...u,
+                role: updated.role,
+                direction_id: updated.direction_id ?? undefined,
+                direction_name: updated.direction_name ?? undefined,
+                is_direction_chief: updated.is_direction_chief,
+              }
+            : u
+        )
+      )
+      setEditingUserId(null)
+      setEditingUserRole('')
+      setEditingUserDirectionId('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Utilisateur mis à jour' }))
+      toast.success('Utilisateur mis à jour')
+    } catch (err) {
+      setLoading((s) => ({
+        ...s,
+        result: 'error',
+        resultMessage: err instanceof Error ? err.message : 'Erreur lors de la mise à jour',
+      }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la mise à jour')
+      console.error(err)
+    }
+  }
+
   const handleCreateUser = async () => {
     const phone = newUserPhone.trim()
     if (!phone) {
@@ -508,6 +698,31 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
+  const handleToggleChief = async (targetUser: { id: string; identifiant: string; is_direction_chief?: boolean }) => {
+    const newValue = !targetUser.is_direction_chief
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}/chief`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_direction_chief: newValue,
+          caller_identifiant: user?.identifiant,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Erreur')
+      }
+      setUsers((prev) =>
+        prev.map((u) => (u.id === targetUser.id ? { ...u, is_direction_chief: newValue } : u))
+      )
+      toast.success(newValue ? `${targetUser.identifiant} est maintenant chef de direction` : `${targetUser.identifiant} n'est plus chef de direction`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur')
+      console.error(err)
+    }
+  }
+
   // ── Render helpers ──
 
   const renderUsersTable = () => {
@@ -561,6 +776,7 @@ const DashboardHome = (): ReactNode => {
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
               <th className="px-3 py-2 text-left font-medium">Rôle</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
+              {isAdmin && <th className="px-3 py-2 text-center font-medium">Chef</th>}
               <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
             </tr>
           </thead>
@@ -568,25 +784,120 @@ const DashboardHome = (): ReactNode => {
             {users.map((u) => (
               <tr key={u.id} className="border-t">
                 <td className="px-3 py-2">{u.identifiant}</td>
-                <td className="px-3 py-2 capitalize">{u.role}</td>
-                <td className="px-3 py-2 text-muted-foreground">{u.direction_name ?? '—'}</td>
-                <td className="px-3 py-2 text-right">
-                  {user?.identifiant !== u.identifiant ? (
-                    canDeleteUser ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => handleDeleteUser(u)}
-                        aria-label={`Supprimer ${u.identifiant}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    ) : null
-                  ) : (
-                    <span className="text-muted-foreground text-xs">(vous)</span>
-                  )}
-                </td>
+                {editingUserId === u.id ? (
+                  <>
+                    <td className="px-3 py-1">
+                      <Select value={editingUserRole} onValueChange={setEditingUserRole}>
+                        <SelectTrigger className="h-8 text-sm w-36">
+                          <SelectValue placeholder="Rôle" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roles.map((r) => (
+                            <SelectItem key={r.id} value={r.name}>
+                              {r.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                    <td className="px-3 py-1">
+                      {editingUserRole !== 'admin' ? (
+                        <Select value={editingUserDirectionId} onValueChange={setEditingUserDirectionId}>
+                          <SelectTrigger className="h-8 text-sm w-44">
+                            <SelectValue placeholder="Direction" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {directions.map((d) => (
+                              <SelectItem key={d.id} value={d.id}>
+                                {d.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </td>
+                    {isAdmin && <td className="px-3 py-1 text-center"><span className="text-muted-foreground text-xs">—</span></td>}
+                    <td className="px-3 py-1 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-green-600 hover:bg-green-100"
+                          onClick={handleSaveUser}
+                          aria-label="Enregistrer"
+                        >
+                          <Check className="size-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 text-muted-foreground hover:bg-muted"
+                          onClick={handleCancelEditUser}
+                          aria-label="Annuler"
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-3 py-2">
+                      <span className="capitalize">{u.role}</span>
+                      {u.is_direction_chief && (
+                        <span className="ml-1.5 inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                          Chef
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{u.direction_name ?? '—'}</td>
+                    {isAdmin && (
+                      <td className="px-3 py-2 text-center">
+                        {u.direction_id ? (
+                          <Switch
+                            checked={Boolean(u.is_direction_chief)}
+                            onCheckedChange={() => handleToggleChief(u)}
+                            aria-label={`Chef de direction: ${u.identifiant}`}
+                          />
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-right">
+                      {user?.identifiant !== u.identifiant ? (
+                        <div className="flex items-center justify-end gap-1">
+                          {(isAdmin || canCreateUser) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={() => handleStartEditUser(u)}
+                              aria-label={`Modifier ${u.identifiant}`}
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                          )}
+                          {canDeleteUser && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => handleDeleteUser(u)}
+                              aria-label={`Supprimer ${u.identifiant}`}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">(vous)</span>
+                      )}
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -674,21 +985,91 @@ const DashboardHome = (): ReactNode => {
                     <tbody>
                       {directions.map((d) => (
                         <tr key={d.id} className="border-t">
-                          <td className="px-3 py-2">{d.name}</td>
-                          <td className="px-3 py-2 font-mono text-muted-foreground">{d.code ?? '—'}</td>
-                          <td className="px-3 py-2 text-right w-12">
-                            {canDeleteDirection && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-8 text-destructive hover:bg-destructive/10"
-                                onClick={() => handleDeleteDirection(d)}
-                                aria-label={`Supprimer ${d.name}`}
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            )}
-                          </td>
+                          {editingDirectionId === d.id ? (
+                            <>
+                              <td className="px-3 py-1">
+                                <Input
+                                  value={editingDirectionName}
+                                  onChange={(e) => setEditingDirectionName(e.target.value)}
+                                  className="h-8 text-sm"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveDirection()
+                                    if (e.key === 'Escape') handleCancelEditDirection()
+                                  }}
+                                />
+                              </td>
+                              <td className="px-3 py-1">
+                                <Input
+                                  value={editingDirectionCode}
+                                  onChange={(e) =>
+                                    setEditingDirectionCode(
+                                      e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4)
+                                    )
+                                  }
+                                  className="h-8 text-sm font-mono"
+                                  maxLength={4}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveDirection()
+                                    if (e.key === 'Escape') handleCancelEditDirection()
+                                  }}
+                                />
+                              </td>
+                              <td className="px-3 py-1 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-8 text-green-600 hover:bg-green-100"
+                                    onClick={handleSaveDirection}
+                                    aria-label="Enregistrer"
+                                  >
+                                    <Check className="size-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-8 text-muted-foreground hover:bg-muted"
+                                    onClick={handleCancelEditDirection}
+                                    aria-label="Annuler"
+                                  >
+                                    <X className="size-4" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="px-3 py-2">{d.name}</td>
+                              <td className="px-3 py-2 font-mono text-muted-foreground">{d.code ?? '—'}</td>
+                              <td className="px-3 py-2 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  {canCreateDirection && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-8 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      onClick={() => handleStartEditDirection(d)}
+                                      aria-label={`Modifier ${d.name}`}
+                                    >
+                                      <Pencil className="size-4" />
+                                    </Button>
+                                  )}
+                                  {canDeleteDirection && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-8 text-destructive hover:bg-destructive/10"
+                                      onClick={() => handleDeleteDirection(d)}
+                                      aria-label={`Supprimer ${d.name}`}
+                                    >
+                                      <Trash2 className="size-4" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -754,7 +1135,55 @@ const DashboardHome = (): ReactNode => {
                   <tbody>
                     {roles.map((r) => (
                       <tr key={r.id} className="border-t">
-                        <td className="px-3 py-2 capitalize">{r.name}</td>
+                        <td className="px-3 py-2 capitalize">
+                          {editingRoleId === r.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={editingRoleName}
+                                onChange={(e) => setEditingRoleName(e.target.value)}
+                                className="h-8 text-sm w-32"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveRoleName()
+                                  if (e.key === 'Escape') handleCancelEditRole()
+                                }}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-green-600 hover:bg-green-100"
+                                onClick={handleSaveRoleName}
+                                aria-label="Enregistrer"
+                              >
+                                <Check className="size-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-muted-foreground hover:bg-muted"
+                                onClick={handleCancelEditRole}
+                                aria-label="Annuler"
+                              >
+                                <X className="size-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 group">
+                              <span>{r.name}</span>
+                              {r.name !== 'admin' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                                  onClick={() => handleStartEditRole(r)}
+                                  aria-label={`Renommer le rôle ${r.name}`}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-center">
                           <Switch checked={Boolean(r.can_create_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_folder', checked)} aria-label={`Autoriser ${r.name} à créer des dossiers`} />
                         </td>
