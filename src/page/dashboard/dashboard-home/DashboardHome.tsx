@@ -16,11 +16,13 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { useConfirmDialog } from '@/components/ConfirmDialog'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 const DashboardHome = (): ReactNode => {
   const { user, isAdmin, registerUser, getAuthHeaders, logout } = useAuth()
+  const { confirm, ConfirmDialog } = useConfirmDialog()
   const canCreateUser = isAdmin || !!user?.permissions?.can_create_user
   const canDeleteUser = isAdmin || !!user?.permissions?.can_delete_user
   const canCreateDirection = isAdmin || !!user?.permissions?.can_create_direction
@@ -370,25 +372,39 @@ const DashboardHome = (): ReactNode => {
   }
 
   const handleDeleteRole = async (role: { id: string; name: string }) => {
-    if (
-      !window.confirm(
-        `Supprimer le rôle "${role.name}" ? Les utilisateurs utilisant ce rôle doivent être réassignés au préalable.`
-      )
-    ) {
-      return
-    }
-    setLoading({ open: true, message: `Suppression du rôle "${role.name}"…` })
+    const usersWithRole = users.filter((u) => u.role === role.name)
+    const count = usersWithRole.length
+
+    const description = count > 0
+      ? `${count} utilisateur(s) utilisent ce rôle et seront supprimés et déconnectés immédiatement. Cette action est irréversible.`
+      : `Le rôle "${role.name}" sera supprimé. Cette action est irréversible.`
+
+    const ok = await confirm({
+      title: `Supprimer le rôle "${role.name}" ?`,
+      description,
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    })
+    if (!ok) return
+    setLoading({ open: true, message: `Suppression du rôle "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
     try {
-      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}`, {
+      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data?.error ?? 'Échec de la suppression')
       }
+      const data = await res.json().catch(() => ({}))
       setRoles((prev) => prev.filter((r) => r.id !== role.id))
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Rôle supprimé' }))
-      toast.success('Rôle supprimé')
+      if (data.deletedUsers > 0) {
+        setUsers((prev) => prev.filter((u) => u.role !== role.name))
+      }
+      const msg = data.deletedUsers > 0
+        ? `Rôle supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+        : 'Rôle supprimé'
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
+      toast.success(msg)
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur lors de la suppression' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
@@ -466,13 +482,13 @@ const DashboardHome = (): ReactNode => {
   }
 
   const handleDeleteDirection = async (dir: { id: string; name: string }) => {
-    if (
-      !window.confirm(
-        `Supprimer la direction "${dir.name}" ? Les utilisateurs et dossiers rattachés peuvent être affectés.`
-      )
-    ) {
-      return
-    }
+    const ok = await confirm({
+      title: `Supprimer la direction "${dir.name}" ?`,
+      description: 'Les utilisateurs et dossiers rattachés peuvent être affectés.',
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    })
+    if (!ok) return
     setLoading({ open: true, message: `Suppression de la direction "${dir.name}"…` })
     try {
       const url = `${API_BASE_URL}/api/directions/${encodeURIComponent(dir.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`
@@ -709,13 +725,13 @@ const DashboardHome = (): ReactNode => {
   }
 
   const handleDeleteUser = async (targetUser: { id: string; identifiant: string }) => {
-    if (
-      !window.confirm(
-        `Supprimer l'utilisateur "${targetUser.identifiant}" ? Cette action est irréversible.`
-      )
-    ) {
-      return
-    }
+    const ok = await confirm({
+      title: `Supprimer l'utilisateur "${targetUser.identifiant}" ?`,
+      description: 'Cette action est irréversible.',
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    })
+    if (!ok) return
     setLoading({ open: true, message: `Suppression de l'utilisateur "${targetUser.identifiant}"…` })
     try {
       const url = `${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`
@@ -963,6 +979,7 @@ const DashboardHome = (): ReactNode => {
   // ── Admin / privileged: full management dashboard ──
   return (
     <div className="p-6 space-y-8">
+      <ConfirmDialog />
       <h1 className="text-2xl font-semibold">Tableau de bord</h1>
 
       {/* ── Online users (admin only — silent tracking) ── */}

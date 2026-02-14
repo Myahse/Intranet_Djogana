@@ -326,6 +326,14 @@ async function initDb() {
     );
   `)
 
+  // ── Soft-delete support (Corbeille / Trash) ──
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at timestamptz DEFAULT NULL') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE links ADD COLUMN IF NOT EXISTS deleted_at timestamptz DEFAULT NULL') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE folders ADD COLUMN IF NOT EXISTS deleted_at timestamptz DEFAULT NULL') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE links ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE folders ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
+
   // ---- Roles & permissions (RBAC) ----
   await pool.query(`
     CREATE TABLE IF NOT EXISTS roles (
@@ -2485,10 +2493,11 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
   }
 })
 
-// Delete a role (cannot delete 'admin' or roles still assigned to users)
+// Delete a role (cannot delete 'admin'; users with this role are deleted & force-logged-out)
 app.delete('/api/roles/:id', async (req, res) => {
   try {
     const { id } = req.params
+    const callerIdentifiant = req.query.identifiant || req.body?.identifiant
 
     // Look up the role
     const roleRes = await pool.query('SELECT id, name FROM roles WHERE id = $1', [id])
@@ -2502,22 +2511,45 @@ app.delete('/api/roles/:id', async (req, res) => {
       return res.status(400).json({ error: 'Impossible de supprimer le rôle admin.' })
     }
 
-    // Check if any users still have this role
+    // Find all users still assigned to this role (excluding admins as safety guard)
     const usersWithRole = await pool.query(
-      'SELECT COUNT(*)::int AS count FROM users WHERE role = $1',
+      'SELECT id, identifiant, role, direction_id FROM users WHERE role = $1',
       [roleName]
     )
-    if (usersWithRole.rows[0].count > 0) {
-      return res.status(400).json({
-        error: `Impossible de supprimer ce rôle : ${usersWithRole.rows[0].count} utilisateur(s) l'utilisent encore. Réassignez-les d'abord.`,
-      })
+
+    // Force-logout and delete each user that has this role
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
     }
 
-    // Delete (cascades to role_permissions and folder_role_visibility)
+    for (const user of usersWithRole.rows) {
+      // Log each user deletion
+      await insertActivityLog(pool, {
+        action: 'delete_user',
+        actorIdentifiant: callerIdentifiant || null,
+        actorId,
+        directionId: user.direction_id,
+        entityType: 'user',
+        entityId: user.id,
+        details: { identifiant: user.identifiant, role: user.role, reason: 'role_deleted' },
+      })
+
+      // Force logout via WebSocket before deleting
+      broadcastUserDeleted(user.identifiant)
+
+      // Delete the user
+      await pool.query('DELETE FROM users WHERE id = $1', [user.id])
+      broadcastDataChange('users', 'deleted', { id: user.id })
+    }
+
+    // Delete the role (cascades to role_permissions and folder_role_visibility)
     await pool.query('DELETE FROM roles WHERE id = $1', [id])
 
     broadcastDataChange('roles', 'deleted', { id })
-    return res.json({ ok: true })
+    const deletedUserCount = usersWithRole.rows.length
+    return res.json({ ok: true, deletedUsers: deletedUserCount })
   } catch (err) {
     console.error('delete role error', err)
     return res.status(500).json({ error: 'Erreur lors de la suppression du rôle.' })
@@ -2788,7 +2820,7 @@ app.get('/api/folders', async (_req, res) => {
       JOIN directions d ON d.id = f.direction_id
     `
     const params = []
-    const conditions = []
+    const conditions = ['f.deleted_at IS NULL']
 
     if (role && role !== 'admin') {
       // Role-based folder visibility (existing feature)
@@ -2993,7 +3025,7 @@ app.get('/api/files', async (req, res) => {
     const params = []
     let sql = 'SELECT id, name, mime_type, size, folder, direction_id, cloudinary_url, created_at FROM files'
 
-    const conditions = []
+    const conditions = ['deleted_at IS NULL']
 
     if (folder) {
       params.push(folder)
@@ -3228,17 +3260,6 @@ app.delete('/api/files/:id', async (req, res) => {
       }
     }
 
-    // Delete from Cloudinary if stored there
-    if (fileRow.cloudinary_public_id) {
-      try {
-        await cloudinary.uploader.destroy(fileRow.cloudinary_public_id, { resource_type: 'raw' })
-      } catch (cloudErr) {
-        console.warn('[cloudinary] failed to delete', fileRow.cloudinary_public_id, cloudErr?.message)
-        // Also try as image/video in case resource_type differs
-        try { await cloudinary.uploader.destroy(fileRow.cloudinary_public_id) } catch (_) { /* ignore */ }
-      }
-    }
-
     let actorId = null
     if (identifiant) {
       const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
@@ -3254,7 +3275,8 @@ app.delete('/api/files/:id', async (req, res) => {
       details: { name: fileRow.name, folder: fileRow.folder },
     })
 
-    await pool.query('DELETE FROM files WHERE id = $1', [id])
+    // Soft-delete: move to trash instead of permanent deletion
+    await pool.query('UPDATE files SET deleted_at = NOW(), deleted_by = $1 WHERE id = $2', [identifiant || null, id])
     broadcastDataChange('files', 'deleted', { id, directionId: fileDir })
     return res.status(204).send()
   } catch (err) {
@@ -3300,34 +3322,16 @@ app.delete('/api/folders/:folder', async (req, res) => {
       details: { folder, direction_id: directionId },
     })
 
-    // Delete Cloudinary resources for all files in the folder
-    {
-      const filesToDelete = directionId
-        ? await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL', [folder, directionId])
-        : await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND cloudinary_public_id IS NOT NULL', [folder])
-      for (const f of filesToDelete.rows) {
-        try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
-        try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
-      }
-    }
-
+    // Soft-delete: move folder and its contents to trash
+    const now = new Date().toISOString()
     if (directionId) {
-      await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [
-        folder,
-        directionId,
-      ])
-      await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [
-        folder,
-        directionId,
-      ])
-      await pool.query('DELETE FROM folders WHERE name = $1 AND direction_id = $2', [
-        folder,
-        directionId,
-      ])
+      await pool.query('UPDATE links SET deleted_at = $1, deleted_by = $2 WHERE folder = $3 AND direction_id = $4 AND deleted_at IS NULL', [now, identifiant || null, folder, directionId])
+      await pool.query('UPDATE files SET deleted_at = $1, deleted_by = $2 WHERE folder = $3 AND direction_id = $4 AND deleted_at IS NULL', [now, identifiant || null, folder, directionId])
+      await pool.query('UPDATE folders SET deleted_at = $1, deleted_by = $2 WHERE name = $3 AND direction_id = $4 AND deleted_at IS NULL', [now, identifiant || null, folder, directionId])
     } else {
-      await pool.query('DELETE FROM links WHERE folder = $1', [folder])
-      await pool.query('DELETE FROM files WHERE folder = $1', [folder])
-      await pool.query('DELETE FROM folders WHERE name = $1', [folder])
+      await pool.query('UPDATE links SET deleted_at = $1, deleted_by = $2 WHERE folder = $3 AND deleted_at IS NULL', [now, identifiant || null, folder])
+      await pool.query('UPDATE files SET deleted_at = $1, deleted_by = $2 WHERE folder = $3 AND deleted_at IS NULL', [now, identifiant || null, folder])
+      await pool.query('UPDATE folders SET deleted_at = $1, deleted_by = $2 WHERE name = $3 AND deleted_at IS NULL', [now, identifiant || null, folder])
     }
     broadcastDataChange('folders', 'deleted', { directionId })
     broadcastDataChange('files', 'deleted', { directionId })
@@ -3435,7 +3439,7 @@ app.get('/api/links', async (req, res) => {
       SELECT l.id, l.folder, l.direction_id, l.url, l.label, l.created_at
       FROM links l
     `
-    const conditions = []
+    const conditions = ['l.deleted_at IS NULL']
 
     if (folder) {
       params.push(folder)
@@ -3611,13 +3615,198 @@ app.delete('/api/links/:id', async (req, res) => {
       details: { folder: linkRow.folder, url: linkRow.url, label: linkRow.label },
     })
 
-    await pool.query('DELETE FROM links WHERE id = $1', [id])
+    // Soft-delete: move to trash
+    await pool.query('UPDATE links SET deleted_at = NOW(), deleted_by = $1 WHERE id = $2', [identifiant || null, id])
     broadcastDataChange('links', 'deleted', { id })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('link delete error', err)
     return res.status(500).json({ error: 'Erreur lors de la suppression du lien.' })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════
+// ─── Corbeille (Trash) – Admin only ──────────────────────────
+// ══════════════════════════════════════════════════════════════
+
+// Middleware: check caller is admin
+async function requireAdmin(req, res, next) {
+  const identifiant = req.query.identifiant || req.body?.identifiant || req.headers['x-identifiant']
+  if (!identifiant) return res.status(403).json({ error: 'Identifiant requis.' })
+  const r = await pool.query('SELECT role FROM users WHERE identifiant = $1', [identifiant])
+  if (r.rows.length === 0 || r.rows[0].role !== 'admin') {
+    return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+  }
+  next()
+}
+
+// List all soft-deleted items (files, links, folders)
+app.get('/api/trash', requireAdmin, async (_req, res) => {
+  try {
+    const [filesRes, linksRes, foldersRes] = await Promise.all([
+      pool.query(`
+        SELECT f.id, f.name, f.folder, f.direction_id, f.size, f.deleted_at, f.deleted_by, f.cloudinary_url, d.name AS direction_name
+        FROM files f
+        LEFT JOIN directions d ON d.id = f.direction_id
+        WHERE f.deleted_at IS NOT NULL
+        ORDER BY f.deleted_at DESC
+      `),
+      pool.query(`
+        SELECT l.id, l.folder, l.direction_id, l.url, l.label, l.deleted_at, l.deleted_by, d.name AS direction_name
+        FROM links l
+        LEFT JOIN directions d ON d.id = l.direction_id
+        WHERE l.deleted_at IS NOT NULL
+        ORDER BY l.deleted_at DESC
+      `),
+      pool.query(`
+        SELECT f.id, f.name, f.direction_id, f.deleted_at, f.deleted_by, d.name AS direction_name
+        FROM folders f
+        LEFT JOIN directions d ON d.id = f.direction_id
+        WHERE f.deleted_at IS NOT NULL
+        ORDER BY f.deleted_at DESC
+      `),
+    ])
+
+    return res.json({
+      files: filesRes.rows.map((r) => ({
+        id: r.id,
+        type: 'file',
+        name: r.name,
+        folder: r.folder,
+        direction_id: r.direction_id,
+        direction_name: r.direction_name,
+        size: Number(r.size) || 0,
+        url: r.cloudinary_url || null,
+        deleted_at: r.deleted_at,
+        deleted_by: r.deleted_by,
+      })),
+      links: linksRes.rows.map((r) => ({
+        id: r.id,
+        type: 'link',
+        label: r.label,
+        url: r.url,
+        folder: r.folder,
+        direction_id: r.direction_id,
+        direction_name: r.direction_name,
+        deleted_at: r.deleted_at,
+        deleted_by: r.deleted_by,
+      })),
+      folders: foldersRes.rows.map((r) => ({
+        id: r.id,
+        type: 'folder',
+        name: r.name,
+        direction_id: r.direction_id,
+        direction_name: r.direction_name,
+        deleted_at: r.deleted_at,
+        deleted_by: r.deleted_by,
+      })),
+    })
+  } catch (err) {
+    console.error('trash list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération de la corbeille.' })
+  }
+})
+
+// Restore a soft-deleted item
+app.post('/api/trash/restore', requireAdmin, async (req, res) => {
+  try {
+    const { id, type } = req.body || {}
+    if (!id || !type) return res.status(400).json({ error: 'id et type requis.' })
+
+    let result
+    if (type === 'file') {
+      result = await pool.query('UPDATE files SET deleted_at = NULL, deleted_by = NULL WHERE id = $1 RETURNING id', [id])
+      broadcastDataChange('files', 'created', { id })
+    } else if (type === 'link') {
+      result = await pool.query('UPDATE links SET deleted_at = NULL, deleted_by = NULL WHERE id = $1 RETURNING id', [id])
+      broadcastDataChange('links', 'created', { id })
+    } else if (type === 'folder') {
+      // Restore folder and all its contents
+      const folderRow = await pool.query('SELECT name, direction_id FROM folders WHERE id = $1', [id])
+      if (folderRow.rows.length > 0) {
+        const { name, direction_id } = folderRow.rows[0]
+        await pool.query('UPDATE folders SET deleted_at = NULL, deleted_by = NULL WHERE id = $1', [id])
+        await pool.query('UPDATE files SET deleted_at = NULL, deleted_by = NULL WHERE folder = $1 AND direction_id = $2 AND deleted_at IS NOT NULL', [name, direction_id])
+        await pool.query('UPDATE links SET deleted_at = NULL, deleted_by = NULL WHERE folder = $1 AND direction_id = $2 AND deleted_at IS NOT NULL', [name, direction_id])
+        broadcastDataChange('folders', 'created', { id })
+        broadcastDataChange('files', 'created', {})
+        broadcastDataChange('links', 'created', {})
+      }
+      result = { rowCount: folderRow.rows.length }
+    } else {
+      return res.status(400).json({ error: 'Type invalide. Utilisez file, link ou folder.' })
+    }
+
+    if (!result || result.rowCount === 0) {
+      return res.status(404).json({ error: 'Élément introuvable dans la corbeille.' })
+    }
+
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('trash restore error', err)
+    return res.status(500).json({ error: 'Erreur lors de la restauration.' })
+  }
+})
+
+// Permanently delete a soft-deleted item (admin only)
+app.delete('/api/trash/:type/:id', requireAdmin, async (req, res) => {
+  try {
+    const { type, id } = req.params
+
+    if (type === 'file') {
+      // Delete from Cloudinary first
+      const fileRow = await pool.query('SELECT cloudinary_public_id FROM files WHERE id = $1', [id])
+      if (fileRow.rows.length > 0 && fileRow.rows[0].cloudinary_public_id) {
+        try { await cloudinary.uploader.destroy(fileRow.rows[0].cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
+        try { await cloudinary.uploader.destroy(fileRow.rows[0].cloudinary_public_id) } catch (_) { /* ignore */ }
+      }
+      await pool.query('DELETE FROM files WHERE id = $1', [id])
+    } else if (type === 'link') {
+      await pool.query('DELETE FROM links WHERE id = $1', [id])
+    } else if (type === 'folder') {
+      const folderRow = await pool.query('SELECT name, direction_id FROM folders WHERE id = $1', [id])
+      if (folderRow.rows.length > 0) {
+        const { name, direction_id } = folderRow.rows[0]
+        // Delete Cloudinary resources for all files in the folder
+        const filesToDelete = await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL', [name, direction_id])
+        for (const f of filesToDelete.rows) {
+          try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
+          try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
+        }
+        await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [name, direction_id])
+        await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [name, direction_id])
+        await pool.query('DELETE FROM folders WHERE id = $1', [id])
+      }
+    } else {
+      return res.status(400).json({ error: 'Type invalide.' })
+    }
+
+    return res.status(204).send()
+  } catch (err) {
+    console.error('trash permanent delete error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression définitive.' })
+  }
+})
+
+// Empty entire trash (admin only)
+app.delete('/api/trash', requireAdmin, async (_req, res) => {
+  try {
+    // Delete Cloudinary resources for all soft-deleted files
+    const filesToDelete = await pool.query('SELECT cloudinary_public_id FROM files WHERE deleted_at IS NOT NULL AND cloudinary_public_id IS NOT NULL')
+    for (const f of filesToDelete.rows) {
+      try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
+      try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
+    }
+
+    await pool.query('DELETE FROM links WHERE deleted_at IS NOT NULL')
+    await pool.query('DELETE FROM files WHERE deleted_at IS NOT NULL')
+    await pool.query('DELETE FROM folders WHERE deleted_at IS NOT NULL')
+
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('empty trash error', err)
+    return res.status(500).json({ error: 'Erreur lors du vidage de la corbeille.' })
   }
 })
 

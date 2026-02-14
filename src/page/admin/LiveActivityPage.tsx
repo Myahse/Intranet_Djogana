@@ -206,88 +206,90 @@ export default function LiveActivityPage(): ReactNode {
   }, [presence])
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-hidden p-6">
+    <div className="flex h-full flex-col gap-3 overflow-hidden p-3 sm:gap-4 sm:p-4 lg:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Monitor className="size-6 text-primary" />
-          <h1 className="text-2xl font-semibold">Surveillance en direct</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Monitor className="size-5 text-primary sm:size-6" />
+          <h1 className="text-lg font-semibold sm:text-2xl">Surveillance en direct</h1>
           <Badge variant="secondary" className="text-xs">
             {onlineCount} en ligne
           </Badge>
         </div>
       </div>
 
-      <div className="flex flex-1 gap-4 min-h-0">
+      <div className="flex flex-1 flex-col gap-3 overflow-auto sm:gap-4 lg:flex-row lg:overflow-hidden lg:min-h-0">
         {/* Left column: presence grid + page heatmap */}
-        <div className="flex w-80 shrink-0 flex-col gap-4 overflow-auto">
+        <div className="flex w-full shrink-0 flex-col gap-3 sm:gap-4 lg:w-80 lg:overflow-auto">
           {/* Presence Grid */}
           <Card>
-            <CardHeader className="pb-2">
+            <CardHeader className="px-3 pb-2 sm:px-6">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <Circle className="size-2.5 fill-emerald-500 text-emerald-500 animate-pulse" />
                 Utilisateurs en ligne
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="space-y-2 px-3 sm:px-6">
               {onlineCount === 0 ? (
                 <p className="text-xs text-muted-foreground">Aucun utilisateur en ligne.</p>
               ) : (
-                presenceEntries.map(([ident, p]) => {
-                  const idle = (Date.now() - new Date(p.lastSeen).getTime()) > 120000
-                  return (
-                    <div
-                      key={ident}
-                      className="flex items-start gap-2.5 rounded-lg border p-2.5"
-                    >
-                      <div className="relative shrink-0">
-                        <div className="flex size-8 items-center justify-center rounded-full bg-muted">
-                          <User className="size-4 text-muted-foreground" />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                  {presenceEntries.map(([ident, p]) => {
+                    const idle = (Date.now() - new Date(p.lastSeen).getTime()) > 120000
+                    return (
+                      <div
+                        key={ident}
+                        className="flex items-start gap-2.5 rounded-lg border p-2 sm:p-2.5"
+                      >
+                        <div className="relative shrink-0">
+                          <div className="flex size-8 items-center justify-center rounded-full bg-muted">
+                            <User className="size-4 text-muted-foreground" />
+                          </div>
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 flex size-2.5 rounded-full ring-2 ring-background ${
+                              idle ? 'bg-amber-400' : 'bg-emerald-500'
+                            }`}
+                          />
                         </div>
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 flex size-2.5 rounded-full ring-2 ring-background ${
-                            idle ? 'bg-amber-400' : 'bg-emerald-500'
-                          }`}
-                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium leading-tight">{ident}</p>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                            <MapPin className="size-3 shrink-0" />
+                            <span className="truncate">{friendlyPageName(p.page)}</span>
+                            {p.section && (
+                              <span className="truncate opacity-70">/ {p.section}</span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="capitalize">{p.role}</span>
+                            {p.direction_name && (
+                              <>
+                                <span className="text-border">|</span>
+                                <span className="truncate">{p.direction_name}</span>
+                              </>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+                            {idle ? 'Inactif' : 'Actif'} &middot; {timeAgo(p.lastSeen)}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium leading-tight">{ident}</p>
-                        <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                          <MapPin className="size-3 shrink-0" />
-                          <span className="truncate">{friendlyPageName(p.page)}</span>
-                          {p.section && (
-                            <span className="truncate opacity-70">/ {p.section}</span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className="capitalize">{p.role}</span>
-                          {p.direction_name && (
-                            <>
-                              <span className="text-border">|</span>
-                              <span className="truncate">{p.direction_name}</span>
-                            </>
-                          )}
-                        </div>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-                          {idle ? 'Inactif' : 'Actif'} &middot; {timeAgo(p.lastSeen)}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })
+                    )
+                  })}
+                </div>
               )}
             </CardContent>
           </Card>
 
           {/* Page Heatmap */}
           <Card>
-            <CardHeader className="pb-2">
+            <CardHeader className="px-3 pb-2 sm:px-6">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <FolderOpen className="size-4" />
                 Pages actives
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-3 sm:px-6">
               {pageHeatmap.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Aucune page active.</p>
               ) : (
@@ -307,27 +309,27 @@ export default function LiveActivityPage(): ReactNode {
         </div>
 
         {/* Right column: Activity Feed */}
-        <Card className="flex flex-1 flex-col min-h-0">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+        <Card className="flex min-h-[300px] flex-1 flex-col sm:min-h-[400px] lg:min-h-0">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 px-3 pb-2 sm:px-6">
+            <CardTitle className="flex flex-wrap items-center gap-1.5 text-sm font-medium sm:gap-2">
               <FileText className="size-4" />
-              Flux d'activité
+              <span>Flux d'activité</span>
               <Badge variant="outline" className="text-xs font-normal">
-                {actions.length} événements
+                {actions.length}
               </Badge>
             </CardTitle>
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1.5 text-xs"
+              className="h-7 shrink-0 gap-1.5 text-xs"
               onClick={() => setPaused((p) => !p)}
             >
               {paused ? <Play className="size-3" /> : <Pause className="size-3" />}
-              {paused ? 'Reprendre' : 'Pause'}
+              <span className="hidden xs:inline">{paused ? 'Reprendre' : 'Pause'}</span>
             </Button>
           </CardHeader>
           <CardContent className="flex-1 min-h-0 p-0">
-            <div ref={feedRef} className="h-full overflow-auto px-4 pb-4">
+            <div ref={feedRef} className="h-full overflow-auto px-3 pb-3 sm:px-4 sm:pb-4">
               {actions.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
                   En attente d'activité...
@@ -337,11 +339,11 @@ export default function LiveActivityPage(): ReactNode {
                   {actions.map((a, i) => (
                     <div
                       key={`${a.ts}-${i}`}
-                      className={`flex items-start gap-3 rounded-lg border px-3 py-2 text-sm ${actionColor(a.action)}`}
+                      className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-sm sm:gap-3 sm:px-3 sm:py-2 ${actionColor(a.action)}`}
                     >
                       <div className="mt-0.5 shrink-0">{actionIcon(a.action)}</div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
                           <span className="font-medium">{a.identifiant}</span>
                           <span className="text-muted-foreground">{friendlyActionName(a.action)}</span>
                         </div>
@@ -351,7 +353,7 @@ export default function LiveActivityPage(): ReactNode {
                           </p>
                         )}
                       </div>
-                      <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                      <span className="shrink-0 text-[10px] text-muted-foreground/70 sm:text-[11px]">
                         {formatTime(a.ts)}
                       </span>
                     </div>
