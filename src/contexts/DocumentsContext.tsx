@@ -31,12 +31,14 @@ export type DocumentItem = {
   id: string
   name: string
   size: number
+  mime_type?: string
   url: string
   /** Server-proxied URL that serves the file with correct Content-Type headers (for Office Viewer) */
   viewUrl?: string
   viewerUrl?: string
   folderKey: string
   direction_id?: string | null
+  created_at?: string
 }
 
 export type LinkItem = {
@@ -45,6 +47,7 @@ export type LinkItem = {
   label: string
   folderKey: string
   direction_id?: string | null
+  created_at?: string
 }
 
 /** Parse folderKey (direction_id::name) into direction_id and name */
@@ -145,10 +148,12 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         id: string
         name: string
         size: number
+        mime_type?: string
         url: string
         view_url?: string
         folder: string
         direction_id?: string | null
+        created_at?: string
       }>
 
       const loaded: DocumentItem[] = data.map((row) => {
@@ -164,11 +169,13 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           id: row.id,
           name: row.name,
           size: row.size ?? 0,
+          mime_type: row.mime_type,
           url: row.url,
           viewUrl,
           viewerUrl,
           folderKey,
           direction_id: row.direction_id,
+          created_at: row.created_at,
         }
       })
 
@@ -186,6 +193,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
               direction_id?: string | null
               url: string
               label: string
+              created_at?: string
             }>
             const loadedLinks: LinkItem[] = linksData.map((row) => {
               const dirId = row.direction_id ?? ''
@@ -196,6 +204,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
                 label: row.label,
                 folderKey,
                 direction_id: row.direction_id,
+                created_at: row.created_at,
               }
             })
             setLinkItems(loadedLinks)
