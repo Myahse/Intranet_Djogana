@@ -7,6 +7,8 @@ import {
   Users, Building2, FolderOpen, FileText, HardDrive, Link2,
   TrendingUp, Upload, Activity, RefreshCw, CalendarDays,
   Search, ArrowUpDown, X, CalendarRange,
+  Trash2, UserPlus, UserMinus, FolderPlus, FolderMinus,
+  FilePlus, FileMinus, FilePen, LinkIcon, Eye, KeyRound, LogIn,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Calendar } from '@/components/ui/calendar'
@@ -65,8 +67,56 @@ const ACTION_LABELS: Record<string, string> = {
   rename_file: 'Fichier renommé',
   create_link: 'Lien créé',
   delete_link: 'Lien supprimé',
+  update_link: 'Lien modifié',
+  update_folder_visibility: 'Visibilité du dossier modifiée',
   change_password: 'Mot de passe changé',
   login: 'Connexion',
+}
+
+/** Extract the best human-readable entity name from an activity's details */
+function getEntityName(action: string, details: Record<string, unknown> | null): string {
+  if (!details) return ''
+  // Most actions store a "name" key
+  if (details.name && typeof details.name === 'string') return details.name
+  // delete_folder stores folder name as "folder"
+  if (details.folder && typeof details.folder === 'string') return details.folder
+  // user actions store the username as "identifiant"
+  if (details.identifiant && typeof details.identifiant === 'string') return details.identifiant
+  // link actions store the link text as "label"
+  if (details.label && typeof details.label === 'string') return details.label
+  // fallback for any file_name / folder_name keys
+  if (details.file_name && typeof details.file_name === 'string') return details.file_name
+  if (details.folder_name && typeof details.folder_name === 'string') return details.folder_name
+  return ''
+}
+
+/** Pick an icon color class based on the action type */
+function getActionColor(action: string): string {
+  if (action.startsWith('delete')) return 'text-rose-500 bg-rose-500/10'
+  if (action.startsWith('create') || action === 'upload_file') return 'text-emerald-500 bg-emerald-500/10'
+  if (action.startsWith('update') || action === 'rename_file') return 'text-amber-500 bg-amber-500/10'
+  if (action === 'login') return 'text-sky-500 bg-sky-500/10'
+  if (action === 'change_password') return 'text-violet-500 bg-violet-500/10'
+  return 'text-muted-foreground bg-muted'
+}
+
+/** Pick an icon component based on the action type */
+const ACTION_ICONS: Record<string, React.ElementType> = {
+  upload_file: FilePlus,
+  delete_file: FileMinus,
+  rename_file: FilePen,
+  create_folder: FolderPlus,
+  delete_folder: FolderMinus,
+  update_folder_visibility: Eye,
+  create_user: UserPlus,
+  delete_user: UserMinus,
+  create_direction: Building2,
+  delete_direction: Trash2,
+  create_link: LinkIcon,
+  delete_link: LinkIcon,
+  update_link: LinkIcon,
+  change_password: KeyRound,
+  login: LogIn,
 }
 
 /* ─── types ─── */
@@ -1115,16 +1165,18 @@ export default function AdminPage() {
           ) : (
             <div className="divide-y">
               {filteredActivity.map((a, i) => {
-                const details = a.details as Record<string, string> | null
-                const entityName = details?.name || details?.file_name || details?.folder_name || ''
+                const entityName = getEntityName(a.action, a.details)
+                const colorClass = getActionColor(a.action)
+                const IconComponent = ACTION_ICONS[a.action] ?? Activity
+                const actor = a.actor_identifiant || 'Système'
                 return (
                   <div key={i} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                      <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${colorClass}`}>
+                      <IconComponent className="h-3.5 w-3.5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm truncate">
-                        <span className="font-medium">{a.actor_identifiant}</span>
+                        <span className="font-medium">{actor}</span>
                         {' — '}
                         <span>{ACTION_LABELS[a.action] ?? a.action}</span>
                         {entityName && (

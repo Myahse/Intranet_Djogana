@@ -195,6 +195,13 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
+  // Add is_direction_chief flag (chef de direction can manage their direction)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_direction_chief boolean NOT NULL DEFAULT false;
+    `)
+  } catch (_) { /* column may already exist */ }
+
   // Device login requests (GitHub-style: request access → approve on mobile → grant session)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_requests (
@@ -974,6 +981,95 @@ app.post('/api/directions', async (req, res) => {
   }
 })
 
+// Update direction name and/or code
+app.patch('/api/directions/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { name, code, identifiant } = req.body || {}
+    const callerIdentifiant = identifiant || req.query.identifiant
+
+    // Permission check
+    if (callerIdentifiant) {
+      const perms = await getPermissionsForIdentifiant(callerIdentifiant)
+      if (perms && !perms.can_create_direction) {
+        return res.status(403).json({ error: 'Vous n\'avez pas le droit de modifier des directions.' })
+      }
+    }
+
+    // Ensure the direction exists
+    const dirRow = await pool.query('SELECT id, name, code FROM directions WHERE id = $1', [id])
+    if (dirRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Direction introuvable.' })
+    }
+
+    const trimmedName = name ? name.trim() : null
+    const trimmedCode = code ? code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : null
+
+    if (!trimmedName && !trimmedCode) {
+      return res.status(400).json({ error: 'Veuillez fournir un nom ou un code à modifier.' })
+    }
+
+    if (trimmedCode && (trimmedCode.length < 2 || trimmedCode.length > 4)) {
+      return res.status(400).json({ error: 'Le code doit faire 2 à 4 caractères (lettres ou chiffres).' })
+    }
+
+    // Build dynamic update
+    const sets = []
+    const vals = []
+    let idx = 1
+    if (trimmedName) {
+      sets.push(`name = $${idx}`)
+      vals.push(trimmedName)
+      idx++
+    }
+    if (trimmedCode) {
+      sets.push(`code = $${idx}`)
+      vals.push(trimmedCode)
+      idx++
+    }
+    vals.push(id)
+
+    const result = await pool.query(
+      `UPDATE directions SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, name, code`,
+      vals
+    )
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Direction introuvable.' })
+    }
+
+    // Activity log
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'update_direction',
+      actorIdentifiant: callerIdentifiant || null,
+      actorId,
+      directionId: id,
+      entityType: 'direction',
+      entityId: id,
+      details: {
+        oldName: dirRow.rows[0].name,
+        oldCode: dirRow.rows[0].code,
+        newName: result.rows[0].name,
+        newCode: result.rows[0].code,
+      },
+    })
+
+    broadcastDataChange('directions', 'updated', { id })
+    return res.json(result.rows[0])
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'Une direction avec ce nom ou ce code existe déjà.' })
+    }
+    console.error('update direction error', err)
+    return res.status(500).json({ error: 'Erreur lors de la mise à jour de la direction.' })
+  }
+})
+
 app.delete('/api/directions/:id', async (req, res) => {
   try {
     const { id } = req.params
@@ -1022,7 +1118,7 @@ app.delete('/api/directions/:id', async (req, res) => {
 app.get('/api/users', async (_req, res) => {
   try {
     const result = await pool.query(`
-      SELECT u.id, u.identifiant, u.role, u.direction_id, u.created_at,
+      SELECT u.id, u.identifiant, u.role, u.direction_id, u.created_at, u.is_direction_chief,
              d.name AS direction_name
       FROM users u
       LEFT JOIN directions d ON d.id = u.direction_id
@@ -1036,6 +1132,7 @@ app.get('/api/users', async (_req, res) => {
         role: r.role,
         direction_id: r.direction_id,
         direction_name: r.direction_name,
+        is_direction_chief: Boolean(r.is_direction_chief),
         created_at: r.created_at,
       }))
     )
@@ -1096,6 +1193,179 @@ app.delete('/api/users/:id', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('delete user error', err)
     return res.status(500).json({ error: 'Erreur lors de la suppression de l’utilisateur.' })
+  }
+})
+
+
+// Update user role and/or direction
+app.patch('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { role, direction_id, caller_identifiant } = req.body || {}
+
+    // Permission check
+    if (caller_identifiant) {
+      const perms = await getPermissionsForIdentifiant(caller_identifiant)
+      const callerRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [caller_identifiant])
+      const isCallerAdmin = callerRes.rows.length > 0 && callerRes.rows[0].role === 'admin'
+      if (!isCallerAdmin && perms && !perms.can_create_user) {
+        return res.status(403).json({ error: 'Vous n\'avez pas le droit de modifier des utilisateurs.' })
+      }
+    }
+
+    // Ensure the target user exists
+    const userRow = await pool.query(
+      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      [id]
+    )
+    if (userRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const targetUser = userRow.rows[0]
+
+    // Block editing admin users (except by admin)
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Impossible de modifier un compte administrateur.' })
+    }
+
+    // Build dynamic update
+    const sets = []
+    const vals = []
+    let idx = 1
+
+    if (role !== undefined && role !== null) {
+      const trimmedRole = role.trim()
+      if (!trimmedRole) {
+        return res.status(400).json({ error: 'Rôle requis.' })
+      }
+      // Verify the role exists
+      const roleCheck = await pool.query('SELECT id FROM roles WHERE name = $1', [trimmedRole])
+      if (roleCheck.rows.length === 0 && trimmedRole !== 'admin') {
+        return res.status(400).json({ error: 'Ce rôle n\'existe pas.' })
+      }
+      sets.push(`role = $${idx}`)
+      vals.push(trimmedRole)
+      idx++
+    }
+
+    if (direction_id !== undefined) {
+      // direction_id can be null (to remove direction) or a valid uuid
+      if (direction_id) {
+        const dirCheck = await pool.query('SELECT id FROM directions WHERE id = $1', [direction_id])
+        if (dirCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Cette direction n\'existe pas.' })
+        }
+      }
+      sets.push(`direction_id = $${idx}`)
+      vals.push(direction_id || null)
+      idx++
+      // If direction is removed, also remove chief status
+      if (!direction_id) {
+        sets.push(`is_direction_chief = false`)
+      }
+    }
+
+    if (sets.length === 0) {
+      return res.status(400).json({ error: 'Aucune modification fournie.' })
+    }
+
+    vals.push(id)
+    const result = await pool.query(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, identifiant, role, direction_id, is_direction_chief`,
+      vals
+    )
+
+    // Get direction name for the response
+    let direction_name = null
+    if (result.rows[0].direction_id) {
+      const dirRes = await pool.query('SELECT name FROM directions WHERE id = $1', [result.rows[0].direction_id])
+      if (dirRes.rows.length > 0) direction_name = dirRes.rows[0].name
+    }
+
+    // Activity log
+    let actorId = null
+    if (caller_identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [caller_identifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'update_user',
+      actorIdentifiant: caller_identifiant || null,
+      actorId,
+      directionId: result.rows[0].direction_id,
+      entityType: 'user',
+      entityId: id,
+      details: {
+        identifiant: targetUser.identifiant,
+        oldRole: targetUser.role,
+        newRole: result.rows[0].role,
+        oldDirectionId: targetUser.direction_id,
+        newDirectionId: result.rows[0].direction_id,
+      },
+    })
+
+    broadcastDataChange('users', 'updated', { id })
+    // Notify the user so their permissions refresh
+    broadcastPermissionsChange(result.rows[0].role)
+
+    return res.json({
+      ...result.rows[0],
+      is_direction_chief: Boolean(result.rows[0].is_direction_chief),
+      direction_name,
+    })
+  } catch (err) {
+    console.error('update user error', err)
+    return res.status(500).json({ error: 'Erreur lors de la mise à jour de l\'utilisateur.' })
+  }
+})
+
+// Toggle "Chef de Direction" status (admin only)
+app.patch('/api/users/:id/chief', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { is_direction_chief, caller_identifiant } = req.body || {}
+
+    if (!caller_identifiant) {
+      return res.status(403).json({ error: 'Identifiant requis.' })
+    }
+    const callerRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [caller_identifiant])
+    if (callerRes.rows.length === 0 || callerRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Seul un administrateur peut modifier ce statut.' })
+    }
+
+    const userRes = await pool.query(
+      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      [id]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const targetUser = userRes.rows[0]
+
+    if (targetUser.role === 'admin') {
+      return res.status(400).json({ error: 'Un administrateur a deja tous les droits.' })
+    }
+    if (!targetUser.direction_id && is_direction_chief) {
+      return res.status(400).json({ error: 'Utilisateur sans direction.' })
+    }
+
+    await pool.query(
+      'UPDATE users SET is_direction_chief = $1 WHERE id = $2',
+      [Boolean(is_direction_chief), id]
+    )
+
+    broadcastDataChange('users', 'updated', { id })
+    // Notify the affected user's role so their permissions refresh
+    await broadcastPermissionsChange(targetUser.role)
+
+    return res.json({
+      id: targetUser.id,
+      identifiant: targetUser.identifiant,
+      is_direction_chief: Boolean(is_direction_chief),
+    })
+  } catch (err) {
+    console.error('toggle chief error', err)
+    return res.status(500).json({ error: 'Erreur serveur.' })
   }
 })
 
@@ -1192,7 +1462,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1217,6 +1487,7 @@ app.post('/api/auth/login', async (req, res) => {
       role: user.role,
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
+      is_direction_chief: Boolean(user.is_direction_chief),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
       token,
@@ -1247,7 +1518,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(401).json({ error: 'Token invalide.' })
     }
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1264,6 +1535,7 @@ app.get('/api/auth/me', async (req, res) => {
       role: user.role,
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
+      is_direction_chief: Boolean(user.is_direction_chief),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
     })
@@ -1802,11 +2074,12 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
 // Helper: get permissions for a user by identifiant (admin => all true)
 async function getPermissionsForIdentifiant(identifiant) {
   const userRes = await pool.query(
-    'SELECT role FROM users WHERE identifiant = $1',
+    'SELECT role, is_direction_chief FROM users WHERE identifiant = $1',
     [identifiant]
   )
   if (userRes.rows.length === 0) return null
   const roleName = userRes.rows[0].role
+  const isChief = Boolean(userRes.rows[0].is_direction_chief)
   if (roleName === 'admin') {
     return {
       can_create_folder: true,
@@ -1833,35 +2106,48 @@ async function getPermissionsForIdentifiant(identifiant) {
     `,
     [roleName]
   )
-  if (permRes.rows.length === 0) {
-    return {
-      can_create_folder: false,
-      can_upload_file: false,
-      can_delete_file: false,
-      can_delete_folder: false,
-      can_create_user: false,
-      can_delete_user: false,
-      can_create_direction: false,
-      can_delete_direction: false,
-      can_view_activity_log: false,
-      can_set_folder_visibility: false,
-      can_view_stats: false,
+  let base = {
+    can_create_folder: false,
+    can_upload_file: false,
+    can_delete_file: false,
+    can_delete_folder: false,
+    can_create_user: false,
+    can_delete_user: false,
+    can_create_direction: false,
+    can_delete_direction: false,
+    can_view_activity_log: false,
+    can_set_folder_visibility: false,
+    can_view_stats: false,
+  }
+  if (permRes.rows.length > 0) {
+    const row = permRes.rows[0]
+    base = {
+      can_create_folder: !!row.can_create_folder,
+      can_upload_file: !!row.can_upload_file,
+      can_delete_file: !!row.can_delete_file,
+      can_delete_folder: !!row.can_delete_folder,
+      can_create_user: !!row.can_create_user,
+      can_delete_user: !!row.can_delete_user,
+      can_create_direction: !!row.can_create_direction,
+      can_delete_direction: !!row.can_delete_direction,
+      can_view_activity_log: !!row.can_view_activity_log,
+      can_set_folder_visibility: !!row.can_set_folder_visibility,
+      can_view_stats: !!row.can_view_stats,
     }
   }
-  const row = permRes.rows[0]
-  return {
-    can_create_folder: !!row.can_create_folder,
-    can_upload_file: !!row.can_upload_file,
-    can_delete_file: !!row.can_delete_file,
-    can_delete_folder: !!row.can_delete_folder,
-    can_create_user: !!row.can_create_user,
-    can_delete_user: !!row.can_delete_user,
-    can_create_direction: !!row.can_create_direction,
-    can_delete_direction: !!row.can_delete_direction,
-    can_view_activity_log: !!row.can_view_activity_log,
-    can_set_folder_visibility: !!row.can_set_folder_visibility,
-    can_view_stats: !!row.can_view_stats,
+
+  // Chef de Direction: grant management permissions within their direction
+  if (isChief) {
+    base.can_create_folder = true
+    base.can_upload_file = true
+    base.can_delete_file = true
+    base.can_delete_folder = true
+    base.can_view_activity_log = true
+    base.can_set_folder_visibility = true
+    base.can_view_stats = true
   }
+
+  return base
 }
 
 // List roles with their global permissions (admin role is hidden from the list)
@@ -1943,6 +2229,52 @@ app.post('/api/roles', async (req, res) => {
   } catch (err) {
     console.error('create role error', err)
     return res.status(500).json({ error: 'Erreur lors de la création du rôle.' })
+  }
+})
+
+// Update role name
+app.patch('/api/roles/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { name } = req.body || {}
+    const trimmed = (name || '').trim()
+    if (!trimmed) {
+      return res.status(400).json({ error: 'Nom de rôle requis.' })
+    }
+    if (trimmed.toLowerCase() === 'admin') {
+      return res.status(400).json({ error: 'Le nom "admin" est réservé.' })
+    }
+
+    // Ensure the role exists and is not the admin role
+    const roleRes = await pool.query('SELECT id, name FROM roles WHERE id = $1', [id])
+    if (roleRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Rôle introuvable.' })
+    }
+    if (roleRes.rows[0].name === 'admin') {
+      return res.status(403).json({ error: 'Le rôle admin ne peut pas être renommé.' })
+    }
+
+    // Update the role name
+    const result = await pool.query(
+      'UPDATE roles SET name = $1 WHERE id = $2 RETURNING id, name',
+      [trimmed, id]
+    )
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Rôle introuvable.' })
+    }
+
+    // Also update the role column in users table for all users with the old role name
+    const oldName = roleRes.rows[0].name
+    await pool.query('UPDATE users SET role = $1 WHERE role = $2', [trimmed, oldName])
+
+    broadcastDataChange('roles', 'updated', { id })
+    return res.json(result.rows[0])
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'Un rôle avec ce nom existe déjà.' })
+    }
+    console.error('update role name error', err)
+    return res.status(500).json({ error: 'Erreur lors de la mise à jour du rôle.' })
   }
 })
 
