@@ -903,10 +903,51 @@ const DocumentSection = () => {
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
 
-  // View & sort state
-  const [viewMode, setViewMode] = useState<ViewMode>('tiles')
-  const [sortField, setSortField] = useState<SortField>('name')
-  const [sortDir, setSortDir] = useState<SortDirection>('asc')
+  // View & sort state — persisted per user in localStorage
+  const storageKey = user?.identifiant ? `doc_prefs_${user.identifiant}` : null
+
+  const loadPrefs = (): { viewMode: ViewMode; sortField: SortField; sortDir: SortDirection } => {
+    if (!storageKey) return { viewMode: 'tiles', sortField: 'name', sortDir: 'asc' }
+    try {
+      const raw = localStorage.getItem(storageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        return {
+          viewMode: (['tiles', 'list', 'details'] as ViewMode[]).includes(parsed.viewMode) ? parsed.viewMode : 'tiles',
+          sortField: (['name', 'size', 'date', 'type'] as SortField[]).includes(parsed.sortField) ? parsed.sortField : 'name',
+          sortDir: (['asc', 'desc'] as SortDirection[]).includes(parsed.sortDir) ? parsed.sortDir : 'asc',
+        }
+      }
+    } catch { /* ignore */ }
+    return { viewMode: 'tiles', sortField: 'name', sortDir: 'asc' }
+  }
+
+  const savePrefs = useCallback((prefs: { viewMode?: ViewMode; sortField?: SortField; sortDir?: SortDirection }) => {
+    if (!storageKey) return
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '{}')
+      localStorage.setItem(storageKey, JSON.stringify({ ...current, ...prefs }))
+    } catch { /* ignore */ }
+  }, [storageKey])
+
+  const [viewMode, setViewModeRaw] = useState<ViewMode>(() => loadPrefs().viewMode)
+  const [sortField, setSortFieldRaw] = useState<SortField>(() => loadPrefs().sortField)
+  const [sortDir, setSortDirRaw] = useState<SortDirection>(() => loadPrefs().sortDir)
+
+  const setViewMode = useCallback((mode: ViewMode) => {
+    setViewModeRaw(mode)
+    savePrefs({ viewMode: mode })
+  }, [savePrefs])
+
+  const setSortField = useCallback((field: SortField) => {
+    setSortFieldRaw(field)
+    savePrefs({ sortField: field })
+  }, [savePrefs])
+
+  const setSortDir = useCallback((dir: SortDirection) => {
+    setSortDirRaw(dir)
+    savePrefs({ sortDir: dir })
+  }, [savePrefs])
 
   // User can edit (delete/upload) only in their direction; view-only in other directions
   const canEditFolder = (key: string) => {
