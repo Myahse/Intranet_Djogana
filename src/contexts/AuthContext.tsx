@@ -568,6 +568,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             logoutRef.current()
           }
 
+          // Online users update (admin only — silent tracking)
+          if (data.type === 'online_users') {
+            window.dispatchEvent(
+              new CustomEvent('ws:online_users', { detail: { users: data.users } })
+            )
+          }
+
           // Generic data-change events → re-dispatch as DOM CustomEvents
           // so every page/context can subscribe independently.
           if (data.type === 'data_changed' && data.resource) {

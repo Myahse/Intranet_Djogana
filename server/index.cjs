@@ -622,6 +622,43 @@ function broadcastDataChange(resource, action, details) {
   }
 }
 
+/**
+ * Get the list of currently online (connected via WebSocket) non-admin users.
+ * Returns an array of { identifiant, role, connectedAt }.
+ */
+function getOnlineUsers() {
+  const seen = new Map()
+  for (const client of wsClients) {
+    if (client.readyState === 1 && client._userIdentifiant && client._userRole !== 'admin') {
+      // Deduplicate by identifiant (user may have multiple tabs)
+      if (!seen.has(client._userIdentifiant)) {
+        seen.set(client._userIdentifiant, {
+          identifiant: client._userIdentifiant,
+          role: client._userRole || 'user',
+          connectedAt: client._connectedAt || null,
+        })
+      }
+    }
+  }
+  return Array.from(seen.values())
+}
+
+/**
+ * Notify all connected admin clients about the current online users list.
+ * Only admin clients receive this — regular users never know.
+ */
+function broadcastOnlineUsersToAdmins() {
+  const onlineUsers = getOnlineUsers()
+  const message = JSON.stringify({ type: 'online_users', users: onlineUsers })
+  for (const client of wsClients) {
+    try {
+      if (client.readyState === 1 && client._userRole === 'admin') {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
   return jwt.sign(
@@ -686,6 +723,20 @@ function parsePgInterval(interval) {
 
 // ──────────── Admin analytics / stats ────────────
 // Admin sees everything; users with can_view_stats see only their direction.
+// Get currently online users (admin only — users are not notified)
+app.get('/api/admin/online-users', requireAuth, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [req.authIdentifiant])
+    if (userRes.rows.length === 0 || userRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+    }
+    return res.json(getOnlineUsers())
+  } catch (err) {
+    console.error('online-users error', err)
+    return res.status(500).json({ error: 'Erreur serveur.' })
+  }
+})
+
 app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
     // Check access
@@ -3534,10 +3585,14 @@ wss.on('connection', async (ws, req) => {
 
   ws._userIdentifiant = identifiant
   ws._userRole = userRole
+  ws._connectedAt = new Date().toISOString()
   wsClients.add(ws)
 
   // eslint-disable-next-line no-console
   console.log(`[ws] client connected: ${identifiant} (role: ${userRole}) — ${wsClients.size} total`)
+
+  // Notify admins about updated online users (silently — user doesn't know)
+  broadcastOnlineUsersToAdmins()
 
   // Keep-alive ping every 30s
   const pingInterval = setInterval(() => {
@@ -3549,6 +3604,8 @@ wss.on('connection', async (ws, req) => {
     clearInterval(pingInterval)
     // eslint-disable-next-line no-console
     console.log(`[ws] client disconnected: ${identifiant} — ${wsClients.size} total`)
+    // Notify admins about updated online users
+    broadcastOnlineUsersToAdmins()
   })
 
   ws.on('error', () => {
