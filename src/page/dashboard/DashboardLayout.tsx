@@ -21,20 +21,13 @@ import {
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, FolderOpen, Home, Link2, LogOut, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
-import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
+import { DashboardFilterProvider } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
 
 const API_BASE_URL =
@@ -56,7 +49,6 @@ function DashboardLayout() {
   const location = useLocation()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sidebarSearch, setSidebarSearch] = useState('')
-  const { contentFilter, setContentFilter } = useDashboardFilter()
   const navigate = useNavigate()
   const { folderOptions, getFiles, getLinks } = useDocuments()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
@@ -69,7 +61,7 @@ function DashboardLayout() {
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
-  const { isAdmin, isDirectionChief, user } = useAuth()
+  const { isAdmin, isDirectionChief, user, logout } = useAuth()
   const canViewStats = isAdmin || user?.permissions?.can_view_stats
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
@@ -224,22 +216,17 @@ function DashboardLayout() {
               />
             </Link>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Filter className="size-4 text-muted-foreground" aria-hidden />
-            <Select
-              value={contentFilter}
-              onValueChange={(v) => setContentFilter(v as ContentFilterType)}
-            >
-              <SelectTrigger className="w-[130px] h-9 border-muted bg-muted/50">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous</SelectItem>
-                <SelectItem value="files">Fichiers</SelectItem>
-                <SelectItem value="links">Liens</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <button
+            onClick={() => {
+              if (window.confirm('Voulez-vous vraiment vous déconnecter ?')) {
+                logout()
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground shrink-0"
+          >
+            <LogOut className="size-4" />
+            <span className="hidden sm:inline">Déconnexion</span>
+          </button>
         </header>
         <div className="flex flex-1 min-h-0 min-w-0">
           <Sidebar>
@@ -316,7 +303,8 @@ function DashboardLayout() {
               {/* ── Directions – each direction is a collapsible section ── */}
               {filteredDirections.map((dir) => {
                 const dirKey = dir.directionId
-                const dirHasActive = [
+                const isDirActive = location.pathname === `/dashboard/direction/${encodeURIComponent(dirKey)}`
+                const dirHasActive = isDirActive || [
                   ...dir.rootFolders,
                   ...Object.values(dir.groupedFolders).flatMap((g) => g.subfolders),
                 ].some((f) => isFolderActive(f.value))
@@ -325,8 +313,11 @@ function DashboardLayout() {
                 return (
                   <SidebarGroup key={dirKey} className="py-0">
                     <SidebarGroupLabel
-                      className="cursor-pointer select-none hover:bg-sidebar-accent/50 rounded-md transition-colors"
-                      onClick={() => setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))}
+                      className={`cursor-pointer select-none hover:bg-sidebar-accent/50 rounded-md transition-colors ${isDirActive ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold' : ''}`}
+                      onClick={() => {
+                        setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))
+                        navigate(`/dashboard/direction/${encodeURIComponent(dirKey)}`)
+                      }}
                     >
                       <span className="flex items-center gap-2 flex-1 min-w-0">
                         <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
