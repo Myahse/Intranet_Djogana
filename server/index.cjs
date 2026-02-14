@@ -3712,7 +3712,10 @@ wss.on('connection', async (ws, req) => {
   // Handle incoming messages from clients (presence + action tracking)
   ws.on('message', (raw) => {
     try {
-      const data = JSON.parse(raw.toString())
+      const msg = raw.toString()
+      // Ignore pong frames and empty messages
+      if (!msg || msg.length < 2) return
+      const data = JSON.parse(msg)
 
       // Presence update: user navigated to a new page
       if (data.type === 'presence' && userRole !== 'admin') {
@@ -3723,6 +3726,7 @@ wss.on('connection', async (ws, req) => {
           section: data.section ? String(data.section).slice(0, 200) : null,
           lastSeen: new Date().toISOString(),
         })
+        console.log(`[live] presence: ${identifiant} → ${data.page}`)
         broadcastLivePresence()
       }
 
@@ -3730,6 +3734,7 @@ wss.on('connection', async (ws, req) => {
       if (data.type === 'action' && userRole !== 'admin') {
         const action = String(data.action || 'unknown').slice(0, 50)
         const detail = data.detail ? String(data.detail).slice(0, 300) : null
+        console.log(`[live] action: ${identifiant} → ${action} (${detail})`)
         recordLiveEvent(identifiant, action, detail)
       }
     } catch (_) { /* ignore malformed messages */ }

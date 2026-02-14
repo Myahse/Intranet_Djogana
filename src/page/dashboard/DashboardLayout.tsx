@@ -379,6 +379,7 @@ function DashboardLayout() {
                                   onClick={() => {
                                     if (rootHasContent) setOpenFolders((prev) => ({ ...prev, [folder.value]: !rootIsExpanded }))
                                     navigate(`/dashboard/documents/${encodeURIComponent(folder.value)}`)
+                                    sendWs({ type: 'action', action: 'open_folder', detail: folder.label })
                                   }}
                                 >
                                   {rootHasContent ? (
@@ -429,6 +430,7 @@ function DashboardLayout() {
                                   onClick={() => {
                                     setOpenGroups((prev) => ({ ...prev, [groupKey]: !isOpen }))
                                     navigate(`/dashboard/documents/${encodeURIComponent(groupKey)}`)
+                                    sendWs({ type: 'action', action: 'open_folder', detail: group.groupLabel })
                                   }}
                                 >
                                   {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
@@ -450,6 +452,7 @@ function DashboardLayout() {
                                               e.preventDefault()
                                               if (subHasContent) setOpenFolders((prev) => ({ ...prev, [subfolder.value]: !subIsExpanded }))
                                               navigate(`/dashboard/documents/${encodeURIComponent(subfolder.value)}`)
+                                              sendWs({ type: 'action', action: 'open_folder', detail: subfolder.label })
                                             }}
                                             className="cursor-pointer"
                                           >

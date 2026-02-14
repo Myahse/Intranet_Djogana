@@ -68,6 +68,7 @@ function friendlyActionName(action: string): string {
     add_link: 'Lien ajouté',
     view_file: 'Fichier consulté',
     open_folder: 'Dossier ouvert',
+    create_folder: 'Dossier créé',
   }
   return map[action] || action
 }
@@ -92,6 +93,8 @@ function actionIcon(action: string): ReactNode {
       return <Eye className="size-3.5 text-sky-500" />
     case 'open_folder':
       return <FolderOpen className="size-3.5 text-amber-500" />
+    case 'create_folder':
+      return <FolderOpen className="size-3.5 text-emerald-500" />
     default:
       return <FileText className="size-3.5 text-muted-foreground" />
   }
