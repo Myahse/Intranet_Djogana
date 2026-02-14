@@ -74,7 +74,7 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 /** Extract the best human-readable entity name from an activity's details */
-function getEntityName(action: string, details: Record<string, unknown> | null): string {
+function getEntityName(_action: string, details: Record<string, unknown> | null): string {
   if (!details) return ''
   // Most actions store a "name" key
   if (details.name && typeof details.name === 'string') return details.name
