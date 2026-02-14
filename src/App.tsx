@@ -12,6 +12,7 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import { DocumentsProvider } from '@/contexts/DocumentsContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import AdminPage from '@/page/admin'
+import LiveActivityPage from '@/page/admin/LiveActivityPage'
 
 export default function App() {
   return (
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="documents/:folder" element={<DocumentSection />} />
             <Route path="direction/:directionId" element={<DocumentSection />} />
             <Route path="stats" element={<AdminPage />} />
+            <Route path="live" element={<LiveActivityPage />} />
           </Route>
           <Route
             path="/admin"

@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
-import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, FileText, FolderOpen, Home, Link2, LogOut, Search, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
@@ -61,11 +61,27 @@ function DashboardLayout() {
 
   const isFolderActive = (folderValue: string) =>
     location.pathname === `/dashboard/documents/${encodeURIComponent(folderValue)}`
-  const { isAdmin, isDirectionChief, user, logout } = useAuth()
+  const { isAdmin, isDirectionChief, user, logout, sendWs } = useAuth()
   const canViewStats = isAdmin || user?.permissions?.can_view_stats
   const isDocumentsRoot = location.pathname === '/dashboard/documents'
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
+  const isLivePage = location.pathname === '/dashboard/live'
+
+  // ── Silent presence tracking: report current page to server via WebSocket ──
+  useEffect(() => {
+    if (isAdmin) return // admin is not tracked
+    const path = location.pathname
+    // Derive a human-readable section name from the path
+    let section: string | null = null
+    if (path.startsWith('/dashboard/documents/')) {
+      const key = decodeURIComponent(path.replace('/dashboard/documents/', ''))
+      section = key
+    } else if (path.startsWith('/dashboard/direction/')) {
+      section = 'direction'
+    }
+    sendWs({ type: 'presence', page: path, section })
+  }, [location.pathname, isAdmin, sendWs])
 
   // ── Fetch ALL directions from the API (admin sees all, including empty ones) ──
   const [allDirections, setAllDirections] = useState<{ id: string; name: string }[]>([])
@@ -274,6 +290,16 @@ function DashboardLayout() {
                           <Link to="/dashboard/stats">
                             <BarChart3 className="size-4" />
                             <span>Statistiques</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
+                    {isAdmin && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton asChild isActive={isLivePage}>
+                          <Link to="/dashboard/live">
+                            <Eye className="size-4" />
+                            <span>Surveillance</span>
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>

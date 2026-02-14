@@ -663,6 +663,53 @@ function broadcastOnlineUsersToAdmins() {
   }
 }
 
+// ---------- Live surveillance: presence tracking + activity ring buffer (admin only) ----------
+// Map<identifiant, { page, section, lastSeen, connectedAt, role, direction_id, direction_name }>
+const userPresence = new Map()
+
+// Capped ring buffer for recent live actions (last 200 events)
+const MAX_LIVE_ACTIONS = 200
+const liveActions = []
+
+function pushLiveAction(entry) {
+  liveActions.push(entry)
+  if (liveActions.length > MAX_LIVE_ACTIONS) liveActions.shift()
+}
+
+/** Send a message to all admin WS clients. */
+function sendToAdmins(message) {
+  const msg = typeof message === 'string' ? message : JSON.stringify(message)
+  for (const client of wsClients) {
+    try {
+      if (client.readyState === 1 && client._userRole === 'admin') {
+        client.send(msg)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/** Broadcast the full live presence map to admins. */
+function broadcastLivePresence() {
+  sendToAdmins({ type: 'live_presence', users: Object.fromEntries(userPresence) })
+}
+
+/** Broadcast a single live action event to admins. */
+function broadcastLiveAction(action) {
+  sendToAdmins({ type: 'live_action', ...action })
+}
+
+/** Record a login/logout/connect/disconnect event in the live feed. */
+function recordLiveEvent(identifiant, action, detail) {
+  const entry = {
+    ts: new Date().toISOString(),
+    identifiant,
+    action,
+    detail: detail || null,
+  }
+  pushLiveAction(entry)
+  broadcastLiveAction(entry)
+}
+
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
   return jwt.sign(
@@ -737,6 +784,23 @@ app.get('/api/admin/online-users', requireAuth, async (req, res) => {
     return res.json(getOnlineUsers())
   } catch (err) {
     console.error('online-users error', err)
+    return res.status(500).json({ error: 'Erreur serveur.' })
+  }
+})
+
+// Live surveillance: initial state for the admin live page
+app.get('/api/admin/live', requireAuth, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [req.authIdentifiant])
+    if (userRes.rows.length === 0 || userRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+    }
+    return res.json({
+      presence: Object.fromEntries(userPresence),
+      actions: liveActions.slice(-50),
+    })
+  } catch (err) {
+    console.error('admin-live error', err)
     return res.status(500).json({ error: 'Erreur serveur.' })
   }
 })
@@ -3604,12 +3668,19 @@ wss.on('connection', async (ws, req) => {
     return
   }
 
-  // Look up the user's role so we can target broadcasts
+  // Look up the user's role and direction so we can target broadcasts + track presence
   let userRole = null
+  let userDirectionName = null
   try {
-    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [identifiant])
+    const userRes = await pool.query(
+      `SELECT u.role, d.name AS direction_name
+       FROM users u LEFT JOIN directions d ON d.id = u.direction_id
+       WHERE u.identifiant = $1`,
+      [identifiant]
+    )
     if (userRes.rows.length > 0) {
       userRole = userRes.rows[0].role
+      userDirectionName = userRes.rows[0].direction_name || null
     }
   } catch (_) { /* ignore */ }
 
@@ -3624,6 +3695,46 @@ wss.on('connection', async (ws, req) => {
   // Notify admins about updated online users (silently — user doesn't know)
   broadcastOnlineUsersToAdmins()
 
+  // Track presence for non-admin users
+  if (userRole !== 'admin') {
+    userPresence.set(identifiant, {
+      page: '/dashboard',
+      section: null,
+      lastSeen: new Date().toISOString(),
+      connectedAt: ws._connectedAt,
+      role: userRole || 'user',
+      direction_name: userDirectionName,
+    })
+    recordLiveEvent(identifiant, 'connected', null)
+    broadcastLivePresence()
+  }
+
+  // Handle incoming messages from clients (presence + action tracking)
+  ws.on('message', (raw) => {
+    try {
+      const data = JSON.parse(raw.toString())
+
+      // Presence update: user navigated to a new page
+      if (data.type === 'presence' && userRole !== 'admin') {
+        const existing = userPresence.get(identifiant) || {}
+        userPresence.set(identifiant, {
+          ...existing,
+          page: String(data.page || '/dashboard').slice(0, 200),
+          section: data.section ? String(data.section).slice(0, 200) : null,
+          lastSeen: new Date().toISOString(),
+        })
+        broadcastLivePresence()
+      }
+
+      // Action event: user performed a meaningful action
+      if (data.type === 'action' && userRole !== 'admin') {
+        const action = String(data.action || 'unknown').slice(0, 50)
+        const detail = data.detail ? String(data.detail).slice(0, 300) : null
+        recordLiveEvent(identifiant, action, detail)
+      }
+    } catch (_) { /* ignore malformed messages */ }
+  })
+
   // Keep-alive ping every 30s
   const pingInterval = setInterval(() => {
     if (ws.readyState === 1) ws.ping()
@@ -3634,13 +3745,22 @@ wss.on('connection', async (ws, req) => {
     clearInterval(pingInterval)
     // eslint-disable-next-line no-console
     console.log(`[ws] client disconnected: ${identifiant} — ${wsClients.size} total`)
-    // Notify admins about updated online users
+
+    // Clean up presence and notify admins
+    if (userRole !== 'admin') {
+      userPresence.delete(identifiant)
+      recordLiveEvent(identifiant, 'disconnected', null)
+      broadcastLivePresence()
+    }
     broadcastOnlineUsersToAdmins()
   })
 
   ws.on('error', () => {
     wsClients.delete(ws)
     clearInterval(pingInterval)
+    if (userRole !== 'admin') {
+      userPresence.delete(identifiant)
+    }
   })
 
   // Send a welcome message

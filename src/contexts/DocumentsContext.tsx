@@ -122,7 +122,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const [folderList, setFolderList] = useState<FolderMeta[]>([])
   const linksApiUnavailableRef = useRef(false)
 
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, sendWs } = useAuth()
 
   useEffect(() => {
     linksApiUnavailableRef.current = false
@@ -345,8 +345,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         direction_id,
       }
       setItems((prev) => [...prev, newItem])
+      sendWs({ type: 'action', action: 'upload_file', detail: uploaded.name })
     },
-    [items, user?.identifiant]
+    [items, user?.identifiant, sendWs]
   )
 
   const addLink = useCallback(
@@ -379,8 +380,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         direction_id,
       }
       setLinkItems((prev) => [...prev, newItem])
+      sendWs({ type: 'action', action: 'add_link', detail: created.label })
     },
-    [user?.identifiant]
+    [user?.identifiant, sendWs]
   )
 
   const addFolder = useCallback(
@@ -482,9 +484,11 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error ?? 'Échec de la suppression du fichier')
       }
+      const deleted = items.find((f) => f.id === id)
       setItems((prev) => prev.filter((f) => f.id !== id))
+      if (deleted) sendWs({ type: 'action', action: 'delete_file', detail: deleted.name })
     },
-    [items, user?.identifiant]
+    [items, user?.identifiant, sendWs]
   )
 
   const removeLink = useCallback(
@@ -498,9 +502,11 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error ?? 'Échec de la suppression du lien')
       }
+      const deleted = linkItems.find((l) => l.id === id)
       setLinkItems((prev) => prev.filter((l) => l.id !== id))
+      if (deleted) sendWs({ type: 'action', action: 'delete_link', detail: deleted.label })
     },
-    [user?.identifiant]
+    [user?.identifiant, linkItems, sendWs]
   )
 
   const renameFile = useCallback(
@@ -543,8 +549,9 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       setItems((prev) => prev.filter((f) => f.folderKey !== folderKey))
       setLinkItems((prev) => prev.filter((l) => l.folderKey !== folderKey))
       setFolderList((prev) => prev.filter((f) => f.value !== folderKey))
+      sendWs({ type: 'action', action: 'delete_folder', detail: name || folderKey })
     },
-    [items, user?.identifiant]
+    [items, user?.identifiant, sendWs]
   )
 
   const value = useMemo<DocumentsContextValue>(

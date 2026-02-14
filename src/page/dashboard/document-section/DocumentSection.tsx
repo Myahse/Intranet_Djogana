@@ -378,7 +378,7 @@ const DocumentSection = () => {
   const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
   const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
-  const { user, isAdmin } = useAuth()
+  const { user, isAdmin, sendWs } = useAuth()
   const { contentFilter } = useDashboardFilter()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
@@ -664,7 +664,10 @@ const DocumentSection = () => {
                     file={file}
                     formatSize={formatSize}
                     canEdit={canEditFile(file)}
-                    onSelect={setSelectedFile}
+                    onSelect={(f) => {
+                      setSelectedFile(f)
+                      sendWs({ type: 'action', action: 'view_file', detail: f.name })
+                    }}
                     onDelete={async (id) => {
                       setLoading({ open: true, message: 'Suppression du fichier…' })
                       try {
