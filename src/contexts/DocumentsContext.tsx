@@ -102,12 +102,13 @@ function uniqueUploadId(): string {
  */
 async function uploadToCloudinaryChunked(
   file: File,
-  sign: { id: string; signature: string; timestamp: number; api_key: string; cloud_name: string; folder: string },
+  sign: { id: string; signature: string; timestamp: number; api_key: string; cloud_name: string; folder: string; resource_type?: string },
 ) {
   const totalSize = file.size
   const totalChunks = Math.ceil(totalSize / CLOUDINARY_CHUNK_SIZE)
   const uploadId = uniqueUploadId()
-  const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`
+  const resType = sign.resource_type || 'auto'
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/${resType}/upload`
 
   let lastResult: Record<string, unknown> | null = null
 
@@ -149,6 +150,35 @@ async function uploadToCloudinaryChunked(
   return lastResult!
 }
 
+/**
+ * Upload via the old multipart endpoint (server receives the file, uploads to Cloudinary or stores as bytea).
+ * Used as a fallback when the file exceeds Cloudinary's direct-upload size limits.
+ */
+async function uploadViaMultipart(
+  file: File,
+  folderName: string,
+  directionId: string,
+  identifiant: string,
+  customName?: string,
+) {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('folder', folderName)
+  form.append('direction_id', directionId)
+  form.append('identifiant', identifiant)
+  if (customName?.trim()) form.append('name', customName.trim())
+
+  const res = await fetch(`${API_BASE_URL}/api/files`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err?.error ?? '\u00c9chec de l\'upload')
+  }
+  return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
+}
+
 async function uploadToServer(
   file: File,
   folderName: string,
@@ -160,7 +190,13 @@ async function uploadToServer(
   const signRes = await fetch(`${API_BASE_URL}/api/files/sign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder: folderName, direction_id: directionId, identifiant }),
+    body: JSON.stringify({
+      folder: folderName,
+      direction_id: directionId,
+      identifiant,
+      mime_type: file.type || 'application/octet-stream',
+      size: file.size,
+    }),
   })
   if (!signRes.ok) {
     const err = await signRes.json().catch(() => ({}))
@@ -168,7 +204,13 @@ async function uploadToServer(
   }
   const sign = await signRes.json()
 
+  // If the server says the file is too large for direct Cloudinary upload, fall back to multipart
+  if (sign.use_direct === false) {
+    return uploadViaMultipart(file, folderName, directionId, identifiant, customName)
+  }
+
   // 2) Upload to Cloudinary — chunked for large files, single request for small ones
+  const resType = sign.resource_type || 'auto'
   let cloudResult: Record<string, unknown>
 
   if (file.size > CLOUDINARY_CHUNK_SIZE) {
@@ -185,7 +227,7 @@ async function uploadToServer(
     cloudForm.append('public_id', sign.id)
 
     const cloudRes = await fetch(
-      `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`,
+      `https://api.cloudinary.com/v1_1/${sign.cloud_name}/${resType}/upload`,
       { method: 'POST', body: cloudForm },
     )
     if (!cloudRes.ok) {
