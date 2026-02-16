@@ -2243,7 +2243,7 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
     }
 
     const userRes = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_suspended, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -2253,6 +2253,9 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
       return res.status(500).json({ error: 'Utilisateur introuvable.' })
     }
     const user = userRes.rows[0]
+    if (user.is_suspended) {
+      return res.status(403).json({ error: 'Ce compte est suspendu. Contactez l\'administrateur.' })
+    }
     const permissions = await getPermissionsForIdentifiant(identifiant)
     const sessionPayload = {
       identifiant: user.identifiant,
