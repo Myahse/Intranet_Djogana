@@ -30,6 +30,37 @@ const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
+// Helper to get user-specific storage key
+function getSidebarStorageKey(userIdentifiant?: string | null): string | null {
+  return userIdentifiant ? `sidebar_state_${userIdentifiant}` : null
+}
+
+// Load sidebar state from localStorage for a specific user
+function loadSidebarState(userIdentifiant?: string | null): boolean | null {
+  const storageKey = getSidebarStorageKey(userIdentifiant)
+  if (!storageKey) return null
+  try {
+    const stored = localStorage.getItem(storageKey)
+    if (stored !== null) {
+      return stored === 'true'
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+// Save sidebar state to localStorage for a specific user
+function saveSidebarState(userIdentifiant: string | null | undefined, isOpen: boolean): void {
+  const storageKey = getSidebarStorageKey(userIdentifiant)
+  if (!storageKey) return
+  try {
+    localStorage.setItem(storageKey, String(isOpen))
+  } catch {
+    // ignore
+  }
+}
+
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
   open: boolean
@@ -55,6 +86,7 @@ function SidebarProvider({
   defaultOpen = true,
   open: openProp,
   onOpenChange: setOpenProp,
+  userIdentifiant,
   className,
   style,
   children,
@@ -63,13 +95,22 @@ function SidebarProvider({
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  userIdentifiant?: string | null
 }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
 
+  // Load saved state from localStorage for this user
+  const savedState = React.useMemo(() => {
+    return loadSidebarState(userIdentifiant)
+  }, [userIdentifiant])
+
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
+  // Initialize with saved state if available, otherwise use defaultOpen
+  const [_open, _setOpen] = React.useState(() => {
+    return savedState !== null ? savedState : defaultOpen
+  })
   const open = openProp ?? _open
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -80,11 +121,24 @@ function SidebarProvider({
         _setOpen(openState)
       }
 
-      // This sets the cookie to keep the sidebar state.
+      // Save to localStorage for this user
+      saveSidebarState(userIdentifiant, openState)
+      
+      // Also set cookie for backward compatibility
       document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
     },
-    [setOpenProp, open]
+    [setOpenProp, open, userIdentifiant]
   )
+
+  // Update state when user changes (e.g., on login/logout)
+  React.useEffect(() => {
+    if (userIdentifiant && savedState !== null) {
+      _setOpen(savedState)
+    } else if (!userIdentifiant) {
+      // Reset to default when no user (logged out)
+      _setOpen(defaultOpen)
+    }
+  }, [userIdentifiant, savedState, defaultOpen])
 
   // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
@@ -205,18 +259,25 @@ function Sidebar({
 
   return (
     <div
-      className="group peer text-sidebar-foreground hidden md:flex md:shrink-0 md:w-(--sidebar-width)"
+      className="group peer text-sidebar-foreground hidden md:flex md:shrink-0 transition-all duration-300 ease-in-out"
       data-state={state}
       data-collapsible={state === "collapsed" ? collapsible : ""}
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
+      style={{
+        width: state === "collapsed" && collapsible === "icon" 
+          ? (variant === "floating" || variant === "inset" 
+              ? "calc(var(--sidebar-width-icon) + 1rem)" 
+              : "var(--sidebar-width-icon)")
+          : "var(--sidebar-width)"
+      }}
     >
       {/* This is what handles the sidebar gap on desktop */}
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-300 ease-in-out",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
@@ -227,7 +288,7 @@ function Sidebar({
       <div
         data-slot="sidebar-container"
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-in-out md:flex",
           side === "left"
             ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
             : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",

@@ -39,6 +39,8 @@ export type DocumentItem = {
   folderKey: string
   direction_id?: string | null
   created_at?: string
+  /** Extracted app icon URL for APK files */
+  icon_url?: string | null
 }
 
 export type LinkItem = {
@@ -176,7 +178,7 @@ async function uploadViaMultipart(
     const err = await res.json().catch(() => ({}))
     throw new Error(err?.error ?? '\u00c9chec de l\'upload')
   }
-  return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
+  return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string; icon_url?: string | null }
 }
 
 async function uploadToServer(
@@ -259,7 +261,7 @@ async function uploadToServer(
     throw new Error(err?.error ?? '\u00c9chec de l\'enregistrement du fichier')
   }
 
-  return (await regRes.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
+  return (await regRes.json()) as { id: string; name: string; size: number; url: string; view_url?: string; icon_url?: string | null }
 }
 
 type FolderMeta = {
@@ -305,6 +307,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         folder: string
         direction_id?: string | null
         created_at?: string
+        icon_url?: string | null
       }>
 
       const loaded: DocumentItem[] = data.map((row) => {
@@ -327,6 +330,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           folderKey,
           direction_id: row.direction_id,
           created_at: row.created_at,
+          icon_url: row.icon_url,
         }
       })
 
@@ -503,6 +507,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         viewerUrl,
         folderKey,
         direction_id,
+        icon_url: uploaded.icon_url,
       }
       setItems((prev) => [...prev, newItem])
       sendWs({ type: 'action', action: 'upload_file', detail: uploaded.name })
@@ -582,6 +587,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         viewerUrl,
         folderKey,
         direction_id: directionId,
+        icon_url: uploaded.icon_url,
       }
       setItems((prev) => [...prev, newItem])
       setFolderList((prev) => {

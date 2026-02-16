@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useCountUp, useStaggerChildren, useScrollReveal, useHoverPop } from '@/hooks/useAnimations'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, AreaChart, Area,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  PieChart, Pie, Cell, AreaChart, Area,
 } from 'recharts'
 import {
   Users, Building2, FolderOpen, FileText, HardDrive, Link2,
@@ -141,6 +142,7 @@ interface Stats {
     byDirectionAndType: { direction: string; category: string; count: number; total_size: string }[]
     overTime: { month: string; count: number; total_size: string }[]
     overTimeByType: { month: string; category: string; count: number; total_size: string }[]
+    deletedOverTime: { month: string; count: number; total_size: string }[]
   }
   storage: { totalBytes: number }
   links: { total: number }
@@ -155,45 +157,25 @@ interface Stats {
 }
 
 /* ─── sub-components ─── */
-function AnimatedNumber({ value, duration = 1200 }: { value: number; duration?: number }) {
-  const [display, setDisplay] = useState(0)
-  const rafRef = useRef<number | undefined>(undefined)
-
-  useEffect(() => {
-    const startValue = 0
-    const startTime = performance.now()
-    const tick = (now: number) => {
-      const elapsed = now - startTime
-      const progress = Math.min(elapsed / duration, 1)
-      // Cubic ease-out for a satisfying deceleration
-      const eased = 1 - Math.pow(1 - progress, 3)
-      setDisplay(Math.round(startValue + (value - startValue) * eased))
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(tick)
-      }
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [value, duration])
-
-  return <>{display.toLocaleString('fr-FR')}</>
+function GsapCountUp({ value }: { value: number }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  useCountUp(ref, value, [value])
+  return <span ref={ref}>0</span>
 }
 
-function StatCard({ icon: Icon, label, value, sub, color = 'text-primary', delay = 0 }: {
+function StatCard({ icon: Icon, label, value, sub, color = 'text-primary' }: {
   icon: React.ElementType
   label: string
   value: string | number
   sub?: string
   color?: string
-  delay?: number
 }) {
   const isNumeric = typeof value === 'number'
+  const cardRef = useRef<HTMLDivElement>(null)
+  useHoverPop(cardRef)
 
   return (
-    <Card
-      className="animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-both"
-      style={{ animationDelay: `${delay}ms` }}
-    >
+    <Card ref={cardRef}>
       <CardContent className="flex items-center gap-3 sm:gap-4 p-3 sm:p-5">
         <div className={`rounded-xl bg-muted p-2 sm:p-3 ${color} transition-transform hover:scale-110`}>
           <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
@@ -201,7 +183,7 @@ function StatCard({ icon: Icon, label, value, sub, color = 'text-primary', delay
         <div className="min-w-0 flex-1">
           <p className="text-xs sm:text-sm text-muted-foreground truncate">{label}</p>
           <p className="text-lg sm:text-2xl font-bold tracking-tight truncate">
-            {isNumeric ? <AnimatedNumber value={value} /> : value}
+            {isNumeric ? <GsapCountUp value={value} /> : value}
           </p>
           {sub && <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5 truncate">{sub}</p>}
         </div>
@@ -213,13 +195,17 @@ function StatCard({ icon: Icon, label, value, sub, color = 'text-primary', delay
 /* ─── custom tooltip for recharts ─── */
 function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name: string; color: string }[]; label?: string }) {
   if (!active || !payload?.length) return null
+  const nameMap: Record<string, string> = {
+    fichiers: 'Uploadés',
+    fichiersSupprimes: 'Supprimés',
+  }
   return (
     <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
       {label && <p className="font-medium mb-1">{label}</p>}
       {payload.map((p, i) => (
         <p key={i} className="text-muted-foreground">
           <span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ backgroundColor: p.color }} />
-          {p.name}: <span className="font-semibold text-foreground">{p.value}</span>
+          {nameMap[p.name] || p.name}: <span className="font-semibold text-foreground">{p.value}</span>
         </p>
       ))}
     </div>
@@ -404,6 +390,11 @@ export default function AdminPage() {
   const [usersDirSort, setUsersDirSort] = useState<SortOrder>('desc')
   const [activityFilter, setActivityFilter] = useState('all')
 
+  const statsGridRef = useRef<HTMLDivElement>(null)
+  const chartsRef = useRef<HTMLDivElement>(null)
+  useStaggerChildren(statsGridRef, '> *', [stats])
+  useScrollReveal(chartsRef)
+
   /* ── 10s cooldown between API requests ── */
   const COOLDOWN_SEC = 10
   const [cooldown, setCooldown] = useState(0)
@@ -577,9 +568,32 @@ export default function AdminPage() {
     '05': 'Mai', '06': 'Juin', '07': 'Juil', '08': 'Août',
     '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Déc',
   }
-  const timelineData = stats.files.overTime.map((m) => {
+  // Merge uploaded and deleted files data by month
+  const uploadedMap = new Map<string, { fichiers: number; taille: number }>()
+  stats.files.overTime.forEach((m) => {
     const [, mm] = m.month.split('-')
-    return { name: monthNames[mm] ?? m.month, fichiers: m.count, taille: Number(m.total_size) }
+    const label = monthNames[mm] ?? m.month
+    uploadedMap.set(label, { fichiers: m.count, taille: Number(m.total_size) })
+  })
+  
+  const deletedMap = new Map<string, { fichiers: number; taille: number }>()
+  ;(stats.files.deletedOverTime || []).forEach((m) => {
+    const [, mm] = m.month.split('-')
+    const label = monthNames[mm] ?? m.month
+    deletedMap.set(label, { fichiers: m.count, taille: Number(m.total_size) })
+  })
+  
+  // Get all unique months from both datasets
+  const allMonths = new Set([...uploadedMap.keys(), ...deletedMap.keys()])
+  const timelineData = Array.from(allMonths).sort().map((month) => {
+    const uploaded = uploadedMap.get(month) ?? { fichiers: 0, taille: 0 }
+    const deleted = deletedMap.get(month) ?? { fichiers: 0, taille: 0 }
+    return {
+      name: month,
+      fichiers: uploaded.fichiers,
+      fichiersSupprimes: deleted.fichiers,
+      taille: uploaded.taille,
+    }
   })
 
   /* ── Apply per-card filters ── */
@@ -624,7 +638,11 @@ export default function AdminPage() {
 
   // Timeline: with file type filter
   const filteredTimelineData = (() => {
-    if (timelineTypeFilter === 'all') return timelineData
+    if (timelineTypeFilter === 'all') {
+      // Show both uploaded and deleted when filter is 'all'
+      return timelineData
+    }
+    // When filtering by type, only show uploaded files (deleted files don't have type breakdown)
     const byType = (stats.files.overTimeByType || [])
       .filter((r) => r.category === timelineTypeFilter)
     // Re-aggregate by month
@@ -635,10 +653,10 @@ export default function AdminPage() {
       const prev = monthMap.get(label) ?? { fichiers: 0, taille: 0 }
       monthMap.set(label, { fichiers: prev.fichiers + r.count, taille: prev.taille + Number(r.total_size) })
     }
-    // Keep the same month order as the full timeline
+    // Keep the same month order as the full timeline, but only show uploaded files
     return timelineData.map((m) => {
       const d = monthMap.get(m.name)
-      return { name: m.name, fichiers: d?.fichiers ?? 0, taille: d?.taille ?? 0 }
+      return { name: m.name, fichiers: d?.fichiers ?? 0, fichiersSupprimes: 0, taille: d?.taille ?? 0 }
     })
   })()
 
@@ -791,19 +809,19 @@ export default function AdminPage() {
             ? PERIODS.find(p => p.value === period)?.label
             : undefined
         return (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-6">
-            <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" delay={0} />
-            <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" delay={60} />
-            <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" delay={120} />
-            <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" sub={periodLabel} delay={180} />
-            <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" sub={periodLabel} delay={240} />
-            <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" sub={periodLabel} delay={300} />
+          <div ref={statsGridRef} className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <StatCard icon={Users} label="Utilisateurs" value={stats.users.total} color="text-sky-500" />
+            <StatCard icon={Building2} label="Directions" value={stats.directions.total} color="text-violet-500" />
+            <StatCard icon={FolderOpen} label="Dossiers" value={stats.folders.total} color="text-amber-500" />
+            <StatCard icon={FileText} label="Fichiers" value={stats.files.total} color="text-emerald-500" sub={periodLabel} />
+            <StatCard icon={HardDrive} label="Stockage" value={formatBytes(stats.storage.totalBytes)} color="text-rose-500" sub={periodLabel} />
+            <StatCard icon={Link2} label="Liens" value={stats.links.total} color="text-pink-500" sub={periodLabel} />
           </div>
         )
       })()}
 
       {/* ── Row 1: File types pie + Files over time ── */}
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+      <div ref={chartsRef} className="grid gap-4 sm:gap-6 lg:grid-cols-2">
         {/* File types donut */}
         <Card>
           <CardHeader className="pb-2">
@@ -900,7 +918,7 @@ export default function AdminPage() {
               <CardTitle className="text-sm sm:text-base flex items-center gap-2 min-w-0">
                 <TrendingUp className="h-4 w-4 shrink-0" />
                 <span className="truncate">
-                  Fichiers uploadés {
+                  Fichiers uploadés et supprimés {
                     period === 'custom' && dateRange?.from && dateRange?.to
                       ? `(${formatDateShort(dateRange.from)} — ${formatDateShort(dateRange.to)})`
                       : period === 'all'
@@ -921,17 +939,38 @@ export default function AdminPage() {
                       <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3} />
                       <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
                     </linearGradient>
+                    <linearGradient id="gradientSupprimes" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
+                  <Legend 
+                    wrapperStyle={{ paddingTop: '10px' }}
+                    iconType="line"
+                    formatter={(value) => value === 'fichiers' ? 'Uploadés' : 'Supprimés'}
+                  />
                   <Area
                     type="monotone"
                     dataKey="fichiers"
-                    name="Fichiers"
+                    name="fichiers"
                     stroke="#0ea5e9"
                     fill="url(#gradientFichiers)"
+                    strokeWidth={2}
+                    isAnimationActive={true}
+                    animationBegin={300}
+                    animationDuration={1200}
+                    animationEasing="ease-out"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="fichiersSupprimes"
+                    name="fichiersSupprimes"
+                    stroke="#ef4444"
+                    fill="url(#gradientSupprimes)"
                     strokeWidth={2}
                     isAnimationActive={true}
                     animationBegin={300}

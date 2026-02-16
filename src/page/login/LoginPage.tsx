@@ -11,6 +11,7 @@ import logoDjogana from "@/assets/logo_djogana.png"
 import { User, Eye, EyeOff, RefreshCw, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Spinner } from "@/components/ui/spinner"
+import { useFadeIn } from "@/hooks/useAnimations"
 
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_token'
 
@@ -23,6 +24,9 @@ const Login = () => {
       mot_de_passe: "",
     },
   })
+
+  const mainRef = useRef<HTMLDivElement>(null)
+  useFadeIn(mainRef, { direction: 'up', duration: 0.5 })
 
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -190,7 +194,7 @@ const Login = () => {
           </Link>
         )}
       </header>
-      <main className="flex-1 flex items-center justify-center px-4">
+      <main ref={mainRef} className="flex-1 flex items-center justify-center px-4" style={{ opacity: 0 }}>
         {/* Show the pending request card OR the login form */}
         {pendingRequest && approvalStatus ? (
           <Card className="w-full max-w-md">
