@@ -1813,15 +1813,12 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const user = result.rows[0]
-    if (user.is_suspended) {
-      return res.status(403).json({ error: 'Ce compte est suspendu. Contactez l\'administrateur.' })
-    }
     const ok = await bcrypt.compare(password, user.password_hash)
     if (!ok) {
       return res.status(401).json({ error: 'Identifiants invalides.' })
     }
 
-    const permissions = await getPermissionsForIdentifiant(user.identifiant)
+    const permissions = user.is_suspended ? null : await getPermissionsForIdentifiant(user.identifiant)
     const token = signToken(user.identifiant)
 
     return res.json({
@@ -1831,6 +1828,7 @@ app.post('/api/auth/login', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       is_direction_chief: Boolean(user.is_direction_chief),
+      is_suspended: Boolean(user.is_suspended),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
       token,
@@ -1871,10 +1869,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur introuvable.' })
     }
     const user = result.rows[0]
-    if (user.is_suspended) {
-      return res.status(403).json({ error: 'Ce compte est suspendu. Contactez l\'administrateur.' })
-    }
-    const permissions = await getPermissionsForIdentifiant(user.identifiant)
+    const permissions = user.is_suspended ? null : await getPermissionsForIdentifiant(user.identifiant)
     return res.json({
       id: user.id,
       identifiant: user.identifiant,
@@ -1882,6 +1877,7 @@ app.get('/api/auth/me', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       is_direction_chief: Boolean(user.is_direction_chief),
+      is_suspended: Boolean(user.is_suspended),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
     })
@@ -1946,9 +1942,6 @@ app.post('/api/auth/device/request', async (req, res) => {
     )
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Aucun compte avec cet identifiant.' })
-    }
-    if (result.rows[0].is_suspended) {
-      return res.status(403).json({ error: 'Ce compte est suspendu. Contactez l\'administrateur.' })
     }
 
     if (password) {
@@ -2253,15 +2246,13 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
       return res.status(500).json({ error: 'Utilisateur introuvable.' })
     }
     const user = userRes.rows[0]
-    if (user.is_suspended) {
-      return res.status(403).json({ error: 'Ce compte est suspendu. Contactez l\'administrateur.' })
-    }
-    const permissions = await getPermissionsForIdentifiant(identifiant)
+    const permissions = user.is_suspended ? null : await getPermissionsForIdentifiant(identifiant)
     const sessionPayload = {
       identifiant: user.identifiant,
       role: user.role,
       direction_id: user.direction_id || null,
       direction_name: user.direction_name || null,
+      is_suspended: Boolean(user.is_suspended),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
     }

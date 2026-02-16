@@ -79,6 +79,7 @@ const Login = () => {
           direction_name: (u.direction_name as string) ?? null,
           permissions: u.role === 'admin' ? undefined : (u.permissions as Record<string, boolean> | null) ?? null,
           must_change_password: Boolean(u.must_change_password),
+          is_suspended: Boolean(u.is_suspended),
         } as Parameters<typeof setAuthUser>[0])
         setPendingRequest(null)
         setApprovalStatus(null)

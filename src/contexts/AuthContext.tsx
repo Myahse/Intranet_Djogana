@@ -46,6 +46,7 @@ export type User = {
   is_direction_chief?: boolean
   permissions?: UserPermissions | null
   must_change_password?: boolean
+  is_suspended?: boolean
 }
 
 export type DeviceLoginRequest = {
@@ -102,6 +103,7 @@ function loadStoredUser(): User | null {
           direction_name: data.direction_name ?? null,
           permissions: data.permissions ?? null,
           must_change_password: Boolean(data.must_change_password),
+          is_suspended: Boolean(data.is_suspended),
         }
       : null
   } catch {
@@ -204,6 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           permissions?: UserPermissions | null
           must_change_password?: boolean
           token?: string
+          is_suspended?: boolean
         }
         if (!data.identifiant || !data.role) {
           return false
@@ -223,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           is_direction_chief: Boolean(data.is_direction_chief),
           permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
           must_change_password: Boolean(data.must_change_password),
+          is_suspended: Boolean(data.is_suspended),
         })
         return true
       } catch {
@@ -290,6 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         is_direction_chief?: boolean
         permissions?: UserPermissions | null
         must_change_password?: boolean
+        is_suspended?: boolean
       }
       if (!data.identifiant || !data.role) return
       setUser({
@@ -300,6 +305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         is_direction_chief: Boolean(data.is_direction_chief),
         permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
         must_change_password: Boolean(data.must_change_password),
+        is_suspended: Boolean(data.is_suspended),
       })
     } catch {
       // Network errors or other exceptions → keep existing session
@@ -386,6 +392,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 ? adminPermissions
                 : (data.user.permissions ?? null),
             must_change_password: Boolean(data.user.must_change_password),
+            is_suspended: Boolean(data.user.is_suspended),
           })
         }
         return {

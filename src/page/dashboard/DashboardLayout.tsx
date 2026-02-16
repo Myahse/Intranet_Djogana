@@ -25,6 +25,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Input } from '@/components/ui/input'
 import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, Trash, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
+import SuspensionModal from '@/components/SuspensionModal'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
 import { useAuth } from '@/contexts/AuthContext'
@@ -49,6 +50,7 @@ const Dashboard = () => {
     >
       <DashboardFilterProvider>
         <DashboardLayout />
+        <SuspensionModal />
       </DashboardFilterProvider>
     </SidebarProvider>
   )
@@ -563,8 +565,8 @@ function DashboardLayout() {
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="min-w-0 min-h-0 overflow-auto flex-1">
-            <PageTransition key={location.pathname}>
+          <SidebarInset className="min-w-0 min-h-0 overflow-auto flex-1 flex flex-col">
+            <PageTransition key={location.pathname} className="h-full min-h-0 flex flex-col">
               <Outlet />
             </PageTransition>
           </SidebarInset>

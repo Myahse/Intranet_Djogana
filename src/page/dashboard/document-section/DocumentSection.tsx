@@ -1234,19 +1234,19 @@ const DocumentSection = () => {
     const directionLabel = folderOpt?.direction_name ?? ''
 
     return (
-      <>
+      <div className="h-full min-h-0 flex flex-col">
       <ConfirmDialog />
       <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
       <ResizablePanelGroup
         orientation="horizontal"
-        className="h-full min-h-0 w-full flex-1"
+        className="flex-1 min-h-0 w-full"
         key={selectedFile ? 'preview-open' : 'preview-closed'}
       >
         <ResizablePanel
           defaultSize={selectedFile ? 45 : 100}
           minSize={5}
           maxSize={95}
-          className="flex flex-col min-w-0"
+          className="flex flex-col min-w-0 min-h-0"
         >
           <div className="flex flex-1 flex-col overflow-auto p-6">
             <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
@@ -1539,9 +1539,9 @@ const DocumentSection = () => {
               defaultSize={55}
               minSize={25}
               maxSize={95}
-              className="flex min-w-0 flex-col bg-muted/30"
+              className="flex min-w-0 flex-col bg-muted/30 min-h-0"
             >
-              <div className="flex items-center justify-between gap-2 border-b bg-background px-3 py-2">
+              <div className="flex items-center justify-between gap-2 border-b bg-background px-3 py-2 shrink-0">
                 <p className="min-w-0 truncate text-sm font-medium" title={selectedFile.name}>
                   {selectedFile.name}
                 </p>
@@ -1555,7 +1555,7 @@ const DocumentSection = () => {
                   <X className="size-4" />
                 </Button>
               </div>
-              <div className="flex-1 min-h-0 overflow-auto">
+              <div className="flex-1 min-h-0 overflow-auto flex flex-col">
                 <FilePreviewContent
                   file={selectedFile}
                   formatSize={formatSize}
@@ -1564,14 +1564,14 @@ const DocumentSection = () => {
                   canPreviewOffice={
                     isOfficeDocPreviewable(selectedFile.name) && !!selectedFile.url
                   }
-                  className="h-full min-h-[min(70vh,500px)]"
+                  className="flex-1 min-h-0 w-full"
                 />
               </div>
             </ResizablePanel>
           </>
         )}
       </ResizablePanelGroup>
-      </>
+      </div>
     )
   }
 
