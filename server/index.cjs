@@ -2838,11 +2838,13 @@ app.post('/api/files', (req, res, next) => {
 /**
  * POST /api/files/sign
  * Returns a Cloudinary upload signature so the client can upload directly to Cloudinary.
- * Body: { folder, direction_id, identifiant }
+ * If the file exceeds Cloudinary limits for its resource type, returns { use_direct: false }
+ * so the client falls back to the multipart POST /api/files endpoint.
+ * Body: { folder, direction_id, identifiant, mime_type, size }
  */
 app.post('/api/files/sign', async (req, res) => {
   try {
-    const { folder, direction_id: directionId, identifiant } = req.body || {}
+    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size } = req.body || {}
 
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
@@ -2874,6 +2876,21 @@ app.post('/api/files/sign', async (req, res) => {
     }
     const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
 
+    // Determine Cloudinary resource_type and size limits
+    const mime = (mimeType || '').toLowerCase()
+    let resourceType = 'raw'
+    if (mime.startsWith('image/')) resourceType = 'image'
+    else if (mime.startsWith('video/') || mime.startsWith('audio/')) resourceType = 'video'
+
+    // Cloudinary limits: image/raw = 20 MB, video = 2 GB
+    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : 20 * 1024 * 1024
+    const fileSize = Number(size) || 0
+
+    if (fileSize > cloudinaryLimit) {
+      // File too large for direct Cloudinary upload — tell client to use multipart fallback
+      return res.json({ use_direct: false, direction_code: directionCode })
+    }
+
     const id = uuidv4()
     const cloudinaryFolder = `intranet/${directionCode}/${folder || 'default'}`
     const timestamp = Math.round(Date.now() / 1000)
@@ -2889,6 +2906,7 @@ app.post('/api/files/sign', async (req, res) => {
     )
 
     return res.json({
+      use_direct: true,
       id,
       signature,
       timestamp,
@@ -2896,6 +2914,7 @@ app.post('/api/files/sign', async (req, res) => {
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       folder: cloudinaryFolder,
       direction_code: directionCode,
+      resource_type: resourceType,
     })
   } catch (err) {
     console.error('file sign error', err?.message || err)
