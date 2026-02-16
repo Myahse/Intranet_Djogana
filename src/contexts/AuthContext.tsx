@@ -246,7 +246,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        // 401 = invalid token, 403 = suspended → clear session so user can re-login
+        if (res.status === 401 || res.status === 403) {
+          setUser(null)
+          try { sessionStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* ignore */ }
+          try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
+        }
+        return
+      }
       const data = (await res.json()) as {
         identifiant: string
         role: string
