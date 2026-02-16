@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
-import { AlertTriangle, BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, Trash, User } from 'lucide-react'
+import { BarChart3, Building2, ChevronDown, ChevronRight, Crown, Eye, FileText, FolderOpen, Home, Link2, LogOut, Search, Trash, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { cn } from '@/lib/utils'
 import ProfilePage from '@/page/dashboard/profile'
@@ -32,15 +32,6 @@ import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
@@ -236,34 +227,9 @@ function DashboardLayout() {
       .filter(Boolean) as DirectionEntry[]
   }, [sortedDirections, searchLower])
 
-  const isSuspended = !!(user && user.is_suspended && !isAdmin)
-
   return (
     <>
       <ConfirmDialog />
-      <Dialog open={isSuspended} onOpenChange={() => {}}>
-        <DialogContent showCloseButton={false} className="sm:max-w-md" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-destructive/10">
-                <AlertTriangle className="h-6 w-6 text-destructive" />
-              </div>
-              <div>
-                <DialogTitle>Compte suspendu</DialogTitle>
-                <DialogDescription>
-                  Votre compte a été suspendu. Veuillez contacter l&apos;administrateur pour plus d&apos;informations.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <DialogFooter className="sm:justify-end">
-            <Button onClick={() => logout()} variant="default">
-              <LogOut className="size-4 mr-2" />
-              Se déconnecter
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <div className="dashboard-with-top-nav flex flex-1 flex-col min-h-0 w-full">
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 w-full">
           <div className="flex items-center gap-3 min-w-0">

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2 } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, UserX, UserCheck } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -31,7 +31,7 @@ const DashboardHome = (): ReactNode => {
 
   // ── Users ──
   const [users, setUsers] = useState<
-    Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string }>
+    Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string; is_suspended?: boolean }>
   >([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
   const [newUserPhone, setNewUserPhone] = useState('')
@@ -103,6 +103,7 @@ const DashboardHome = (): ReactNode => {
               role: string
               direction_id?: string
               direction_name?: string
+              is_suspended?: boolean
             }>
             setUsers(data)
           }
@@ -463,26 +464,38 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
-  const handleDeleteUser = async (targetUser: { id: string; identifiant: string }) => {
+  const handleSuspendUser = async (targetUser: { id: string; identifiant: string; is_suspended?: boolean }) => {
+    const willSuspend = !targetUser.is_suspended
+    const action = willSuspend ? 'suspendre' : 'réactiver'
     if (
-      !globalThis.confirm?.(`Supprimer l'utilisateur "${targetUser.identifiant}" ? Cette action est irréversible.`)
+      !globalThis.confirm?.(willSuspend
+        ? `Suspendre l'utilisateur "${targetUser.identifiant}" ? Il sera déconnecté et ne pourra plus se connecter.`
+        : `Réactiver l'utilisateur "${targetUser.identifiant}" ?`)
     ) {
       return
     }
-    setLoading({ open: true, message: `Suppression de l'utilisateur "${targetUser.identifiant}"…` })
+    setLoading({ open: true, message: `${willSuspend ? 'Suspension' : 'Réactivation'} de l'utilisateur "${targetUser.identifiant}"…` })
     try {
-      const url = `${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`
-      const res = await fetch(url, { method: 'DELETE' })
+      const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_suspended: willSuspend,
+          caller_identifiant: user?.identifiant ?? '',
+        }),
+      })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data?.error ?? 'Échec de la suppression')
+        throw new Error(data?.error ?? `Échec de la ${action}`)
       }
-      setUsers((prev) => prev.filter((u) => u.id !== targetUser.id))
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Utilisateur supprimé' }))
-      toast.success('Utilisateur supprimé')
+      setUsers((prev) =>
+        prev.map((u) => (u.id === targetUser.id ? { ...u, is_suspended: willSuspend } : u))
+      )
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: `Utilisateur ${willSuspend ? 'suspendu' : 'réactivé'}` }))
+      toast.success(`Utilisateur ${willSuspend ? 'suspendu' : 'réactivé'}`)
     } catch (err) {
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur lors de la suppression' }))
-      toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : `Erreur lors de la ${action}` }))
+      toast.error(err instanceof Error ? err.message : `Erreur lors de la ${action}`)
       console.error(err)
     }
   }
@@ -540,26 +553,39 @@ const DashboardHome = (): ReactNode => {
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
               <th className="px-3 py-2 text-left font-medium">Rôle</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
+              <th className="px-3 py-2 text-left font-medium">Statut</th>
               <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id} className="border-t">
+              <tr key={u.id} className={`border-t ${u.is_suspended ? 'opacity-70 bg-muted/50' : ''}`}>
                 <td className="px-3 py-2">{u.identifiant}</td>
                 <td className="px-3 py-2 capitalize">{u.role}</td>
                 <td className="px-3 py-2 text-muted-foreground">{u.direction_name ?? '—'}</td>
+                <td className="px-3 py-2">
+                  {u.is_suspended ? (
+                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                      Suspendu
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                      Actif
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right">
                   {user?.identifiant !== u.identifiant ? (
                     canDeleteUser ? (
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => handleDeleteUser(u)}
-                        aria-label={`Supprimer ${u.identifiant}`}
+                        className={`size-8 ${u.is_suspended ? 'text-emerald-600 hover:bg-emerald-500/10' : 'text-amber-600 hover:bg-amber-500/10'}`}
+                        onClick={() => handleSuspendUser(u)}
+                        aria-label={u.is_suspended ? `Réactiver ${u.identifiant}` : `Suspendre ${u.identifiant}`}
+                        title={u.is_suspended ? 'Réactiver' : 'Suspendre'}
                       >
-                        <Trash2 className="size-4" />
+                        {u.is_suspended ? <UserCheck className="size-4" /> : <UserX className="size-4" />}
                       </Button>
                     ) : null
                   ) : (
@@ -721,7 +747,7 @@ const DashboardHome = (): ReactNode => {
                       <th className="px-3 py-2 text-center font-medium">Supprimer fichier</th>
                       <th className="px-3 py-2 text-center font-medium">Supprimer dossier</th>
                       <th className="px-3 py-2 text-center font-medium">Créer utilisateur</th>
-                      <th className="px-3 py-2 text-center font-medium">Supprimer utilisateur</th>
+                      <th className="px-3 py-2 text-center font-medium">Suspendre utilisateur</th>
                       <th className="px-3 py-2 text-center font-medium">Créer direction</th>
                       <th className="px-3 py-2 text-center font-medium">Supprimer direction</th>
                       <th className="px-3 py-2 text-center font-medium">Voir journal</th>
@@ -749,7 +775,7 @@ const DashboardHome = (): ReactNode => {
                           <Switch checked={Boolean(r.can_create_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_user', checked)} aria-label={`Autoriser ${r.name} à créer des utilisateurs`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_delete_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_user', checked)} aria-label={`Autoriser ${r.name} à supprimer des utilisateurs`} />
+                          <Switch checked={Boolean(r.can_delete_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_user', checked)} aria-label={`Autoriser ${r.name} à suspendre des utilisateurs`} />
                         </td>
                         <td className="px-3 py-2 text-center">
                           <Switch checked={Boolean(r.can_create_direction)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_direction', checked)} aria-label={`Autoriser ${r.name} à créer des directions`} />
@@ -839,7 +865,8 @@ const DashboardHome = (): ReactNode => {
                     <SelectItem value="update_link">Modification lien</SelectItem>
                     <SelectItem value="delete_link">Suppression lien</SelectItem>
                     <SelectItem value="create_user">Création utilisateur</SelectItem>
-                    <SelectItem value="delete_user">Suppression utilisateur</SelectItem>
+                    <SelectItem value="suspend_user">Suspension utilisateur</SelectItem>
+                    <SelectItem value="unsuspend_user">Réactivation utilisateur</SelectItem>
                     <SelectItem value="create_direction">Création direction</SelectItem>
                     <SelectItem value="delete_direction">Suppression direction</SelectItem>
                   </SelectContent>
@@ -888,11 +915,12 @@ const DashboardHome = (): ReactNode => {
                             {entry.action === 'update_link' && 'Modification lien'}
                             {entry.action === 'delete_link' && 'Suppression lien'}
                             {entry.action === 'create_user' && 'Création utilisateur'}
-                            {entry.action === 'delete_user' && 'Suppression utilisateur'}
+                            {entry.action === 'suspend_user' && 'Suspension utilisateur'}
+                            {entry.action === 'unsuspend_user' && 'Réactivation utilisateur'}
                             {entry.action === 'create_direction' && 'Création direction'}
                             {entry.action === 'delete_direction' && 'Suppression direction'}
                             {entry.action === 'update_folder_visibility' && 'Visibilité dossier'}
-                            {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','delete_user','create_direction','delete_direction','update_folder_visibility'].includes(entry.action) && entry.action}
+                            {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','suspend_user','unsuspend_user','create_direction','delete_direction','update_folder_visibility'].includes(entry.action) && entry.action}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">{entry.direction_name ?? '—'}</td>
                           <td className="px-3 py-2 max-w-[200px] truncate" title={entry.details ? JSON.stringify(entry.details) : ''}>
