@@ -993,7 +993,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
     // Check access
     const userRow = await pool.query(
-      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      'SELECT role, direction_id, is_direction_chief FROM users WHERE identifiant = $1',
       [req.authIdentifiant]
     )
     if (userRow.rows.length === 0) {
@@ -1001,6 +1001,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
     }
     const caller = userRow.rows[0]
     const isAdmin = caller.role === 'admin'
+    const isDirectionChief = Boolean(caller.is_direction_chief)
 
     if (!isAdmin) {
       const perms = await getPermissionsForIdentifiant(req.authIdentifiant)
@@ -1009,8 +1010,17 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       }
     }
 
-    // For non-admin users: scope everything to their direction
-    const dirId = isAdmin ? null : caller.direction_id
+    // Scope: admin sees full system; regular users see only their direction;
+    // chief of direction can request scope=direction (default) or scope=all (full system)
+    const scopeParam = (req.query.scope || '').toString().toLowerCase()
+    let dirId = null
+    if (isAdmin) {
+      dirId = null
+    } else if (isDirectionChief && scopeParam === 'all') {
+      dirId = null
+    } else {
+      dirId = caller.direction_id
+    }
 
     // ── Period filter ──
     // Accepted: 7d, 30d, 3m, 6m, 1y, all (default: all)
@@ -1212,8 +1222,13 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       scopedDirectionName = d.rows[0]?.name || null
     }
 
+    // Chiefs of direction (and admins) can switch to full-system stats
+    const scopeOptionAllAvailable = isAdmin || isDirectionChief
+
     res.json({
       scopedDirection: scopedDirectionName,
+      scope: dirId ? 'direction' : 'all',
+      scopeOptionAllAvailable: !!scopeOptionAllAvailable,
       period: periodParam,
       users: {
         total: usersCount.rows[0].count,

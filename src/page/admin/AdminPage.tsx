@@ -121,9 +121,15 @@ const ACTION_ICONS: Record<string, React.ElementType> = {
 }
 
 /* ─── types ─── */
+type StatsScope = 'direction' | 'all'
+
 interface Stats {
   /** Non-null when the data is scoped to a single direction (non-admin user) */
   scopedDirection?: string | null
+  /** Scope used for this response: 'direction' or 'all' */
+  scope?: StatsScope
+  /** True when user can switch to full-system stats (admin or chief of direction) */
+  scopeOptionAllAvailable?: boolean
   period?: string
   users: {
     total: number
@@ -365,13 +371,15 @@ function TypeFilterSelect({ types, value, onChange }: {
 
 /* ─── main page ─── */
 export default function AdminPage() {
-  const { user, getAuthHeaders } = useAuth()
+  const { user, getAuthHeaders, isAdmin, isDirectionChief } = useAuth()
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('all')
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
   const [datePickerOpen, setDatePickerOpen] = useState(false)
+  /** Scope for stats: direction-only or full system. Chiefs (and admins) can switch to 'all'. */
+  const [statsScope, setStatsScope] = useState<StatsScope>('direction')
 
   /* ── Per-card filter state ── */
   const [fileTypeView, setFileTypeView] = useState<ViewMode>('count')
@@ -439,11 +447,17 @@ export default function AdminPage() {
       } else if (p !== 'all' && p !== 'custom') {
         params.set('period', p)
       }
+      // Chiefs of direction can request full-system stats; regular users get direction-only from server
+      if (!isAdmin && isDirectionChief) {
+        params.set('scope', statsScope)
+      }
       const qs = params.toString()
       const url = `${API}/api/admin/stats${qs ? `?${qs}` : ''}`
       const res = await fetch(url, { headers: getAuthHeaders() })
       if (!res.ok) throw new Error(`${res.status}`)
-      setStats(await res.json())
+      const data = await res.json()
+      setStats(data)
+      if (data.scope) setStatsScope(data.scope)
     } catch (e) {
       setError('Impossible de charger les statistiques.')
       console.error(e)
@@ -451,7 +465,7 @@ export default function AdminPage() {
       setLoading(false)
       startCooldown()
     }
-  }, [getAuthHeaders, period, dateRange, startCooldown])
+  }, [getAuthHeaders, period, dateRange, startCooldown, isAdmin, isDirectionChief, statsScope])
 
   // Keep a ref to the latest fetchStats for the cooldown effect
   const fetchStatsRef = useRef(fetchStats)
@@ -708,6 +722,39 @@ export default function AdminPage() {
               <span className="font-semibold">{user?.identifiant}</span>
             </p>
           </div>
+          {/* Scope switcher: chiefs of direction (not admin) can toggle between their direction and full system */}
+          {stats?.scopeOptionAllAvailable && !isAdmin && (
+            <div className="inline-flex items-center gap-1 rounded-lg border bg-muted/30 px-1 py-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setStatsScope('direction')
+                  fetchStats(period)
+                }}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  statsScope === 'direction'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Ma direction
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatsScope('all')
+                  fetchStats(period)
+                }}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  statsScope === 'all'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Système entier
+              </button>
+            </div>
+          )}
           <button
             onClick={() => { fetchStats(period) }}
             disabled={cooldown > 0}
