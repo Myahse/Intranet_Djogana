@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -389,10 +390,10 @@ function FileCard({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Renommer le fichier</DialogTitle>
+            <DialogDescription>
+              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement.
-          </p>
           <div className="grid gap-2">
             <Label htmlFor="rename-file-input">Nom du fichier</Label>
             <Input
