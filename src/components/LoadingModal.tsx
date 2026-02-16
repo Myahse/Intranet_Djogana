@@ -1,6 +1,7 @@
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
@@ -61,6 +62,9 @@ export default function LoadingModal({ state, onClose }: LoadingModalProps) {
         <DialogTitle className="sr-only">
           {result === 'success' ? 'Succès' : result === 'error' ? 'Erreur' : 'Chargement'}
         </DialogTitle>
+        <DialogDescription className="sr-only">
+          {result ? (resultMessage || 'Opération terminée') : (message || 'Opération en cours')}
+        </DialogDescription>
 
         {result === 'success' ? (
           <CheckCircle2 className="size-12 text-green-500 animate-in zoom-in-50 duration-300" />

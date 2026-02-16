@@ -92,23 +92,60 @@ async function uploadToServer(
   identifiant: string,
   customName?: string
 ) {
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('folder', folderName)
-  formData.append('direction_id', directionId)
-  formData.append('identifiant', identifiant)
-  if (customName?.trim()) formData.append('name', customName.trim())
-
-  const res = await fetch(`${API_BASE_URL}/api/files`, {
+  // 1) Get a Cloudinary signature from our server (lightweight JSON — no file data)
+  const signRes = await fetch(`${API_BASE_URL}/api/files/sign`, {
     method: 'POST',
-    body: formData,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder: folderName, direction_id: directionId, identifiant }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.error ?? 'Échec de l’upload du fichier')
+  if (!signRes.ok) {
+    const err = await signRes.json().catch(() => ({}))
+    throw new Error(err?.error ?? '\u00c9chec de la signature')
+  }
+  const sign = await signRes.json()
+
+  // 2) Upload directly to Cloudinary from the browser (zero server memory used)
+  const cloudForm = new FormData()
+  cloudForm.append('file', file)
+  cloudForm.append('api_key', sign.api_key)
+  cloudForm.append('timestamp', String(sign.timestamp))
+  cloudForm.append('signature', sign.signature)
+  cloudForm.append('folder', sign.folder)
+  cloudForm.append('public_id', sign.id)
+
+  const cloudRes = await fetch(
+    `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`,
+    { method: 'POST', body: cloudForm },
+  )
+  if (!cloudRes.ok) {
+    const cloudErr = await cloudRes.json().catch(() => ({}))
+    throw new Error(cloudErr?.error?.message ?? '\u00c9chec de l\'upload Cloudinary')
+  }
+  const cloudResult = await cloudRes.json()
+
+  // 3) Register file metadata on our server (small JSON — no file data)
+  const regRes = await fetch(`${API_BASE_URL}/api/files/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: sign.id,
+      name: customName?.trim() || file.name,
+      mime_type: file.type || 'application/octet-stream',
+      size: file.size,
+      folder: folderName,
+      direction_id: directionId,
+      identifiant,
+      cloudinary_url: cloudResult.secure_url,
+      cloudinary_public_id: cloudResult.public_id,
+      direction_code: sign.direction_code,
+    }),
+  })
+  if (!regRes.ok) {
+    const err = await regRes.json().catch(() => ({}))
+    throw new Error(err?.error ?? '\u00c9chec de l\'enregistrement du fichier')
   }
 
-  return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
+  return (await regRes.json()) as { id: string; name: string; size: number; url: string; view_url?: string }
 }
 
 type FolderMeta = {

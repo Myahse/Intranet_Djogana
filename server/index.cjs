@@ -61,12 +61,37 @@ const DEVICE_REQUEST_EXPIRY_MINUTES = 15
 const DEVICE_CODE_LENGTH = 6
 
 const app = express()
+
+// ── CORS ──
+// Build an allowed-origins list from CORS_ORIGINS env (comma-separated) plus common defaults.
+const CORS_ORIGINS = (() => {
+  const extra = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+  const defaults = [
+    'https://www.intranet-djogana.ci',
+    'https://intranet-djogana.ci',
+    'https://intranet-djogana.onrender.com',
+    'http://localhost:5173',
+    'http://localhost:3000',
+  ]
+  return [...new Set([...defaults, ...extra])]
+})()
+
 app.use(
   cors({
-    origin: true,
+    origin(origin, cb) {
+      // Allow requests with no origin (mobile apps, curl, server-to-server)
+      if (!origin) return cb(null, true)
+      if (CORS_ORIGINS.includes(origin)) return cb(null, origin)
+      // Fallback: allow any *.intranet-djogana.ci subdomain
+      if (/^https?:\/\/([a-z0-9-]+\.)?intranet-djogana\.ci$/.test(origin)) return cb(null, origin)
+      // In development, allow any localhost
+      if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, origin)
+      console.warn(`[cors] blocked origin: ${origin}`)
+      cb(null, false)
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Identifiant'],
   })
 )
 app.use(express.json())
@@ -2649,6 +2674,148 @@ app.post('/api/folder-permissions', async (req, res) => {
 
 // ---------- Files ----------
 
+// --- Direct-to-Cloudinary upload (avoids server memory / Render 512 MB OOM) ---
+
+// 1) Sign: returns Cloudinary upload params so the browser can upload directly
+app.post('/api/files/sign', async (req, res) => {
+  try {
+    const { folder, direction_id: directionId, identifiant } = req.body || {}
+    if (!directionId) {
+      return res.status(400).json({ error: 'Direction requise.' })
+    }
+
+    let uploadedBy = null
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        uploadedBy = u.id
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez deposer des fichiers que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const dirRes = await pool.query('SELECT id, code FROM directions WHERE id = $1', [directionId])
+    if (dirRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Direction invalide.' })
+    }
+    const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
+
+    const id = uuidv4()
+    const cloudinaryFolder = `intranet/${directionCode}/${folder || 'default'}`
+    const timestamp = Math.round(Date.now() / 1000)
+
+    const paramsToSign = { timestamp, folder: cloudinaryFolder, public_id: id }
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign,
+      process.env.CLOUDINARY_API_SECRET
+    )
+
+    return res.json({
+      id,
+      signature,
+      timestamp,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      folder: cloudinaryFolder,
+      direction_code: directionCode,
+      uploaded_by: uploadedBy,
+    })
+  } catch (err) {
+    console.error('file sign error', err?.message || err)
+    return res.status(500).json({ error: 'Erreur lors de la signature.' })
+  }
+})
+
+// 2) Register: browser already uploaded to Cloudinary — just save metadata in DB
+app.post('/api/files/register', async (req, res) => {
+  try {
+    const {
+      id,
+      name: rawName,
+      mime_type: mimeType,
+      size,
+      folder,
+      direction_id: directionId,
+      identifiant,
+      cloudinary_url: cloudinaryUrl,
+      cloudinary_public_id: cloudinaryPublicId,
+      direction_code: directionCode,
+    } = req.body || {}
+
+    if (!id || !cloudinaryUrl || !directionId) {
+      return res.status(400).json({ error: 'Champs manquants (id, cloudinary_url, direction_id).' })
+    }
+
+    let uploadedBy = null
+    if (identifiant) {
+      const userRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (userRes.rows.length > 0) uploadedBy = userRes.rows[0].id
+    }
+
+    const code = (directionCode || 'DEF').toString().toUpperCase()
+    let baseName = (rawName || 'document').replace(/^.*[/\\]/, '').trim() || 'document'
+    if (baseName.toUpperCase().startsWith(code + '_')) {
+      baseName = baseName.slice(code.length + 1)
+    }
+    const storedFileName = code + '_' + baseName
+
+    const folderId = uuidv4()
+    await pool.query(
+      `INSERT INTO folders (id, name, direction_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (direction_id, name) DO NOTHING`,
+      [folderId, folder || 'default', directionId]
+    )
+
+    await pool.query(
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        id,
+        storedFileName,
+        mimeType || 'application/octet-stream',
+        Number(size) || 0,
+        folder || 'default',
+        directionId,
+        uploadedBy,
+        cloudinaryUrl,
+        cloudinaryPublicId || null,
+      ]
+    )
+
+    await insertActivityLog(pool, {
+      action: 'upload_file',
+      actorIdentifiant: identifiant || null,
+      actorId: uploadedBy,
+      directionId,
+      entityType: 'file',
+      entityId: id,
+      details: { name: storedFileName, folder, size: Number(size) || 0 },
+    })
+
+    broadcastDataChange('files', 'created', { id, directionId, folder })
+    return res.json({
+      id,
+      name: storedFileName,
+      size: Number(size) || 0,
+      url: cloudinaryUrl,
+      view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
+      direction_id: directionId,
+    })
+  } catch (err) {
+    console.error('file register error', err?.message || err, err?.stack)
+    return res.status(500).json({ error: "Erreur lors de l'enregistrement: " + (err?.message || 'Unknown error') })
+  }
+})
+
+// Legacy server-side upload (kept for backward compat — will OOM on Render for large files)
 // Accepts any file type: APK, images, video, MP3, Excel, documents, etc. (no fileFilter)
 app.post('/api/files', (req, res, next) => {
   upload.single('file')(req, res, (err) => {

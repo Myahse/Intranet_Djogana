@@ -545,6 +545,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let reconnectDelay = 1000 // start at 1s, exponential backoff
     let alive = true
+    let stableTimer: ReturnType<typeof setTimeout> | null = null
 
     function connect() {
       if (!alive || !isLoggedInRef.current) return
@@ -559,9 +560,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       ws.onopen = () => {
-        reconnectDelay = 1000 // reset backoff on successful connection
         console.log('[ws] connected')
         wsRef.current = ws
+        // Only reset backoff after the connection stays open for 10s
+        if (stableTimer) clearTimeout(stableTimer)
+        stableTimer = setTimeout(() => { reconnectDelay = 1000 }, 10000)
       }
 
       ws.onmessage = (event) => {
@@ -620,6 +623,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('[ws] disconnected')
         ws = null
         wsRef.current = null
+        if (stableTimer) { clearTimeout(stableTimer); stableTimer = null }
         scheduleReconnect()
       }
 
@@ -647,6 +651,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', onFocus)
       clearInterval(interval)
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (stableTimer) clearTimeout(stableTimer)
       if (ws) {
         ws.onclose = null // prevent reconnect on intentional close
         ws.close()
