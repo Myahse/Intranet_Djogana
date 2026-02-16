@@ -9,8 +9,8 @@ import {
   type ReactNode,
 } from 'react'
 
-const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY
-const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY
+const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY??'intranet_djogana_user'
+const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY??'intranet_djogana_token'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 // Derive WebSocket URL from the API base (http→ws, https→wss)

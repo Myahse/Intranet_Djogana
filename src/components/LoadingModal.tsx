@@ -63,7 +63,7 @@ export default function LoadingModal({ state, onClose }: LoadingModalProps) {
           {result === 'success' ? 'Succès' : result === 'error' ? 'Erreur' : 'Chargement'}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          {result ? (resultMessage || 'Opération terminée') : (message || 'Opération en cours')}
+          {result ? (resultMessage || 'Opération terminée.') : (message || 'Opération en cours...')}
         </DialogDescription>
 
         {result === 'success' ? (
