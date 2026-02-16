@@ -85,6 +85,70 @@ function buildOfficeViewerUrl(viewUrl: string) {
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(viewUrl)}`
 }
 
+// Chunked upload threshold: files larger than this use chunked upload to Cloudinary
+const CLOUDINARY_CHUNK_SIZE = 6 * 1024 * 1024 // 6 MB per chunk
+
+/** Generate a random unique ID for Cloudinary chunked uploads */
+function uniqueUploadId(): string {
+  return 'xxxxxxxx-xxxx-4xxx'.replace(/x/g, () =>
+    Math.floor(Math.random() * 16).toString(16),
+  )
+}
+
+/**
+ * Upload a large file to Cloudinary in chunks using Content-Range headers.
+ * Each chunk is sent as a separate POST; Cloudinary reassembles them server-side.
+ * This avoids the per-request size limit and works for files up to 5 GB.
+ */
+async function uploadToCloudinaryChunked(
+  file: File,
+  sign: { id: string; signature: string; timestamp: number; api_key: string; cloud_name: string; folder: string },
+) {
+  const totalSize = file.size
+  const totalChunks = Math.ceil(totalSize / CLOUDINARY_CHUNK_SIZE)
+  const uploadId = uniqueUploadId()
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`
+
+  let lastResult: Record<string, unknown> | null = null
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CLOUDINARY_CHUNK_SIZE
+    const end = Math.min(start + CLOUDINARY_CHUNK_SIZE, totalSize)
+    const chunk = file.slice(start, end)
+
+    const form = new FormData()
+    form.append('file', chunk)
+    form.append('api_key', sign.api_key)
+    form.append('timestamp', String(sign.timestamp))
+    form.append('signature', sign.signature)
+    form.append('folder', sign.folder)
+    form.append('public_id', sign.id)
+
+    const res = await fetch(uploadUrl, {
+      method: 'POST',
+      body: form,
+      headers: {
+        'X-Unique-Upload-Id': uploadId,
+        'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`,
+      },
+    })
+
+    if (i === totalChunks - 1) {
+      // Final chunk — Cloudinary returns the full upload result
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error?.message ?? '\u00c9chec de l\'upload Cloudinary (chunked)')
+      }
+      lastResult = await res.json()
+    } else if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err?.error?.message ?? `\u00c9chec du chunk ${i + 1}/${totalChunks}`)
+    }
+  }
+
+  return lastResult!
+}
+
 async function uploadToServer(
   file: File,
   folderName: string,
@@ -92,7 +156,7 @@ async function uploadToServer(
   identifiant: string,
   customName?: string
 ) {
-  // 1) Get a Cloudinary signature from our server (lightweight JSON — no file data)
+  // 1) Get a Cloudinary signature from our server (lightweight JSON \u2014 no file data)
   const signRes = await fetch(`${API_BASE_URL}/api/files/sign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -104,26 +168,34 @@ async function uploadToServer(
   }
   const sign = await signRes.json()
 
-  // 2) Upload directly to Cloudinary from the browser (zero server memory used)
-  const cloudForm = new FormData()
-  cloudForm.append('file', file)
-  cloudForm.append('api_key', sign.api_key)
-  cloudForm.append('timestamp', String(sign.timestamp))
-  cloudForm.append('signature', sign.signature)
-  cloudForm.append('folder', sign.folder)
-  cloudForm.append('public_id', sign.id)
+  // 2) Upload to Cloudinary — chunked for large files, single request for small ones
+  let cloudResult: Record<string, unknown>
 
-  const cloudRes = await fetch(
-    `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`,
-    { method: 'POST', body: cloudForm },
-  )
-  if (!cloudRes.ok) {
-    const cloudErr = await cloudRes.json().catch(() => ({}))
-    throw new Error(cloudErr?.error?.message ?? '\u00c9chec de l\'upload Cloudinary')
+  if (file.size > CLOUDINARY_CHUNK_SIZE) {
+    // Large file: chunked upload (supports files up to 5 GB)
+    cloudResult = await uploadToCloudinaryChunked(file, sign)
+  } else {
+    // Small file: single request
+    const cloudForm = new FormData()
+    cloudForm.append('file', file)
+    cloudForm.append('api_key', sign.api_key)
+    cloudForm.append('timestamp', String(sign.timestamp))
+    cloudForm.append('signature', sign.signature)
+    cloudForm.append('folder', sign.folder)
+    cloudForm.append('public_id', sign.id)
+
+    const cloudRes = await fetch(
+      `https://api.cloudinary.com/v1_1/${sign.cloud_name}/auto/upload`,
+      { method: 'POST', body: cloudForm },
+    )
+    if (!cloudRes.ok) {
+      const cloudErr = await cloudRes.json().catch(() => ({}))
+      throw new Error(cloudErr?.error?.message ?? '\u00c9chec de l\'upload Cloudinary')
+    }
+    cloudResult = await cloudRes.json()
   }
-  const cloudResult = await cloudRes.json()
 
-  // 3) Register file metadata on our server (small JSON — no file data)
+  // 3) Register file metadata on our server (small JSON \u2014 no file data)
   const regRes = await fetch(`${API_BASE_URL}/api/files/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -135,8 +207,8 @@ async function uploadToServer(
       folder: folderName,
       direction_id: directionId,
       identifiant,
-      cloudinary_url: cloudResult.secure_url,
-      cloudinary_public_id: cloudResult.public_id,
+      cloudinary_url: cloudResult.secure_url as string,
+      cloudinary_public_id: cloudResult.public_id as string,
       direction_code: sign.direction_code,
     }),
   })
