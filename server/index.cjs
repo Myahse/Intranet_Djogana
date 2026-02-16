@@ -8,7 +8,31 @@ const { Pool } = require('pg')
 const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
-const admin = require('firebase-admin')
+// firebase-admin is lazy-loaded to save ~150 MB of RAM at startup (Render free tier = 512 MB)
+let _firebaseAdmin = null
+function getFirebaseAdmin() {
+  if (_firebaseAdmin) return _firebaseAdmin
+  try {
+    const admin = require('firebase-admin')
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    if (raw) {
+      const serviceAccount = JSON.parse(raw)
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
+      console.log('[firebase] initialized from FIREBASE_SERVICE_ACCOUNT_JSON')
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      admin.initializeApp({ credential: admin.credential.applicationDefault() })
+      console.log('[firebase] initialized from GOOGLE_APPLICATION_CREDENTIALS')
+    } else {
+      console.warn('[firebase] WARNING: No Firebase credentials found. Push notifications will NOT work.')
+      admin.initializeApp()
+    }
+    _firebaseAdmin = admin
+  } catch (err) {
+    console.error('[firebase] initialization error:', err.message)
+  }
+  return _firebaseAdmin
+}
+
 const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
@@ -22,36 +46,6 @@ cloudinary.config({
 if (!process.env.CLOUDINARY_CLOUD_NAME) {
   console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME not set. File uploads will fail.')
 }
-
-// ---------- Firebase Admin SDK ----------
-// Initialize using a service account JSON key.
-// Set GOOGLE_APPLICATION_CREDENTIALS env var to the path of the JSON file,
-// or set FIREBASE_SERVICE_ACCOUNT_JSON env var to the JSON content as a string.
-;(() => {
-  try {
-    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-    if (raw) {
-      const serviceAccount = JSON.parse(raw)
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      })
-      console.log('[firebase] initialized from FIREBASE_SERVICE_ACCOUNT_JSON')
-    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-      })
-      console.log('[firebase] initialized from GOOGLE_APPLICATION_CREDENTIALS')
-    } else {
-      console.warn(
-        '[firebase] WARNING: No Firebase credentials found. Push notifications will NOT work.\n' +
-        '  Set FIREBASE_SERVICE_ACCOUNT_JSON (JSON string) or GOOGLE_APPLICATION_CREDENTIALS (file path).'
-      )
-      admin.initializeApp() // no-op init so admin.messaging() doesn't crash
-    }
-  } catch (err) {
-    console.error('[firebase] initialization error:', err.message)
-  }
-})()
 
 const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
@@ -1805,7 +1799,9 @@ app.post('/api/auth/device/request', async (req, res) => {
     if (tokenRows.rows.length > 0) {
       ;(async () => {
         try {
-          const messaging = admin.messaging()
+          const fbAdmin = getFirebaseAdmin()
+          if (!fbAdmin) { console.warn('[push] Firebase not available, skipping push'); return }
+          const messaging = fbAdmin.messaging()
           for (const row of tokenRows.rows) {
             // Prefer fcm_token (direct Firebase), fall back to expo_push_token
             const deviceToken = row.fcm_token || row.expo_push_token
