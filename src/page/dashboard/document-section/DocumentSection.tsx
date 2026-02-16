@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
@@ -8,6 +8,7 @@ import excelIcon from '@/assets/svgs/excel-4.svg'
 import pdfIcon from '@/assets/svgs/Group 56.svg'
 import rarIcon from '@/assets/svgs/rar-icon.svg'
 import zipIcon from '@/assets/svgs/zip-icon.svg'
+import apkIcon from '@/assets/svgs/apk-icon.svg'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
 import {
@@ -48,6 +49,7 @@ import {
 import { toast } from 'sonner'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
+import { useStaggerChildren } from '@/hooks/useAnimations'
 
 // ── View & Sort types ──
 type ViewMode = 'tiles' | 'list' | 'details'
@@ -160,6 +162,7 @@ function getFileIconSrc(fileName: string): string {
   if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return excelIcon
   if (ext === 'rar') return rarIcon
   if (ext === 'zip' || ext === '7z') return zipIcon
+  if (ext === 'apk') return apkIcon
   return ''
 }
 
@@ -252,6 +255,13 @@ function FilePreviewContent({
   )
 }
 
+/** Split "report.pdf" → { baseName: "report", ext: ".pdf" }; no dot → ext="" */
+function splitFileNameExt(name: string): { baseName: string; ext: string } {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return { baseName: name, ext: '' }
+  return { baseName: name.slice(0, dot), ext: name.slice(dot) }
+}
+
 function FileCard({
   file,
   formatSize,
@@ -268,9 +278,10 @@ function FileCard({
   onSelect?: (file: DocumentItem) => void
 }) {
   const [renameOpen, setRenameOpen] = useState(false)
-  const [renameValue, setRenameValue] = useState(file.name)
+  const [renameValue, setRenameValue] = useState('')
   const [isRenaming, setIsRenaming] = useState(false)
 
+  const { ext: fileExt } = splitFileNameExt(file.name)
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
@@ -280,22 +291,21 @@ function FileCard({
     if (onSelect) {
       onSelect(file)
     } else if (file.url) {
-      // Use direct file URL for all files (Office Viewer often fails in prod)
       window.open(file.url, '_blank', 'noopener,noreferrer')
     }
   }
 
   const openRename = () => {
-    setRenameValue(file.name)
+    setRenameValue(splitFileNameExt(file.name).baseName)
     setRenameOpen(true)
   }
 
   const submitRename = async () => {
-    const name = renameValue.trim()
-    if (!name || !onRename) return
+    const base = renameValue.trim()
+    if (!base || !onRename) return
     setIsRenaming(true)
     try {
-      await onRename(file.id, name)
+      await onRename(file.id, base + fileExt)
       setRenameOpen(false)
     } finally {
       setIsRenaming(false)
@@ -351,7 +361,13 @@ function FileCard({
                 )}
               </div>
             )}
-            {isImage ? (
+            {file.icon_url ? (
+              <img
+                src={file.icon_url}
+                alt=""
+                className="h-24 w-24 sm:h-28 sm:w-28 rounded-lg border bg-muted object-cover shadow-sm"
+              />
+            ) : isImage ? (
               <img
                 src={file.url}
                 alt=""
@@ -391,17 +407,26 @@ function FileCard({
           <DialogHeader>
             <DialogTitle>Renommer le fichier</DialogTitle>
             <DialogDescription>
-              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement.
+              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement. L'extension est conservée.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor="rename-file-input">Nom du fichier</Label>
-            <Input
-              id="rename-file-input"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              placeholder="rapport.pdf"
-            />
+            <div className="flex items-center gap-0">
+              <Input
+                id="rename-file-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="rapport"
+                className={fileExt ? 'rounded-r-none' : ''}
+                onKeyDown={(e) => { if (e.key === 'Enter' && renameValue.trim()) submitRename() }}
+              />
+              {fileExt && (
+                <span className="inline-flex h-9 items-center rounded-r-md border border-l-0 bg-muted px-3 text-sm text-muted-foreground select-none">
+                  {fileExt}
+                </span>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameOpen(false)}>
@@ -614,7 +639,14 @@ function FileListRow({
 }) {
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
+  const canPreviewPdf = isPdf(file.name) && !!file.url
+  const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
   const ext = getFileExtension(file.name).toUpperCase() || 'FILE'
+
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [isRenaming, setIsRenaming] = useState(false)
+  const { ext: fileExt } = splitFileNameExt(file.name)
 
   const handleClick = () => {
     if (onSelect) {
@@ -624,84 +656,159 @@ function FileListRow({
     }
   }
 
+  const openRename = () => {
+    setRenameValue(splitFileNameExt(file.name).baseName)
+    setRenameOpen(true)
+  }
+
+  const submitRename = async () => {
+    const base = renameValue.trim()
+    if (!base || !onRename) return
+    setIsRenaming(true)
+    try {
+      await onRename(file.id, base + fileExt)
+      setRenameOpen(false)
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
   return (
-    <div
-      className="group flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50 cursor-pointer"
-      onClick={handleClick}
-    >
-      {/* Icon */}
-      <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
-        {isImage ? (
-          <img src={file.url} alt="" className="w-8 h-8 rounded object-cover" />
-        ) : iconSrc ? (
-          <img src={iconSrc} alt="" className="w-8 h-auto object-contain" />
-        ) : (
-          <FileText className="size-6 text-muted-foreground" />
-        )}
-      </div>
-
-      {/* Name */}
-      <span className="flex-1 min-w-0 truncate text-sm font-medium" title={file.name}>
-        {file.name}
-      </span>
-
-      {/* Details columns */}
-      {showDetails && (
-        <>
-          <span className="hidden md:block w-20 text-right text-xs text-muted-foreground shrink-0">
-            {fmtSize(file.size)}
-          </span>
-          <span className="hidden lg:block w-16 text-center text-xs text-muted-foreground shrink-0 uppercase">
-            {ext}
-          </span>
-          <span className="hidden md:block w-36 text-right text-xs text-muted-foreground shrink-0">
-            {formatDate(file.created_at)}
-          </span>
-        </>
-      )}
-
-      {/* Actions */}
-      <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        {file.url && (
-          <a
-            href={file.url}
-            download={file.name}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Télécharger"
+    <>
+      <HoverCard openDelay={400} closeDelay={100}>
+        <HoverCardTrigger asChild>
+          <div
+            className="group flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50 cursor-pointer"
+            onClick={handleClick}
           >
-            <Download className="size-4" />
-          </a>
-        )}
-        {canEdit && onRename && (
-          <button
-            type="button"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation()
-              const newName = window.prompt('Nouveau nom :', file.name)
-              if (newName?.trim()) onRename(file.id, newName.trim())
-            }}
-            aria-label="Renommer"
-          >
-            <Pencil className="size-4" />
-          </button>
-        )}
-        {canEdit && onDelete && (
-          <button
-            type="button"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(file.id)
-            }}
-            aria-label="Supprimer"
-          >
-            <Trash2 className="size-4" />
-          </button>
-        )}
-      </div>
-    </div>
+            {/* Icon */}
+            <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
+              {file.icon_url ? (
+                <img src={file.icon_url} alt="" className="w-8 h-8 rounded object-cover" />
+              ) : isImage ? (
+                <img src={file.url} alt="" className="w-8 h-8 rounded object-cover" />
+              ) : iconSrc ? (
+                <img src={iconSrc} alt="" className="w-8 h-auto object-contain" />
+              ) : (
+                <FileText className="size-6 text-muted-foreground" />
+              )}
+            </div>
+
+            {/* Name */}
+            <span className="flex-1 min-w-0 truncate text-sm font-medium" title={file.name}>
+              {file.name}
+            </span>
+
+            {/* Details columns */}
+            {showDetails && (
+              <>
+                <span className="hidden md:block w-20 text-right text-xs text-muted-foreground shrink-0">
+                  {fmtSize(file.size)}
+                </span>
+                <span className="hidden lg:block w-16 text-center text-xs text-muted-foreground shrink-0 uppercase">
+                  {ext}
+                </span>
+                <span className="hidden md:block w-36 text-right text-xs text-muted-foreground shrink-0">
+                  {formatDate(file.created_at)}
+                </span>
+              </>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              {file.url && (
+                <a
+                  href={file.url}
+                  download={file.name}
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="Télécharger"
+                >
+                  <Download className="size-4" />
+                </a>
+              )}
+              {canEdit && onRename && (
+                <button
+                  type="button"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openRename()
+                  }}
+                  aria-label="Renommer"
+                >
+                  <Pencil className="size-4" />
+                </button>
+              )}
+              {canEdit && onDelete && (
+                <button
+                  type="button"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(file.id)
+                  }}
+                  aria-label="Supprimer"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        </HoverCardTrigger>
+        <HoverCardContent
+          side="top"
+          align="center"
+          collisionPadding={16}
+          className="w-[min(90vw,400px)] p-0 overflow-hidden"
+        >
+          <FilePreviewContent
+            file={file}
+            formatSize={fmtSize}
+            canPreviewPdf={canPreviewPdf}
+            canPreviewImage={isImage}
+            canPreviewOffice={canPreviewOffice}
+            className="w-full h-[min(60vh,400px)]"
+          />
+        </HoverCardContent>
+      </HoverCard>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renommer le fichier</DialogTitle>
+            <DialogDescription>
+              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement. L'extension est conservée.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="rename-list-input">Nom du fichier</Label>
+            <div className="flex items-center gap-0">
+              <Input
+                id="rename-list-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="rapport"
+                className={fileExt ? 'rounded-r-none' : ''}
+                onKeyDown={(e) => { if (e.key === 'Enter' && renameValue.trim()) submitRename() }}
+              />
+              {fileExt && (
+                <span className="inline-flex h-9 items-center rounded-r-md border border-l-0 bg-muted px-3 text-sm text-muted-foreground select-none">
+                  {fileExt}
+                </span>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Annuler
+            </Button>
+            <Button onClick={submitRename} disabled={!renameValue.trim() || isRenaming}>
+              {isRenaming ? 'Enregistrement...' : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -795,6 +902,8 @@ function FolderGrid({
   buildLink: (key: string) => string
 }) {
   const sorted = sortFolders(folders, sortField, sortDir)
+  const folderGridRef = useRef<HTMLDivElement>(null)
+  useStaggerChildren(folderGridRef, '> *', [viewMode, sortField, sortDir, folders.length])
 
   if (folders.length === 0) return null
 
@@ -811,7 +920,7 @@ function FolderGrid({
       </div>
 
       {viewMode === 'tiles' && (
-        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        <div ref={folderGridRef} className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {sorted.map((f) => (
             <Link
               key={f.key}
@@ -903,6 +1012,8 @@ const DocumentSection = () => {
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
+  const filesGridRef = useRef<HTMLDivElement>(null)
+  useStaggerChildren(filesGridRef, '> *', [folderKey, directionId, pathname])
 
   // View & sort state — persisted per user in localStorage
   const storageKey = user?.identifiant ? `doc_prefs_${user.identifiant}` : null
@@ -1209,7 +1320,7 @@ const DocumentSection = () => {
               <>
                 {/* Tiles view */}
                 {viewMode === 'tiles' && (
-                  <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                  <div ref={filesGridRef} className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                     {sortItems(files, links, sortField, sortDir).map((item) =>
                       item.kind === 'link' ? (
                         <LinkCard

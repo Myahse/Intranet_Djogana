@@ -1,11 +1,18 @@
+import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
 import { useAuth } from "@/contexts/AuthContext"
 import { User } from "lucide-react"
+import { useStaggerChildren, useScrollReveal } from "@/hooks/useAnimations"
 
 const Landing = () => {
   const { user } = useAuth()
+  const heroRef = useRef<HTMLDivElement>(null)
+  const cardsRef = useRef<HTMLDivElement>(null)
+
+  useStaggerChildren(heroRef, '> *')
+  useScrollReveal(cardsRef)
 
   return (
     <div className="min-h-svh flex flex-col bg-gradient-to-b from-background to-muted/30">
@@ -31,7 +38,7 @@ const Landing = () => {
           </Button>
         )}
       </header>
-      <main className="max-w-4xl mx-auto text-center space-y-0 flex-1 flex flex-col items-center justify-center px-4">
+      <main ref={heroRef} className="max-w-4xl mx-auto text-center space-y-0 flex-1 flex flex-col items-center justify-center px-4">
         <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold text-foreground tracking-tight text-center">
           Bienvenue sur la base
         </h1>
@@ -53,20 +60,20 @@ const Landing = () => {
             </Button>
           )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-12 text-left">
-          <div className="p-4 rounded-lg bg-card border shadow-sm">
+        <div ref={cardsRef} className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-12 text-left">
+          <div className="p-4 rounded-lg bg-card border shadow-sm transition-transform duration-200 hover:scale-[1.03]">
             <h3 className="font-semibold text-foreground mb-2">Formations</h3>
             <p className="text-sm text-muted-foreground">
               Documentation des formations et parcours d'apprentissage
             </p>
           </div>
-          <div className="p-4 rounded-lg bg-card border shadow-sm">
+          <div className="p-4 rounded-lg bg-card border shadow-sm transition-transform duration-200 hover:scale-[1.03]">
             <h3 className="font-semibold text-foreground mb-2">Modes d'opération</h3>
             <p className="text-sm text-muted-foreground">
               Procédures et bonnes pratiques opérationnelles
             </p>
           </div>
-          <div className="p-4 rounded-lg bg-card border shadow-sm">
+          <div className="p-4 rounded-lg bg-card border shadow-sm transition-transform duration-200 hover:scale-[1.03]">
             <h3 className="font-semibold text-foreground mb-2">Types & Articles</h3>
             <p className="text-sm text-muted-foreground">
               Documentation classée par type et articles

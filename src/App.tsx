@@ -14,16 +14,17 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import AdminPage from '@/page/admin'
 import Corbeille from '@/page/dashboard/corbeille'
 import LiveActivityPage from '@/page/admin/LiveActivityPage'
+import PageTransition from '@/components/PageTransition'
 
 export default function App() {
   return (
     <AuthProvider>
       <DocumentsProvider>
         <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/home" element={<Home />} />
-          <Route path="/document" element={<Documents />} />
+          <Route path="/" element={<PageTransition><Landing /></PageTransition>} />
+          <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
+          <Route path="/home" element={<PageTransition><Home /></PageTransition>} />
+          <Route path="/document" element={<PageTransition><Documents /></PageTransition>} />
           <Route path="/preview" element={<DocumentPreviewPage />} />
           <Route
             path="/change-password"

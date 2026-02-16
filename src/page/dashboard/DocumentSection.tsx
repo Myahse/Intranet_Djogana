@@ -141,6 +141,13 @@ function FilePreviewContent({
   )
 }
 
+/** Split "report.pdf" → { baseName: "report", ext: ".pdf" }; no dot → ext="" */
+function splitFileNameExt(name: string): { baseName: string; ext: string } {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return { baseName: name, ext: '' }
+  return { baseName: name.slice(0, dot), ext: name.slice(dot) }
+}
+
 function FileCard({
   file,
   formatSize,
@@ -157,9 +164,10 @@ function FileCard({
   onSelect?: (file: DocumentItem) => void
 }) {
   const [renameOpen, setRenameOpen] = useState(false)
-  const [renameValue, setRenameValue] = useState(file.name)
+  const [renameValue, setRenameValue] = useState('')
   const [isRenaming, setIsRenaming] = useState(false)
 
+  const { ext: fileExt } = splitFileNameExt(file.name)
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
@@ -169,22 +177,21 @@ function FileCard({
     if (onSelect) {
       onSelect(file)
     } else if (file.url) {
-      // Use direct file URL for all files (Office Viewer often fails in prod)
       window.open(file.url, '_blank', 'noopener,noreferrer')
     }
   }
 
   const openRename = () => {
-    setRenameValue(file.name)
+    setRenameValue(splitFileNameExt(file.name).baseName)
     setRenameOpen(true)
   }
 
   const submitRename = async () => {
-    const name = renameValue.trim()
-    if (!name || !onRename) return
+    const base = renameValue.trim()
+    if (!base || !onRename) return
     setIsRenaming(true)
     try {
-      await onRename(file.id, name)
+      await onRename(file.id, base + fileExt)
       setRenameOpen(false)
     } finally {
       setIsRenaming(false)
@@ -280,17 +287,26 @@ function FileCard({
           <DialogHeader>
             <DialogTitle>Renommer le fichier</DialogTitle>
             <DialogDescription>
-              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement.
+              Le préfixe de la direction (ex. SUM_) sera appliqué automatiquement. L'extension est conservée.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor="rename-file-input">Nom du fichier</Label>
-            <Input
-              id="rename-file-input"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              placeholder="rapport.pdf"
-            />
+            <div className="flex items-center gap-0">
+              <Input
+                id="rename-file-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="rapport"
+                className={fileExt ? 'rounded-r-none' : ''}
+                onKeyDown={(e) => { if (e.key === 'Enter' && renameValue.trim()) submitRename() }}
+              />
+              {fileExt && (
+                <span className="inline-flex h-9 items-center rounded-r-md border border-l-0 bg-muted px-3 text-sm text-muted-foreground select-none">
+                  {fileExt}
+                </span>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameOpen(false)}>

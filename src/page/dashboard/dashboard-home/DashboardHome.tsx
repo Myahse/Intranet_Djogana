@@ -12,11 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
+import { useStaggerChildren } from '@/hooks/useAnimations'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -976,9 +977,15 @@ const DashboardHome = (): ReactNode => {
     )
   }
 
+  // ── Refs for GSAP stagger animations ──
+  const onlineGridRef = useRef<HTMLDivElement>(null)
+  const sectionsRef = useRef<HTMLDivElement>(null)
+  useStaggerChildren(onlineGridRef, '> *', [onlineUsers.length])
+  useStaggerChildren(sectionsRef, '> *')
+
   // ── Admin / privileged: full management dashboard ──
   return (
-    <div className="p-6 space-y-8">
+    <div ref={sectionsRef} className="p-6 space-y-8">
       <ConfirmDialog />
       <h1 className="text-2xl font-semibold">Tableau de bord</h1>
 
@@ -998,7 +1005,7 @@ const DashboardHome = (): ReactNode => {
               Aucun utilisateur en ligne pour le moment.
             </p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            <div ref={onlineGridRef} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {onlineUsers.map((ou) => {
                 const directionUser = users.find((u) => u.identifiant === ou.identifiant)
                 return (

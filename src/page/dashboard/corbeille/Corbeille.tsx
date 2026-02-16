@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,6 +15,8 @@ import {
 import { toast } from 'sonner'
 import { Trash2, RotateCcw, FileText, Link2, FolderOpen, Trash } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { useStaggerChildren } from '@/hooks/useAnimations'
+import { gsap } from '@/lib/gsap'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -144,6 +146,16 @@ const Corbeille = () => {
             const d = await res.json().catch(() => ({}))
             throw new Error(d?.error ?? 'Échec de la suppression')
           }
+          // Animate the row out before removing from state
+          const rowEl = document.querySelector(`tr[data-trash-id="${item.type}-${item.id}"]`)
+          if (rowEl) {
+            await new Promise<void>((resolve) => {
+              gsap.to(rowEl, {
+                opacity: 0, scale: 0.95, height: 0, padding: 0,
+                duration: 0.3, ease: 'power2.in', onComplete: resolve,
+              })
+            })
+          }
           setItems((prev) => prev.filter((i) => !(i.id === item.id && i.type === item.type)))
           setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Supprimé définitivement' }))
           toast.success('Supprimé définitivement')
@@ -187,6 +199,9 @@ const Corbeille = () => {
   }
 
   const filteredItems = filter === 'all' ? items : items.filter((i) => i.type === filter)
+
+  const trashTableRef = useRef<HTMLTableSectionElement>(null)
+  useStaggerChildren(trashTableRef, '> tr', [filteredItems.length, filter])
 
   const typeIcon = (type: string) => {
     if (type === 'file') return <FileText className="size-4 text-blue-500" />
@@ -286,9 +301,9 @@ const Corbeille = () => {
                     <th className="px-3 py-2 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={trashTableRef}>
                   {filteredItems.map((item) => (
-                    <tr key={`${item.type}-${item.id}`} className="border-t hover:bg-muted/30 transition-colors">
+                    <tr key={`${item.type}-${item.id}`} data-trash-id={`${item.type}-${item.id}`} className="border-t hover:bg-muted/30 transition-colors">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
                           {typeIcon(item.type)}

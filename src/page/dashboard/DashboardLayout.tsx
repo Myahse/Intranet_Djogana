@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import PageTransition from '@/components/PageTransition'
+import { useStaggerChildren } from '@/hooks/useAnimations'
 import {
   Sidebar,
   SidebarContent,
@@ -38,19 +40,27 @@ const API_BASE_URL =
       ? ''
       : 'http://localhost:3000'
 
-const Dashboard = () => (
-  <SidebarProvider className="!h-svh !max-h-svh overflow-hidden">
-    <DashboardFilterProvider>
-      <DashboardLayout />
-    </DashboardFilterProvider>
-  </SidebarProvider>
-)
+const Dashboard = () => {
+  const { user } = useAuth()
+  return (
+    <SidebarProvider 
+      className="!h-svh !max-h-svh overflow-hidden"
+      userIdentifiant={user?.identifiant ?? null}
+    >
+      <DashboardFilterProvider>
+        <DashboardLayout />
+      </DashboardFilterProvider>
+    </SidebarProvider>
+  )
+}
 
 function DashboardLayout() {
   const location = useLocation()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sidebarSearch, setSidebarSearch] = useState('')
   const navigate = useNavigate()
+  const navMenuRef = useRef<HTMLUListElement>(null)
+  useStaggerChildren(navMenuRef, '> li')
   const { folderOptions, getFiles, getLinks } = useDocuments()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({})
@@ -224,8 +234,8 @@ function DashboardLayout() {
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 w-full">
           <div className="flex items-center gap-3 min-w-0">
             <SidebarTrigger
-              aria-label="Ouvrir le menu"
-              className="md:hidden shrink-0"
+              aria-label="Basculer le menu"
+              className="shrink-0"
             />
             <Link to="/" className="flex items-center gap-2 shrink-0">
               <img
@@ -251,15 +261,15 @@ function DashboardLayout() {
             <span className="hidden sm:inline">Déconnexion</span>
           </button>
         </header>
-        <div className="flex flex-1 min-h-0 min-w-0">
-          <Sidebar>
+        <div className="flex flex-1 min-h-0 min-w-0 relative">
+          <Sidebar collapsible="icon">
             <SidebarHeader>
-              <Link to="/dashboard" className="text-sidebar-foreground font-semibold">
+              <Link to="/dashboard" className="text-sidebar-foreground font-semibold group-data-[collapsible=icon]:hidden">
                 Dashboard
               </Link>
             </SidebarHeader>
             <SidebarContent>
-              <div className="px-2 pb-2">
+              <div className="px-2 pb-2 group-data-[collapsible=icon]:hidden">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
                   <Input
@@ -274,7 +284,7 @@ function DashboardLayout() {
               <SidebarGroup>
                 <SidebarGroupLabel>Navigation</SidebarGroupLabel>
                 <SidebarGroupContent>
-                  <SidebarMenu>
+                  <SidebarMenu ref={navMenuRef}>
                     <SidebarMenuItem>
                       <SidebarMenuButton asChild isActive={isDashboardHome}>
                         <Link to="/dashboard">
@@ -345,22 +355,23 @@ function DashboardLayout() {
 
                 return (
                   <SidebarGroup key={dirKey} className="py-0">
-                    <SidebarGroupLabel
-                      className={`cursor-pointer select-none hover:bg-sidebar-accent/50 rounded-md transition-colors ${isDirActive ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold' : ''}`}
-                      onClick={() => {
-                        setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))
-                        navigate(`/dashboard/direction/${encodeURIComponent(dirKey)}`)
-                      }}
-                    >
-                      <span className="flex items-center gap-2 flex-1 min-w-0">
-                        <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{dir.directionName}</span>
-                      </span>
-                      {isDirOpen
-                        ? <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        : <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                      }
-                    </SidebarGroupLabel>
+                    <SidebarGroupContent>
+                      <SidebarMenu>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            isActive={isDirActive}
+                            onClick={() => {
+                              setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))
+                              navigate(`/dashboard/direction/${encodeURIComponent(dirKey)}`)
+                            }}
+                          >
+                            <Building2 className="size-4" />
+                            <span className="truncate">{dir.directionName}</span>
+                            {isDirOpen ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />}
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      </SidebarMenu>
+                    </SidebarGroupContent>
                     {isDirOpen && (
                       <SidebarGroupContent>
                         <SidebarMenu>
@@ -389,12 +400,11 @@ function DashboardLayout() {
                                     sendWs({ type: 'action', action: 'open_folder', detail: folder.label })
                                   }}
                                 >
-                                  {rootHasContent ? (
-                                    rootIsExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />
-                                  ) : (
-                                    <FolderOpen className="size-4" />
-                                  )}
+                                  <FolderOpen className="size-4" />
                                   <span className="truncate">{folder.label}</span>
+                                  {rootHasContent && (
+                                    rootIsExpanded ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />
+                                  )}
                                 </SidebarMenuButton>
                                 {rootIsExpanded && rootHasContent && (
                                   <SidebarMenuSub>
@@ -440,8 +450,9 @@ function DashboardLayout() {
                                     sendWs({ type: 'action', action: 'open_folder', detail: group.groupLabel })
                                   }}
                                 >
-                                  {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                  <FolderOpen className="size-4" />
                                   <span className="truncate">{group.groupLabel}</span>
+                                  {isOpen ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />}
                                 </SidebarMenuButton>
                                 {isOpen && (
                                   <SidebarMenuSub>
@@ -463,10 +474,11 @@ function DashboardLayout() {
                                             }}
                                             className="cursor-pointer"
                                           >
-                                            {subHasContent ? (
-                                              subIsExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
-                                            ) : null}
+                                            <FolderOpen className="size-3.5" />
                                             <span className="truncate">{subfolder.label}</span>
+                                            {subHasContent && (
+                                              subIsExpanded ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />
+                                            )}
                                           </SidebarMenuSubButton>
                                           {subIsExpanded && subHasContent && (
                                             <ul className="ml-3.5 mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-2.5">
@@ -517,7 +529,7 @@ function DashboardLayout() {
             </SidebarContent>
             <SidebarFooter>
               {isDirectionChief && !isAdmin && (
-                <div className="px-3 pb-1">
+                <div className="px-3 pb-1 group-data-[collapsible=icon]:hidden">
                   <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
                     <Crown className="size-3" />
                     Chef de direction
@@ -551,8 +563,10 @@ function DashboardLayout() {
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="min-w-0 min-h-0 overflow-auto">
-            <Outlet />
+          <SidebarInset className="min-w-0 min-h-0 overflow-auto flex-1">
+            <PageTransition key={location.pathname}>
+              <Outlet />
+            </PageTransition>
           </SidebarInset>
         </div>
       </div>

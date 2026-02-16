@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useStaggerChildren } from '@/hooks/useAnimations'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -130,6 +131,8 @@ export default function LiveActivityPage(): ReactNode {
   const [actions, setActions] = useState<LiveAction[]>([])
   const [paused, setPaused] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
+  const presenceGridRef = useRef<HTMLDivElement>(null)
+  useStaggerChildren(presenceGridRef, '> *', [Object.keys(presence).length])
   const [, forceUpdate] = useState(0)
 
   // Force re-render every 15s to update "time ago" labels
@@ -233,7 +236,7 @@ export default function LiveActivityPage(): ReactNode {
               {onlineCount === 0 ? (
                 <p className="text-xs text-muted-foreground">Aucun utilisateur en ligne.</p>
               ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                <div ref={presenceGridRef} className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   {presenceEntries.map(([ident, p]) => {
                     const idle = (Date.now() - new Date(p.lastSeen).getTime()) > 120000
                     return (

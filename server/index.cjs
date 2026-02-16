@@ -12,6 +12,7 @@ const admin = require('firebase-admin')
 const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
+const AdmZip = require('adm-zip')
 
 // ---------- Cloudinary ----------
 cloudinary.config({
@@ -21,6 +22,118 @@ cloudinary.config({
 })
 if (!process.env.CLOUDINARY_CLOUD_NAME) {
   console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME not set. File uploads will fail.')
+}
+
+// ---------- APK Icon Extraction ----------
+/**
+ * Extract the launcher icon from an APK buffer.
+ * APK files are ZIP archives; the icon is typically in res/mipmap-* or res/drawable-* dirs.
+ * Returns a Buffer of the PNG icon, or null if not found.
+ */
+function extractApkIcon(fileBuffer) {
+  try {
+    const zip = new AdmZip(fileBuffer)
+    const entries = zip.getEntries()
+
+    // Common icon paths ordered by resolution (highest first)
+    const iconPatterns = [
+      /^res\/mipmap-xxxhdpi[^/]*\/ic_launcher(?:_foreground)?\.png$/i,
+      /^res\/mipmap-xxhdpi[^/]*\/ic_launcher(?:_foreground)?\.png$/i,
+      /^res\/mipmap-xhdpi[^/]*\/ic_launcher(?:_foreground)?\.png$/i,
+      /^res\/mipmap-hdpi[^/]*\/ic_launcher(?:_foreground)?\.png$/i,
+      /^res\/mipmap-mdpi[^/]*\/ic_launcher(?:_foreground)?\.png$/i,
+      /^res\/drawable-xxxhdpi[^/]*\/ic_launcher\.png$/i,
+      /^res\/drawable-xxhdpi[^/]*\/ic_launcher\.png$/i,
+      /^res\/drawable-xhdpi[^/]*\/ic_launcher\.png$/i,
+      /^res\/drawable-hdpi[^/]*\/ic_launcher\.png$/i,
+      /^res\/drawable[^/]*\/ic_launcher\.png$/i,
+    ]
+
+    // Try the standard patterns first
+    for (const pattern of iconPatterns) {
+      for (const entry of entries) {
+        if (pattern.test(entry.entryName)) {
+          const data = entry.getData()
+          if (data && data.length > 100) return data
+        }
+      }
+    }
+
+    // Fallback: find any PNG in mipmap dirs, pick the largest by file size (best quality)
+    let bestEntry = null
+    let bestSize = 0
+    for (const entry of entries) {
+      const name = entry.entryName
+      if (/^res\/(mipmap|drawable)-[^/]+\/.*\.png$/i.test(name) && !entry.isDirectory) {
+        if (/ic_launcher/i.test(name) || /icon/i.test(name) || /logo/i.test(name)) {
+          const size = entry.header.size || 0
+          if (size > bestSize) {
+            bestSize = size
+            bestEntry = entry
+          }
+        }
+      }
+    }
+
+    if (bestEntry) {
+      const data = bestEntry.getData()
+      if (data && data.length > 100) return data
+    }
+
+    return null
+  } catch (err) {
+    console.error('[apk-icon] Error extracting APK icon:', err?.message || err)
+    return null
+  }
+}
+
+/**
+ * Upload an extracted APK icon buffer to Cloudinary.
+ * Returns the secure URL or null.
+ */
+async function uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, fileId) {
+  try {
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        {
+          folder: cloudinaryFolder,
+          public_id: fileId + '_icon',
+          resource_type: 'image',
+          format: 'png',
+        },
+        (error, result) => {
+          if (error) reject(error)
+          else resolve(result)
+        }
+      ).end(iconBuffer)
+    })
+    return result.secure_url
+  } catch (err) {
+    console.error('[apk-icon] Error uploading APK icon to Cloudinary:', err?.message || err)
+    return null
+  }
+}
+
+/**
+ * Download a file from a URL and return its Buffer.
+ * Used to fetch APKs from Cloudinary for icon extraction.
+ */
+function downloadFileBuffer(url) {
+  const mod = url.startsWith('https') ? require('https') : require('http')
+  return new Promise((resolve, reject) => {
+    mod.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return downloadFileBuffer(res.headers.location).then(resolve).catch(reject)
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`Download failed with status ${res.statusCode}`))
+      }
+      const chunks = []
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => resolve(Buffer.concat(chunks)))
+      res.on('error', reject)
+    }).on('error', reject)
+  })
 }
 
 // ---------- Firebase Admin SDK ----------
@@ -358,6 +471,9 @@ async function initDb() {
   try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
   try { await pool.query('ALTER TABLE links ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
   try { await pool.query('ALTER TABLE folders ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
+
+  // ── APK icon support ──
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS icon_url text DEFAULT NULL') } catch (_) { /* ignore */ }
 
   // ---- Roles & permissions (RBAC) ----
   await pool.query(`
@@ -929,7 +1045,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       directionsCount, foldersCount, foldersByDirection,
       filesCount, filesByType, filesByDirection, filesByDirectionAndType,
       storageTotal, linksCount,
-      recentActivity, topUploaders, filesOverTime, filesOverTimeByType,
+      recentActivity, topUploaders, filesOverTime, filesOverTimeByType, filesDeletedOverTime,
     ] = await Promise.all([
       // ── Users (structural — not date-filtered, admin users hidden) ──
       q('SELECT COUNT(*)::int AS count FROM users __WHERE__', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
@@ -1026,6 +1142,32 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
           GROUP BY month, category ORDER BY month ASC, count DESC
         `, params)
       })(),
+      // ── Deleted files over time ──
+      (() => {
+        const clauses = []
+        const params = []
+        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+        if (fromDate) {
+          params.push(fromDate)
+          clauses.push(`deleted_at >= $${params.length}`)
+        } else {
+          // Default: show last 12 months for the timeline even when period is "all"
+          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+          clauses.push(`deleted_at >= $${params.length}`)
+        }
+        if (toDate) {
+          params.push(toDate)
+          clauses.push(`deleted_at <= $${params.length}`)
+        }
+        clauses.push('deleted_at IS NOT NULL') // Only include deleted files
+        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+        return pool.query(`
+          SELECT TO_CHAR(DATE_TRUNC('month', deleted_at), 'YYYY-MM') AS month,
+                 COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
+          FROM files ${where}
+          GROUP BY month ORDER BY month ASC
+        `, params)
+      })(),
     ])
 
     // For direction-scoped users, include the direction name
@@ -1057,6 +1199,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
         byDirectionAndType: filesByDirectionAndType.rows,
         overTime: filesOverTime.rows,
         overTimeByType: filesOverTimeByType.rows,
+        deletedOverTime: filesDeletedOverTime.rows,
       },
       storage: {
         totalBytes: Number(storageTotal.rows[0].total),
@@ -2785,10 +2928,20 @@ app.post('/api/files', (req, res, next) => {
       cloudinaryPublicId = cloudinaryResult.public_id
     }
 
+    // Extract APK icon if this is an APK file
+    let iconUrl = null
+    if (storedFileName.toLowerCase().endsWith('.apk')) {
+      const iconBuffer = extractApkIcon(fileBuffer)
+      if (iconBuffer) {
+        const cloudinaryFolder = `intranet/${directionCode}/${folder}`
+        iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
+      }
+    }
+
     // Store in DB — large files go in the `data` bytea column, small files use Cloudinary URL
     await pool.query(
-      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data, icon_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         id,
         storedFileName,
@@ -2800,6 +2953,7 @@ app.post('/api/files', (req, res, next) => {
         cloudinaryUrl,
         cloudinaryPublicId,
         useCloudinary ? null : fileBuffer, // store bytea only for large files
+        iconUrl,
       ]
     )
 
@@ -2824,6 +2978,7 @@ app.post('/api/files', (req, res, next) => {
       url: publicUrl,
       view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
+      icon_url: iconUrl || undefined,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -2982,9 +3137,24 @@ app.post('/api/files/register', async (req, res) => {
       [folderId, folderName, directionId]
     )
 
+    // Extract APK icon if this is an APK file (download from Cloudinary first)
+    let iconUrl = null
+    if (storedFileName.toLowerCase().endsWith('.apk') && cloudinaryUrl) {
+      try {
+        const apkBuffer = await downloadFileBuffer(cloudinaryUrl)
+        const iconBuffer = extractApkIcon(apkBuffer)
+        if (iconBuffer) {
+          const cloudinaryFolder = `intranet/${code}/${folderName}`
+          iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
+        }
+      } catch (dlErr) {
+        console.error('[apk-icon] Could not download APK for icon extraction:', dlErr?.message)
+      }
+    }
+
     await pool.query(
-      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)`,
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data, icon_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10)`,
       [
         id,
         storedFileName,
@@ -2995,6 +3165,7 @@ app.post('/api/files/register', async (req, res) => {
         uploadedBy,
         cloudinaryUrl,
         cloudinaryPublicId || null,
+        iconUrl,
       ]
     )
 
@@ -3018,6 +3189,7 @@ app.post('/api/files/register', async (req, res) => {
       url: publicUrl,
       view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
+      icon_url: iconUrl || undefined,
     })
   } catch (err) {
     console.error('file register error', err?.message || err, err?.stack)
@@ -3240,7 +3412,7 @@ app.get('/api/files', async (req, res) => {
     const { folder, role, direction_id: userDirectionId } = req.query
 
     const params = []
-    let sql = 'SELECT id, name, mime_type, size, folder, direction_id, cloudinary_url, created_at FROM files'
+    let sql = 'SELECT id, name, mime_type, size, folder, direction_id, cloudinary_url, icon_url, created_at FROM files'
 
     const conditions = ['deleted_at IS NULL']
 
@@ -3309,6 +3481,7 @@ app.get('/api/files', async (req, res) => {
       direction_id: row.direction_id,
       url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
       view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+      icon_url: row.icon_url || null,
       created_at: row.created_at,
     }))
 
