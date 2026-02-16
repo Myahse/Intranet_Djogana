@@ -680,6 +680,34 @@ function broadcastUserDeleted(identifiant) {
 }
 
 /**
+ * Broadcast "user_suspended" to a specific identifiant so their session shows the suspension modal immediately.
+ */
+function broadcastUserSuspended(identifiant) {
+  const message = JSON.stringify({ type: 'user_suspended' })
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/**
+ * Broadcast "user_restored" to a specific identifiant so the suspension modal disappears and they can use the app again.
+ */
+function broadcastUserRestored(identifiant) {
+  const message = JSON.stringify({ type: 'user_restored' })
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/**
  * Broadcast a "new_device_request" event to a specific identifiant
  * so their mobile app can display the request without manual refresh.
  */
@@ -1589,13 +1617,17 @@ app.patch('/api/users/:id', async (req, res) => {
       vals
     )
 
-    // When suspending, force logout via WebSocket
-    if (is_suspended === true) {
-      broadcastUserDeleted(targetUser.identifiant)
+    const newSuspended = result.rows[0].is_suspended
+    // Real-time suspend/restore via WebSocket so modal appears or disappears without refresh
+    if (is_suspended !== undefined && targetUser.is_suspended !== newSuspended) {
+      if (newSuspended) {
+        broadcastUserSuspended(targetUser.identifiant)
+      } else {
+        broadcastUserRestored(targetUser.identifiant)
+      }
     }
 
     // Activity log for suspend/unsuspend
-    const newSuspended = result.rows[0].is_suspended
     if (is_suspended !== undefined && targetUser.is_suspended !== newSuspended) {
       let actorId = null
       if (caller_identifiant) {
