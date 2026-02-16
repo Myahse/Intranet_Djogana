@@ -13,9 +13,14 @@ const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY??'intranet_djogan
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY??'intranet_djogana_token'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
+// Get the API base URL, falling back to current origin if not set
+function getApiBaseUrl(): string {
+  return API_BASE_URL || window.location.origin
+}
+
 // Derive WebSocket URL from the API base (http→ws, https→wss)
 export function getWsUrl(): string {
-  const base = API_BASE_URL || window.location.origin
+  const base = getApiBaseUrl()
   return base.replace(/^http/, 'ws') + '/ws'
 }
 
@@ -147,14 +152,21 @@ function localFallbackLogin(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUserState] = useState<User | null>(loadStoredUser)
+  const initialUser = loadStoredUser()
+  const [user, setUserState] = useState<User | null>(initialUser)
+  // Track when user was last set to prevent clearing immediately after login
+  // Initialize to current time if we have a stored user (assume it was just loaded)
+  const lastLoginTimeRef = useRef<number>(initialUser ? Date.now() : 0)
 
   const setUser = useCallback((u: User | null) => {
     setUserState(u)
     if (u) {
       sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(u))
+      // Track when user was set (for login)
+      lastLoginTimeRef.current = Date.now()
     } else {
       sessionStorage.removeItem(AUTH_STORAGE_KEY)
+      lastLoginTimeRef.current = 0
     }
   }, [])
 
@@ -171,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (identifiant: string, motDePasse: string): Promise<boolean> => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -242,17 +254,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshPermissions = useCallback(async () => {
     try {
       const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
-      if (!token) return
-      const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+      if (!token) {
+        // If no token but we have a stored user, clear it (stale session)
+        // But don't clear if user was just set (within last 5 seconds) - might be race condition
+        const timeSinceLogin = Date.now() - lastLoginTimeRef.current
+        if (timeSinceLogin > 5000) {
+          const storedUser = loadStoredUser()
+          if (storedUser) {
+            setUser(null)
+            try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
+          }
+        }
+        return
+      }
+      const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
         // 401 = invalid token, 403 = suspended → clear session so user can re-login
-        if (res.status === 401 || res.status === 403) {
+        // But don't clear if user was just set (within last 5 seconds) - might be race condition
+        const timeSinceLogin = Date.now() - lastLoginTimeRef.current
+        if ((res.status === 401 || res.status === 403) && timeSinceLogin > 5000) {
           setUser(null)
           try { sessionStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* ignore */ }
           try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
         }
+        // For other errors (500, network issues, etc.), keep existing session
         return
       }
       const data = (await res.json()) as {
@@ -275,7 +302,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         must_change_password: Boolean(data.must_change_password),
       })
     } catch {
-      // silent – keep existing session
+      // Network errors or other exceptions → keep existing session
+      // Don't clear user on network failures
     }
   }, [setUser])
 
@@ -288,7 +316,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       | { error: string }
     > => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/device/request`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/device/request`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
@@ -325,7 +353,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }> => {
       try {
         const res = await fetch(
-          `${API_BASE_URL}/api/auth/device/poll/${encodeURIComponent(requestId)}`
+          `${getApiBaseUrl()}/api/auth/device/poll/${encodeURIComponent(requestId)}`
         )
         const data = (await res.json()) as {
           status: string
@@ -374,7 +402,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const listDeviceRequests = useCallback(async (): Promise<DeviceLoginRequest[]> => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/device/requests`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/auth/device/requests`, {
         headers: getAuthHeaders(),
       })
       if (!res.ok) return []
@@ -400,7 +428,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const approveDeviceRequest = useCallback(
     async (requestId: string): Promise<boolean> => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/device/approve`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/device/approve`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -419,7 +447,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const denyDeviceRequest = useCallback(
     async (requestId: string): Promise<boolean> => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/device/deny`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/device/deny`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -463,7 +491,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           payload.caller_identifiant = user.identifiant
         }
 
-        const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/register`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -489,7 +517,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!user?.identifiant) return false
 
       try {
-        const res = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/change-password`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -536,8 +564,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // On mount: sync user state with the server so stale sessionStorage values
   // (like must_change_password) are corrected immediately
+  // Only refresh if we have a stored user/token to avoid unnecessary API calls
   useEffect(() => {
-    refreshRef.current()
+    const storedUser = loadStoredUser()
+    const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
+    // Only refresh if we have both user and token, or if we have a token but no user (recover from state loss)
+    if (storedUser || token) {
+      refreshRef.current()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
