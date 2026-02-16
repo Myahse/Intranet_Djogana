@@ -562,6 +562,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   refreshRef.current = refreshPermissions
   const logoutRef = useRef(logout)
   logoutRef.current = logout
+  const setUserRef = useRef(setUser)
+  setUserRef.current = setUser
+  const userRef = useRef(user)
+  userRef.current = user
 
   // Track whether the user is logged in (boolean) so WebSocket only
   // reconnects on login/logout, NOT on every permission refresh.
@@ -630,6 +634,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Our account was deleted → force logout
             console.log('[ws] user deleted, logging out…')
             logoutRef.current()
+          }
+
+          if (data.type === 'user_suspended') {
+            // Admin suspended us → show suspension modal immediately
+            const prev = userRef.current
+            if (prev) setUserRef.current({ ...prev, is_suspended: true })
+          }
+
+          if (data.type === 'user_restored') {
+            // Admin restored us → hide modal and refresh permissions
+            const prev = userRef.current
+            if (prev) setUserRef.current({ ...prev, is_suspended: false })
+            refreshRef.current()
           }
 
           // Online users update (admin only — silent tracking)
