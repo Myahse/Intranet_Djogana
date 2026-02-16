@@ -2833,6 +2833,179 @@ app.post('/api/files', (req, res, next) => {
   }
 })
 
+// ---------- Direct-to-Cloudinary upload (sign + register) ----------
+
+/**
+ * POST /api/files/sign
+ * Returns a Cloudinary upload signature so the client can upload directly to Cloudinary.
+ * Body: { folder, direction_id, identifiant }
+ */
+app.post('/api/files/sign', async (req, res) => {
+  try {
+    const { folder, direction_id: directionId, identifiant } = req.body || {}
+
+    if (!directionId) {
+      return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
+    }
+
+    let uploadedBy = null
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        uploadedBy = u.id
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const dirRes = await pool.query(
+      'SELECT id, code FROM directions WHERE id = $1',
+      [directionId]
+    )
+    if (dirRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Direction invalide.' })
+    }
+    const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
+
+    const id = uuidv4()
+    const cloudinaryFolder = `intranet/${directionCode}/${folder || 'default'}`
+    const timestamp = Math.round(Date.now() / 1000)
+
+    const paramsToSign = {
+      timestamp,
+      folder: cloudinaryFolder,
+      public_id: id,
+    }
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign,
+      process.env.CLOUDINARY_API_SECRET
+    )
+
+    return res.json({
+      id,
+      signature,
+      timestamp,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      folder: cloudinaryFolder,
+      direction_code: directionCode,
+    })
+  } catch (err) {
+    console.error('file sign error', err?.message || err)
+    return res.status(500).json({ error: 'Erreur lors de la signature.' })
+  }
+})
+
+/**
+ * POST /api/files/register
+ * Registers file metadata in the database after a successful direct Cloudinary upload.
+ * Body: { id, name, mime_type, size, folder, direction_id, identifiant, cloudinary_url, cloudinary_public_id, direction_code }
+ */
+app.post('/api/files/register', async (req, res) => {
+  try {
+    const {
+      id,
+      name,
+      mime_type: mimeType,
+      size,
+      folder,
+      direction_id: directionId,
+      identifiant,
+      cloudinary_url: cloudinaryUrl,
+      cloudinary_public_id: cloudinaryPublicId,
+      direction_code: directionCode,
+    } = req.body || {}
+
+    if (!id || !name || !directionId || !cloudinaryUrl) {
+      return res.status(400).json({ error: 'Paramètres manquants.' })
+    }
+
+    let uploadedBy = null
+    if (identifiant) {
+      const userRes = await pool.query(
+        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+        [identifiant]
+      )
+      if (userRes.rows.length > 0) {
+        const u = userRes.rows[0]
+        uploadedBy = u.id
+        if (u.role !== 'admin' && u.direction_id !== directionId) {
+          return res.status(403).json({
+            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+          })
+        }
+      }
+    }
+
+    const code = (directionCode || 'DEF').toString().toUpperCase()
+
+    // Prefix file name with direction code (e.g. SUM_rapport.pdf)
+    let baseName = (name || 'document').replace(/^.*[/\\]/, '').trim() || 'document'
+    if (baseName.toUpperCase().startsWith(code + '_')) {
+      baseName = baseName.slice(code.length + 1)
+    }
+    const storedFileName = code + '_' + baseName
+
+    const folderName = folder || 'default'
+    const folderId = uuidv4()
+
+    await pool.query(
+      `INSERT INTO folders (id, name, direction_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (direction_id, name) DO NOTHING`,
+      [folderId, folderName, directionId]
+    )
+
+    await pool.query(
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)`,
+      [
+        id,
+        storedFileName,
+        mimeType || 'application/octet-stream',
+        Number(size) || 0,
+        folderName,
+        directionId,
+        uploadedBy,
+        cloudinaryUrl,
+        cloudinaryPublicId || null,
+      ]
+    )
+
+    const publicUrl = cloudinaryUrl
+
+    await insertActivityLog(pool, {
+      action: 'upload_file',
+      actorIdentifiant: identifiant || null,
+      actorId: uploadedBy,
+      directionId,
+      entityType: 'file',
+      entityId: id,
+      details: { name: storedFileName, folder: folderName, size: Number(size) || 0 },
+    })
+
+    broadcastDataChange('files', 'created', { id, directionId, folder: folderName })
+    return res.json({
+      id,
+      name: storedFileName,
+      size: Number(size) || 0,
+      url: publicUrl,
+      view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
+      direction_id: directionId,
+    })
+  } catch (err) {
+    console.error('file register error', err?.message || err, err?.stack)
+    return res.status(500).json({ error: 'Erreur lors de l\'enregistrement du fichier.' })
+  }
+})
+
 // Explicit folders / groups (each folder belongs to a direction)
 // Query params: role, direction_id (user's direction — used to filter direction_only folders)
 app.get('/api/folders', async (_req, res) => {
