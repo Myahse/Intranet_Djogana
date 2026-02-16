@@ -9,9 +9,9 @@ import {
   type ReactNode,
 } from 'react'
 
-const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY ?? 'intranet_djogana_user'
-const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY ?? 'intranet_djogana_token'
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY
+const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 // Derive WebSocket URL from the API base (http→ws, https→wss)
 export function getWsUrl(): string {
@@ -39,6 +39,7 @@ export type User = {
   direction_id?: string | null
   direction_name?: string | null
   is_direction_chief?: boolean
+  is_suspended?: boolean
   permissions?: UserPermissions | null
   must_change_password?: boolean
 }
@@ -189,6 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id?: string | null
           direction_name?: string | null
           is_direction_chief?: boolean
+          is_suspended?: boolean
           permissions?: UserPermissions | null
           must_change_password?: boolean
           token?: string
@@ -209,6 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id: data.direction_id ?? null,
           direction_name: data.direction_name ?? null,
           is_direction_chief: Boolean(data.is_direction_chief),
+          is_suspended: Boolean(data.is_suspended),
           permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
           must_change_password: Boolean(data.must_change_password),
         })
@@ -253,6 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         direction_id?: string | null
         direction_name?: string | null
         is_direction_chief?: boolean
+        is_suspended?: boolean
         permissions?: UserPermissions | null
         must_change_password?: boolean
       }
@@ -263,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         direction_id: data.direction_id ?? null,
         direction_name: data.direction_name ?? null,
         is_direction_chief: Boolean(data.is_direction_chief),
+        is_suspended: Boolean(data.is_suspended),
         permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
         must_change_password: Boolean(data.must_change_password),
       })
@@ -345,6 +350,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             direction_id: data.user.direction_id ?? null,
             direction_name: data.user.direction_name ?? null,
             is_direction_chief: Boolean(data.user.is_direction_chief),
+            is_suspended: Boolean(data.user.is_suspended),
             permissions:
               data.user.role === 'admin'
                 ? adminPermissions
@@ -581,6 +587,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Our account was deleted → force logout
             console.log('[ws] user deleted, logging out…')
             logoutRef.current()
+          }
+
+          if (data.type === 'user_suspended') {
+            // Our account was suspended → refresh so the suspended modal shows
+            console.log('[ws] user suspended, refreshing…')
+            refreshRef.current()
           }
 
           // Online users update (admin only — silent tracking)

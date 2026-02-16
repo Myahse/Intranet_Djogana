@@ -340,6 +340,13 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
+  // Add suspended_at for user suspension (no deletion; suspend instead)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at timestamptz DEFAULT NULL;
+    `)
+  } catch (_) { /* column may already exist */ }
+
   // Device login requests (GitHub-style: request access → approve on mobile → grant session)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_requests (
@@ -663,6 +670,20 @@ async function broadcastPermissionsChange(roleName) {
  */
 function broadcastUserDeleted(identifiant) {
   const message = JSON.stringify({ type: 'user_deleted' })
+  for (const client of wsClients) {
+    try {
+      if (client._userIdentifiant === identifiant && client.readyState === 1) {
+        client.send(message)
+      }
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/**
+ * Broadcast a "user_suspended" event to a specific identifiant (force logout)
+ */
+function broadcastUserSuspended(identifiant) {
+  const message = JSON.stringify({ type: 'user_suspended' })
   for (const client of wsClients) {
     try {
       if (client._userIdentifiant === identifiant && client.readyState === 1) {
@@ -1415,7 +1436,7 @@ app.get('/api/users', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT u.id, u.identifiant, u.role, u.direction_id, u.created_at, u.is_direction_chief,
-             d.name AS direction_name
+             u.suspended_at, d.name AS direction_name
       FROM users u
       LEFT JOIN directions d ON d.id = u.direction_id
       WHERE u.role <> 'admin'
@@ -1429,6 +1450,8 @@ app.get('/api/users', async (_req, res) => {
         direction_id: r.direction_id,
         direction_name: r.direction_name,
         is_direction_chief: Boolean(r.is_direction_chief),
+        is_suspended: Boolean(r.suspended_at),
+        suspended_at: r.suspended_at || null,
         created_at: r.created_at,
       }))
     )
@@ -1439,7 +1462,8 @@ app.get('/api/users', async (_req, res) => {
   }
 })
 
-app.delete('/api/users/:id', async (req, res) => {
+// Suspend user (no deletion; use suspension instead)
+app.patch('/api/users/:id/suspend', async (req, res) => {
   try {
     const { id } = req.params
     const callerIdentifiant = req.query.identifiant || req.body?.identifiant
@@ -1451,17 +1475,20 @@ app.delete('/api/users/:id', async (req, res) => {
     }
 
     const userRow = await pool.query(
-      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      'SELECT id, identifiant, role, direction_id, suspended_at FROM users WHERE id = $1',
       [id]
     )
     if (userRow.rows.length === 0) {
       return res.status(404).json({ error: 'Utilisateur introuvable.' })
     }
-    const deletedUser = userRow.rows[0]
+    const targetUser = userRow.rows[0]
 
-    // Block deletion of admin users
-    if (deletedUser.role === 'admin') {
-      return res.status(403).json({ error: 'Impossible de supprimer un compte administrateur.' })
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Impossible de suspendre un compte administrateur.' })
+    }
+
+    if (targetUser.suspended_at) {
+      return res.status(400).json({ error: 'Cet utilisateur est déjà suspendu.' })
     }
 
     let actorId = null
@@ -1470,28 +1497,78 @@ app.delete('/api/users/:id', async (req, res) => {
       if (u.rows.length > 0) actorId = u.rows[0].id
     }
     await insertActivityLog(pool, {
-      action: 'delete_user',
+      action: 'suspend_user',
       actorIdentifiant: callerIdentifiant || null,
       actorId,
-      directionId: deletedUser.direction_id,
+      directionId: targetUser.direction_id,
       entityType: 'user',
       entityId: id,
-      details: { identifiant: deletedUser.identifiant, role: deletedUser.role },
+      details: { identifiant: targetUser.identifiant, role: targetUser.role },
     })
 
-    // Notify the deleted user via WebSocket (force logout)
-    broadcastUserDeleted(deletedUser.identifiant)
-
-    await pool.query('DELETE FROM users WHERE id = $1', [id])
-    broadcastDataChange('users', 'deleted', { id })
+    await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [id])
+    broadcastUserSuspended(targetUser.identifiant)
+    broadcastDataChange('users', 'updated', { id })
     return res.status(204).send()
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('delete user error', err)
-    return res.status(500).json({ error: 'Erreur lors de la suppression de l’utilisateur.' })
+    console.error('suspend user error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suspension de l’utilisateur.' })
   }
 })
 
+// Unsuspend user
+app.patch('/api/users/:id/unsuspend', async (req, res) => {
+  try {
+    const { id } = req.params
+    const callerIdentifiant = req.query.identifiant || req.body?.identifiant
+    if (callerIdentifiant) {
+      const perms = await getPermissionsForIdentifiant(callerIdentifiant)
+      if (perms && !perms.can_delete_user) {
+        return res.status(403).json({ error: "Vous n'avez pas le droit de réactiver des utilisateurs." })
+      }
+    }
+
+    const userRow = await pool.query(
+      'SELECT id, identifiant, role, direction_id, suspended_at FROM users WHERE id = $1',
+      [id]
+    )
+    if (userRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const targetUser = userRow.rows[0]
+
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Impossible de modifier un compte administrateur.' })
+    }
+
+    if (!targetUser.suspended_at) {
+      return res.status(400).json({ error: "Cet utilisateur n'est pas suspendu." })
+    }
+
+    let actorId = null
+    if (callerIdentifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+      if (u.rows.length > 0) actorId = u.rows[0].id
+    }
+    await insertActivityLog(pool, {
+      action: 'unsuspend_user',
+      actorIdentifiant: callerIdentifiant || null,
+      actorId,
+      directionId: targetUser.direction_id,
+      entityType: 'user',
+      entityId: id,
+      details: { identifiant: targetUser.identifiant, role: targetUser.role },
+    })
+
+    await pool.query('UPDATE users SET suspended_at = NULL WHERE id = $1', [id])
+    broadcastDataChange('users', 'updated', { id })
+    return res.status(204).send()
+  } catch (err) {
+    console.error('unsuspend user error', err)
+    return res.status(500).json({ error: "Erreur lors de la réactivation de l'utilisateur." })
+  }
+})
 
 // Update user role and/or direction
 app.patch('/api/users/:id', async (req, res) => {
@@ -1758,7 +1835,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.suspended_at, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1784,6 +1861,8 @@ app.post('/api/auth/login', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       is_direction_chief: Boolean(user.is_direction_chief),
+      is_suspended: Boolean(user.suspended_at),
+      suspended_at: user.suspended_at || null,
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
       token,
@@ -1814,7 +1893,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(401).json({ error: 'Token invalide.' })
     }
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.suspended_at, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -1832,6 +1911,8 @@ app.get('/api/auth/me', async (req, res) => {
       direction_id: user.direction_id,
       direction_name: user.direction_name || null,
       is_direction_chief: Boolean(user.is_direction_chief),
+      is_suspended: Boolean(user.suspended_at),
+      suspended_at: user.suspended_at || null,
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
     })
@@ -2190,7 +2271,7 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
     }
 
     const userRes = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, d.name AS direction_name
+      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.suspended_at, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -2206,6 +2287,8 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
       role: user.role,
       direction_id: user.direction_id || null,
       direction_name: user.direction_name || null,
+      is_suspended: Boolean(user.suspended_at),
+      suspended_at: user.suspended_at || null,
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
     }
