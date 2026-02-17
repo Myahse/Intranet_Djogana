@@ -1129,13 +1129,15 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       q('SELECT COUNT(*)::int AS count FROM links __WHERE__'),
       // ── Activity (date + direction filtered) ──
       // Admin viewers see all activity; non-admin viewers don't see admin actions
-      q(`SELECT action, actor_identifiant, entity_type, details, created_at
-         FROM activity_log __WHERE__ ORDER BY created_at DESC LIMIT 20`,
-        isAdmin ? {} : { extraWhere: ["(actor_identifiant IS NULL OR actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
+      q(`SELECT a.action, a.actor_identifiant, COALESCE(u.role, 'Système') AS actor_role, a.entity_type, a.details, a.created_at
+         FROM activity_log a
+         LEFT JOIN users u ON a.actor_identifiant = u.identifiant
+         __WHERE__ ORDER BY a.created_at DESC LIMIT 20`,
+        isAdmin ? { joinAlias: 'a' } : { joinAlias: 'a', extraWhere: ["(a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
       // ── Top uploaders (date + direction filtered, admin hidden) ──
-      q(`SELECT u.identifiant, COUNT(f.id)::int AS uploads
+      q(`SELECT u.identifiant, u.role, COUNT(f.id)::int AS uploads
          FROM files f JOIN users u ON f.uploaded_by = u.id __WHERE__
-         GROUP BY u.identifiant ORDER BY uploads DESC LIMIT 5`,
+         GROUP BY u.identifiant, u.role ORDER BY uploads DESC LIMIT 5`,
         { joinAlias: 'f', extraWhere: ["u.role <> 'admin'"] }),
       // ── Files over time (always use period or custom range, default to 12 months) ──
       (() => {
