@@ -295,9 +295,23 @@ function FilePreviewContent({
               )}
             </div>
           ) : textContent !== null ? (
-            <pre className="whitespace-pre-wrap font-mono text-sm text-foreground bg-background w-full h-full overflow-auto">
-              {textContent}
-            </pre>
+            <div className="flex flex-col h-full">
+              {file.url && (
+                <a
+                  href={file.url}
+                  download={file.name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline mb-3 shrink-0"
+                >
+                  <Download className="size-4" />
+                  Télécharger le fichier
+                </a>
+              )}
+              <pre className="whitespace-pre-wrap font-mono text-sm text-foreground bg-background flex-1 overflow-auto">
+                {textContent}
+              </pre>
+            </div>
           ) : null}
         </div>
       ) : (
@@ -1331,6 +1345,49 @@ const DocumentSection = () => {
       }
     }
 
+    const handleDeleteFile = async (id: string) => {
+      const file = allFiles.find((f) => f.id === id)
+      const ok = await confirm({
+        title: 'Supprimer ce fichier ?',
+        description: file ? `« ${file.name} » sera déplacé vers la corbeille.` : 'Ce fichier sera déplacé vers la corbeille.',
+        confirmLabel: 'Supprimer',
+        variant: 'destructive',
+      })
+      if (!ok) return
+      setLoading({ open: true, message: 'Suppression du fichier…' })
+      try {
+        await removeFile(id)
+        if (selectedFile?.id === id) setSelectedFile(null)
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
+        toast.success('Fichier supprimé')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
+        toast.error('Erreur lors de la suppression du fichier')
+      }
+    }
+
+    const handleDeleteLink = async (id: string) => {
+      const link = allLinks.find((l) => l.id === id)
+      const ok = await confirm({
+        title: 'Supprimer ce lien ?',
+        description: link ? `« ${link.label} » sera supprimé.` : 'Ce lien sera supprimé.',
+        confirmLabel: 'Supprimer',
+        variant: 'destructive',
+      })
+      if (!ok) return
+      setLoading({ open: true, message: 'Suppression du lien…' })
+      try {
+        await removeLink(id)
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien supprimé' }))
+        toast.success('Lien supprimé')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du lien' }))
+        toast.error('Erreur lors de la suppression du lien')
+      }
+    }
+
     return (
       <div className="h-full min-h-0 flex flex-col">
       <ConfirmDialog />
@@ -1434,18 +1491,7 @@ const DocumentSection = () => {
                           key={item.data.id}
                           link={item.data}
                           canEdit={canEditLink(item.data)}
-                          onDelete={async (id) => {
-                            setLoading({ open: true, message: 'Suppression du lien…' })
-                            try {
-                              await removeLink(id)
-                              setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien supprimé' }))
-                              toast.success('Lien supprimé')
-                            } catch (err) {
-                              console.error(err)
-                              setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du lien' }))
-                              toast.error('Erreur lors de la suppression du lien')
-                            }
-                          }}
+                          onDelete={handleDeleteLink}
                         />
                       ) : (
                         <FileCard
@@ -1457,19 +1503,7 @@ const DocumentSection = () => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
                           }}
-                          onDelete={async (id) => {
-                            setLoading({ open: true, message: 'Suppression du fichier…' })
-                            try {
-                              await removeFile(id)
-                              if (selectedFile?.id === id) setSelectedFile(null)
-                              setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
-                              toast.success('Fichier supprimé')
-                            } catch (err) {
-                              console.error(err)
-                              setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
-                              toast.error('Erreur lors de la suppression du fichier')
-                            }
-                          }}
+                          onDelete={handleDeleteFile}
                           onRename={async (id, name) => {
                             setLoading({ open: true, message: 'Renommage du fichier…' })
                             try {
@@ -1499,18 +1533,7 @@ const DocumentSection = () => {
                           link={item.data}
                           canEdit={canEditLink(item.data)}
                           showDetails={false}
-                          onDelete={async (id) => {
-                            setLoading({ open: true, message: 'Suppression du lien…' })
-                            try {
-                              await removeLink(id)
-                              setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien supprimé' }))
-                              toast.success('Lien supprimé')
-                            } catch (err) {
-                              console.error(err)
-                              setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du lien' }))
-                              toast.error('Erreur lors de la suppression du lien')
-                            }
-                          }}
+                          onDelete={handleDeleteLink}
                         />
                       ) : (
                         <FileListRow
@@ -1523,19 +1546,7 @@ const DocumentSection = () => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
                           }}
-                          onDelete={async (id) => {
-                            setLoading({ open: true, message: 'Suppression du fichier…' })
-                            try {
-                              await removeFile(id)
-                              if (selectedFile?.id === id) setSelectedFile(null)
-                              setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
-                              toast.success('Fichier supprimé')
-                            } catch (err) {
-                              console.error(err)
-                              setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
-                              toast.error('Erreur lors de la suppression du fichier')
-                            }
-                          }}
+                          onDelete={handleDeleteFile}
                           onRename={async (id, name) => {
                             setLoading({ open: true, message: 'Renommage du fichier…' })
                             try {
@@ -1575,18 +1586,7 @@ const DocumentSection = () => {
                             link={item.data}
                             canEdit={canEditLink(item.data)}
                             showDetails
-                            onDelete={async (id) => {
-                              setLoading({ open: true, message: 'Suppression du lien…' })
-                              try {
-                                await removeLink(id)
-                                setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien supprimé' }))
-                                toast.success('Lien supprimé')
-                              } catch (err) {
-                                console.error(err)
-                                setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du lien' }))
-                                toast.error('Erreur lors de la suppression du lien')
-                              }
-                            }}
+                            onDelete={handleDeleteLink}
                           />
                         ) : (
                           <FileListRow
@@ -1599,19 +1599,7 @@ const DocumentSection = () => {
                               setSelectedFile(f)
                               sendWs({ type: 'action', action: 'view_file', detail: f.name })
                             }}
-                            onDelete={async (id) => {
-                              setLoading({ open: true, message: 'Suppression du fichier…' })
-                              try {
-                                await removeFile(id)
-                                if (selectedFile?.id === id) setSelectedFile(null)
-                                setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
-                                toast.success('Fichier supprimé')
-                              } catch (err) {
-                                console.error(err)
-                                setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
-                                toast.error('Erreur lors de la suppression du fichier')
-                              }
-                            }}
+                            onDelete={handleDeleteFile}
                             onRename={async (id, name) => {
                               setLoading({ open: true, message: 'Renommage du fichier…' })
                               try {
@@ -1652,15 +1640,29 @@ const DocumentSection = () => {
                 <p className="min-w-0 truncate text-sm font-medium" title={selectedFile.name}>
                   {selectedFile.name}
                 </p>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                  onClick={() => setSelectedFile(null)}
-                  aria-label="Fermer l'aperçu"
-                >
-                  <X className="size-4" />
-                </Button>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  {selectedFile.url && (
+                    <a
+                      href={selectedFile.url}
+                      download={selectedFile.name}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center size-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label="Télécharger"
+                    >
+                      <Download className="size-4" />
+                    </a>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => setSelectedFile(null)}
+                    aria-label="Fermer l'aperçu"
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
               </div>
               <div className="flex-1 min-h-0 overflow-auto flex flex-col">
                 <FilePreviewContent
