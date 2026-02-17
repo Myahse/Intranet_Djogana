@@ -105,6 +105,7 @@ export default function SidebarActions() {
   const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
   const [formationSubfolderName, setFormationSubfolderName] = useState('')
   const [selectedDirectionFormation, setSelectedDirectionFormation] = useState('')
+  const [formationSubfolderVisibility, setFormationSubfolderVisibility] = useState<'public' | 'direction_only'>('public')
   const formationFileRef = useRef<HTMLInputElement>(null)
 
   // --- Upload file state ---
@@ -175,17 +176,18 @@ export default function SidebarActions() {
     setLoading({ open: true, message: 'Création du sous-dossier en cours…' })
     try {
       if (file) {
-        await addFolder(folderKey, file, selectedDirectionFormation)
+        await addFolder(folderKey, file, selectedDirectionFormation, formationSubfolderVisibility)
         setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé et fichier ajouté' }))
         toast.success('Sous-dossier créé et fichier ajouté')
       } else {
-        await addFolderMeta(folderKey, selectedDirectionFormation)
+        await addFolderMeta(folderKey, selectedDirectionFormation, formationSubfolderVisibility)
         setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé' }))
         toast.success('Sous-dossier créé (sans fichier)')
       }
       setFormationGroupName('')
       setSelectedFormationGroup('')
       setFormationSubfolderName('')
+      setFormationSubfolderVisibility('public')
       if (formationFileRef.current) formationFileRef.current.value = ''
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
@@ -411,6 +413,18 @@ export default function SidebarActions() {
               <Label>Fichier (optionnel)</Label>
               <input ref={formationFileRef} type="file" className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
             </div>
+            {canSetFolderVisibility && (
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="sb-subfolder-visibility"
+                  checked={formationSubfolderVisibility === 'direction_only'}
+                  onCheckedChange={(checked) => setFormationSubfolderVisibility(checked ? 'direction_only' : 'public')}
+                />
+                <Label htmlFor="sb-subfolder-visibility" className="cursor-pointer text-sm">
+                  Visible uniquement par ma direction
+                </Label>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSubfolderOpen(false)}>Annuler</Button>
