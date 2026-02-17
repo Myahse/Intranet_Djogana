@@ -532,9 +532,12 @@ const DocumentSection = () => {
 
     const handleDeleteFile = async (id: string) => {
       const file = allFiles.find((f) => f.id === id)
+      const fileDesc = isAdmin
+        ? (file ? `« ${file.name} » sera déplacé vers la corbeille.` : 'Ce fichier sera déplacé vers la corbeille.')
+        : (file ? `« ${file.name} » sera supprimé.` : 'Ce fichier sera supprimé.')
       const ok = await confirm({
         title: 'Supprimer ce fichier ?',
-        description: file ? `« ${file.name} » sera déplacé vers la corbeille.` : 'Ce fichier sera déplacé vers la corbeille.',
+        description: fileDesc,
         confirmLabel: 'Supprimer',
         variant: 'destructive',
       })
