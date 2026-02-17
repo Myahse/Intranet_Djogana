@@ -46,7 +46,7 @@ export default function App() {
             <Route path="documents" element={<DocumentSection />} />
             <Route path="documents/:folder" element={<DocumentSection />} />
             <Route path="direction/:directionId" element={<DocumentSection />} />
-            <Route path="corbeille" element={<Corbeille />} />
+            <Route path="corbeille" element={<ProtectedRoute requireAdmin><Corbeille /></ProtectedRoute>} />
             <Route path="stats" element={<AdminPage />} />
             <Route path="live" element={<LiveActivityPage />} />
           </Route>
