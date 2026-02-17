@@ -1430,14 +1430,17 @@ const DocumentSection = () => {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="default"
+                    className="size-9 shrink-0 justify-center p-0 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
                     onClick={() => setUploadOpen(true)}
+                    aria-label="Ajouter un fichier"
                   >
-                    <Upload className="size-4 mr-2" />
-                    Ajouter un fichier
+                    <Upload className="size-4 md:mr-2" />
+                    <span className="hidden md:inline">Ajouter un fichier</span>
                   </Button>
                   <Button
                     variant="outline"
-                    className="border-destructive text-destructive hover:bg-destructive/10"
+                    className="size-9 shrink-0 justify-center p-0 border-destructive text-destructive hover:bg-destructive/10 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
+                    aria-label="Supprimer le dossier"
                     onClick={async () => {
                       const ok = await confirm({
                         title: 'Supprimer ce dossier ?',
@@ -1460,8 +1463,8 @@ const DocumentSection = () => {
                       }
                     }}
                   >
-                    <Trash2 className="size-4 mr-2" />
-                    Supprimer le dossier
+                    <Trash2 className="size-4 md:mr-2" />
+                    <span className="hidden md:inline">Supprimer le dossier</span>
                   </Button>
                 </div>
               )}
