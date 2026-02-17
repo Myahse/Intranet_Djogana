@@ -15,7 +15,7 @@ import {
   FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft,
   LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ,
   Calendar, HardDrive, FileType,
-  Check,
+  Check, Upload,
 } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
@@ -48,6 +48,18 @@ import {
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+
+const fileInputClass =
+  'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
+
+const FILE_UPLOAD_ACCEPT =
+  '.apk,application/vnd.android.package-archive,' +
+  'image/*,' +
+  'video/*,' +
+  'audio/*,.mp3,audio/mpeg,' +
+  '.xls,.xlsx,.xlsm,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,' +
+  '.pdf,.doc,.docx,.ppt,.pptx,.txt,.zip,.rar,' +
+  'application/octet-stream'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
 
@@ -1070,12 +1082,15 @@ const DocumentSection = () => {
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
-  const { getFiles, getLinks, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
+  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
   const { user, isAdmin, sendWs } = useAuth()
   const { contentFilter } = useDashboardFilter()
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadFileName, setUploadFileName] = useState('')
+  const uploadFileRef = useRef<HTMLInputElement>(null)
   const filesGridRef = useRef<HTMLDivElement>(null)
   useStaggerChildren(filesGridRef, '> *', [folderKey, directionId, pathname])
 
@@ -1297,6 +1312,25 @@ const DocumentSection = () => {
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
 
+    const handleUploadFile = async () => {
+      if (!folderKey) { toast.error('Dossier non trouvé'); return }
+      const file = uploadFileRef.current?.files?.[0]
+      if (!file) { toast.error('Veuillez choisir un fichier'); return }
+      setUploadOpen(false)
+      setLoading({ open: true, message: 'Envoi du fichier en cours…' })
+      try {
+        await addFile(folderKey, file, uploadFileName.trim() || undefined)
+        setUploadFileName('')
+        if (uploadFileRef.current) uploadFileRef.current.value = ''
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier ajouté avec succès' }))
+        toast.success('Fichier ajouté')
+      } catch (err) {
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi du fichier" }))
+        toast.error(err instanceof Error ? err.message : "Erreur lors de l'upload du fichier")
+        console.error(err)
+      }
+    }
+
     return (
       <div className="h-full min-h-0 flex flex-col">
       <ConfirmDialog />
@@ -1336,34 +1370,43 @@ const DocumentSection = () => {
                 )}
               </div>
               {canEdit && (
-                <Button
-                  variant="outline"
-                  className="border-destructive text-destructive hover:bg-destructive/10"
-                  onClick={async () => {
-                    const ok = await confirm({
-                      title: 'Supprimer ce dossier ?',
-                      description: 'Tous les fichiers et liens de ce dossier seront déplacés vers la corbeille.',
-                      confirmLabel: 'Supprimer',
-                      variant: 'destructive',
-                    })
-                    if (ok) {
-                      setLoading({ open: true, message: 'Suppression du dossier en cours…' })
-                      try {
-                        await removeFolder(folderKey)
-                        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
-                        toast.success('Dossier supprimé')
-                      } catch (err) {
-                        // eslint-disable-next-line no-console
-                        console.error(err)
-                        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du dossier' }))
-                        toast.error('Erreur lors de la suppression du dossier')
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="default"
+                    onClick={() => setUploadOpen(true)}
+                  >
+                    <Upload className="size-4 mr-2" />
+                    Ajouter un fichier
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-destructive text-destructive hover:bg-destructive/10"
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: 'Supprimer ce dossier ?',
+                        description: 'Tous les fichiers et liens de ce dossier seront déplacés vers la corbeille.',
+                        confirmLabel: 'Supprimer',
+                        variant: 'destructive',
+                      })
+                      if (ok) {
+                        setLoading({ open: true, message: 'Suppression du dossier en cours…' })
+                        try {
+                          await removeFolder(folderKey)
+                          setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
+                          toast.success('Dossier supprimé')
+                        } catch (err) {
+                          // eslint-disable-next-line no-console
+                          console.error(err)
+                          setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du dossier' }))
+                          toast.error('Erreur lors de la suppression du dossier')
+                        }
                       }
-                    }
-                  }}
-                >
-                  <Trash2 className="size-4 mr-2" />
-                  Supprimer le dossier
-                </Button>
+                    }}
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    Supprimer le dossier
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -1636,6 +1679,43 @@ const DocumentSection = () => {
           </>
         )}
       </ResizablePanelGroup>
+
+      {/* Upload File Dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="size-5" />
+              Ajouter un fichier
+            </DialogTitle>
+            <DialogDescription>
+              Ajoutez un fichier à ce dossier.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label>Fichier</Label>
+              <input ref={uploadFileRef} type="file" className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="upload-name">Nom du fichier (optionnel)</Label>
+              <Input
+                id="upload-name"
+                value={uploadFileName}
+                onChange={(e) => setUploadFileName(e.target.value)}
+                placeholder="Ex. rapport.pdf"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadOpen(false)}>Annuler</Button>
+            <Button onClick={handleUploadFile}>
+              <Upload className="size-4 mr-2" />
+              Envoyer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     )
   }
