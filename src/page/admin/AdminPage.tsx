@@ -155,11 +155,12 @@ interface Stats {
   recentActivity: {
     action: string
     actor_identifiant: string
+    actor_role: string
     entity_type: string
     details: Record<string, unknown> | null
     created_at: string
   }[]
-  topUploaders: { identifiant: string; uploads: number }[]
+  topUploaders: { identifiant: string; role: string; uploads: number }[]
 }
 
 /* ─── sub-components ─── */
@@ -1170,7 +1171,7 @@ export default function AdminPage() {
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-bold">
                           {i + 1}
                         </span>
-                        {u.identifiant}
+                        {u.role}
                       </span>
                       <span className="text-muted-foreground">{u.uploads} fichier{u.uploads > 1 ? 's' : ''}</span>
                     </div>
@@ -1254,7 +1255,7 @@ export default function AdminPage() {
                 const entityName = getEntityName(a.action, a.details)
                 const colorClass = getActionColor(a.action)
                 const IconComponent = ACTION_ICONS[a.action] ?? Activity
-                const actor = a.actor_identifiant || 'Système'
+                const actor = a.actor_role || 'Système'
                 return (
                   <div key={i} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                     <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${colorClass}`}>
