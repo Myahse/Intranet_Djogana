@@ -191,12 +191,18 @@ function isOfficeDocPreviewable(fileName: string): boolean {
   return getOfficeDocType(fileName) !== null
 }
 
+function isTextFile(fileName: string): boolean {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  return ext === 'txt'
+}
+
 function FilePreviewContent({
   file,
   formatSize,
   canPreviewPdf,
   canPreviewImage,
   canPreviewOffice,
+  canPreviewText,
   className,
 }: {
   file: DocumentItem
@@ -204,8 +210,33 @@ function FilePreviewContent({
   canPreviewPdf: boolean
   canPreviewImage: boolean
   canPreviewOffice: boolean
+  canPreviewText: boolean
   className?: string
 }) {
+  const [textContent, setTextContent] = useState<string | null>(null)
+  const [textLoading, setTextLoading] = useState(false)
+  const [textError, setTextError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (canPreviewText && file.url) {
+      setTextLoading(true)
+      setTextError(null)
+      fetch(file.url)
+        .then((res) => {
+          if (!res.ok) throw new Error('Failed to fetch text file')
+          return res.text()
+        })
+        .then((text) => {
+          setTextContent(text)
+          setTextLoading(false)
+        })
+        .catch((err) => {
+          setTextError(err instanceof Error ? err.message : 'Failed to load text file')
+          setTextLoading(false)
+        })
+    }
+  }, [canPreviewText, file.url])
+
   return (
     <div className={className}>
       {canPreviewPdf ? (
@@ -228,6 +259,35 @@ function FilePreviewContent({
           title={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] border-0 bg-white"
         />
+      ) : canPreviewText ? (
+        <div className="w-full h-full min-h-[min(70vh,500px)] bg-background overflow-auto p-4">
+          {textLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-muted-foreground">Chargement du fichier texte...</p>
+            </div>
+          ) : textError ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-destructive font-medium">Erreur lors du chargement</p>
+              <p className="text-muted-foreground text-sm">{textError}</p>
+              {file.url && (
+                <a
+                  href={file.url}
+                  download={file.name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+                >
+                  <Download className="size-4" />
+                  Télécharger le fichier
+                </a>
+              )}
+            </div>
+          ) : textContent !== null ? (
+            <pre className="whitespace-pre-wrap font-mono text-sm text-foreground bg-background w-full h-full overflow-auto">
+              {textContent}
+            </pre>
+          ) : null}
+        </div>
       ) : (
         <div className="p-4 flex flex-col gap-3">
           <p className="font-medium truncate">{file.name}</p>
@@ -286,6 +346,7 @@ function FileCard({
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
   const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
+  const canPreviewText = isTextFile(file.name) && !!file.url
 
   const handleClick = () => {
     if (onSelect) {
@@ -398,6 +459,7 @@ function FileCard({
             canPreviewPdf={canPreviewPdf}
             canPreviewImage={isImage}
             canPreviewOffice={canPreviewOffice}
+            canPreviewText={canPreviewText}
             className="w-full h-[min(70vh,500px)]"
           />
         </HoverCardContent>
@@ -641,6 +703,7 @@ function FileListRow({
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
   const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
+  const canPreviewText = isTextFile(file.name) && !!file.url
   const ext = getFileExtension(file.name).toUpperCase() || 'FILE'
 
   const [renameOpen, setRenameOpen] = useState(false)
@@ -768,6 +831,7 @@ function FileListRow({
             canPreviewPdf={canPreviewPdf}
             canPreviewImage={isImage}
             canPreviewOffice={canPreviewOffice}
+            canPreviewText={canPreviewText}
             className="w-full h-[min(60vh,400px)]"
           />
         </HoverCardContent>
@@ -1564,6 +1628,7 @@ const DocumentSection = () => {
                   canPreviewOffice={
                     isOfficeDocPreviewable(selectedFile.name) && !!selectedFile.url
                   }
+                  canPreviewText={isTextFile(selectedFile.name) && !!selectedFile.url}
                   className="flex-1 min-h-0 w-full"
                 />
               </div>
