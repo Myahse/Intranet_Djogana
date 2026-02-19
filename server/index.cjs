@@ -288,24 +288,8 @@ async function initDb() {
     `)
   } catch (_) { /* ignore */ }
 
-  // Seed default direction for migration (existing folders/files get this)
-  // Only create if it doesn't already exist
-  const existingDefault = await pool.query(
-    "SELECT id FROM directions WHERE name = 'Default' LIMIT 1"
-  )
-  if (existingDefault.rows.length === 0) {
-    const defaultDirId = uuidv4()
-    await pool.query(
-      `
-        INSERT INTO directions (id, name, code)
-        VALUES ($1, 'Default', 'DEF')
-      `,
-      [defaultDirId]
-    )
-  }
-  await pool.query(
-    `UPDATE directions SET code = 'DEF' WHERE code IS NULL AND name = 'Default'`
-  )
+  // Note: Default direction is no longer created automatically
+  // Admins must create directions manually through the UI
   await pool.query(
     `UPDATE directions SET code = COALESCE(code, UPPER(LEFT(name, 4))) WHERE code IS NULL`
   )
@@ -403,11 +387,14 @@ async function initDb() {
       ALTER TABLE folders ADD COLUMN IF NOT EXISTS direction_id uuid REFERENCES directions(id) ON DELETE CASCADE;
     `)
   } catch (_) { /* ignore */ }
-  // Backfill folders without direction_id to default direction
-  const defaultDir = await pool.query("SELECT id FROM directions WHERE name = 'Default' LIMIT 1")
-  if (defaultDir.rows.length > 0) {
+  // Backfill folders without direction_id - only if a direction exists
+  // If no directions exist, folders will remain without direction_id until admin creates one
+  const anyDirection = await pool.query("SELECT id FROM directions LIMIT 1")
+  if (anyDirection.rows.length > 0) {
+    // Use the first available direction for orphaned folders
+    const firstDirectionId = anyDirection.rows[0].id
     await pool.query('UPDATE folders SET direction_id = $1 WHERE direction_id IS NULL', [
-      defaultDir.rows[0].id,
+      firstDirectionId,
     ])
     try {
       await pool.query('ALTER TABLE folders ALTER COLUMN direction_id SET NOT NULL')
@@ -1841,6 +1828,20 @@ app.post('/api/direction-access/grant', async (req, res) => {
     
     broadcastDataChange('users', 'updated', { id: userId })
     
+    // Notify the affected user to refresh their permissions
+    const userRes = await pool.query('SELECT identifiant FROM users WHERE id = $1', [userId])
+    if (userRes.rows.length > 0) {
+      const userIdentifiant = userRes.rows[0].identifiant
+      const message = JSON.stringify({ type: 'permissions_changed' })
+      for (const client of wsClients) {
+        try {
+          if (client._userIdentifiant === userIdentifiant && client.readyState === 1) {
+            client.send(message)
+          }
+        } catch (_) { /* ignore */ }
+      }
+    }
+    
     return res.status(201).json({
       id,
       user_id: userId,
@@ -1903,10 +1904,64 @@ app.delete('/api/direction-access/revoke', async (req, res) => {
     
     broadcastDataChange('users', 'updated', { id: userId })
     
+    // Notify the affected user to refresh their permissions
+    const userRes = await pool.query('SELECT identifiant FROM users WHERE id = $1', [userId])
+    if (userRes.rows.length > 0) {
+      const userIdentifiant = userRes.rows[0].identifiant
+      const message = JSON.stringify({ type: 'permissions_changed' })
+      for (const client of wsClients) {
+        try {
+          if (client._userIdentifiant === userIdentifiant && client.readyState === 1) {
+            client.send(message)
+          }
+        } catch (_) { /* ignore */ }
+      }
+    }
+    
     return res.status(204).send()
   } catch (err) {
     console.error('revoke direction access error', err)
     return res.status(500).json({ error: 'Erreur lors de la révocation de l\'accès.' })
+  }
+})
+
+// Get directions the current user has access to (for UI filtering)
+app.get('/api/direction-access/my-access', async (req, res) => {
+  try {
+    const { identifiant } = req.query
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise.' })
+    }
+    
+    const userRes = await pool.query(
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+    
+    const u = userRes.rows[0]
+    const accessibleDirections = [u.direction_id].filter(Boolean) // User's own direction
+    
+    // If admin, they have access to all directions (no need to check grants)
+    if (u.role !== 'admin') {
+      // Get granted directions
+      const grantsRes = await pool.query(
+        'SELECT granted_direction_id FROM direction_access_grants WHERE user_id = $1',
+        [u.id]
+      )
+      grantsRes.rows.forEach((row) => {
+        if (row.granted_direction_id && !accessibleDirections.includes(row.granted_direction_id)) {
+          accessibleDirections.push(row.granted_direction_id)
+        }
+      })
+    }
+    
+    return res.json({ direction_ids: accessibleDirections })
+  } catch (err) {
+    console.error('get my direction access error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des accès.' })
   }
 })
 
