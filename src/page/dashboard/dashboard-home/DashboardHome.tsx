@@ -14,10 +14,18 @@ import {
 } from '@/components/ui/select'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck, KeyRound, XCircle } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -82,6 +90,20 @@ const DashboardHome = (): ReactNode => {
   const [editingDirectionId, setEditingDirectionId] = useState<string | null>(null)
   const [editingDirectionName, setEditingDirectionName] = useState('')
   const [editingDirectionCode, setEditingDirectionCode] = useState('')
+
+  // ── Direction access grants ──
+  const [directionAccessGrants, setDirectionAccessGrants] = useState<
+    Array<{
+      id: string
+      user_id: string
+      user_identifiant: string
+      direction_id: string
+      direction_name: string
+      granted_by_identifiant: string | null
+      created_at: string
+    }>
+  >([])
+  const [managingAccessUserId, setManagingAccessUserId] = useState<string | null>(null)
 
   // ── Loading modal ──
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
@@ -790,6 +812,92 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
+  // ── Load direction access grants ──
+  const loadDirectionAccessGrants = useCallback(async () => {
+    if (!isAdmin && !user?.is_direction_chief) return
+    
+    try {
+      const params = new URLSearchParams()
+      params.set('caller_identifiant', user?.identifiant ?? '')
+      if (user?.is_direction_chief && !isAdmin && user.direction_id) {
+        params.set('direction_id', user.direction_id)
+      }
+      
+      const res = await fetch(`${API_BASE_URL}/api/direction-access?${params.toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        setDirectionAccessGrants(data)
+      }
+    } catch (err) {
+      console.error('Failed to load direction access grants', err)
+    }
+  }, [isAdmin, user?.identifiant, user?.is_direction_chief, user?.direction_id])
+
+  useEffect(() => {
+    loadDirectionAccessGrants()
+  }, [loadDirectionAccessGrants])
+
+  // ── Grant direction access ──
+  const handleGrantDirectionAccess = async (userId: string, directionId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/direction-access/grant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          direction_id: directionId,
+          caller_identifiant: user?.identifiant,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Erreur lors de l\'octroi de l\'accès')
+      }
+      await loadDirectionAccessGrants()
+      toast.success('Accès accordé avec succès')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur')
+      console.error(err)
+    }
+  }
+
+  // ── Revoke direction access ──
+  const handleRevokeDirectionAccess = async (userId: string, directionId: string) => {
+    const ok = await confirm({
+      title: 'Révoquer l\'accès ?',
+      description: 'L\'utilisateur ne pourra plus créer de dossiers ou uploader des fichiers dans cette direction.',
+      confirmLabel: 'Révoquer',
+      variant: 'destructive',
+    })
+    if (!ok) return
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/direction-access/revoke`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          direction_id: directionId,
+          caller_identifiant: user?.identifiant,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Erreur lors de la révocation de l\'accès')
+      }
+      await loadDirectionAccessGrants()
+      toast.success('Accès révoqué avec succès')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur')
+      console.error(err)
+    }
+  }
+
+  // ── Get granted directions for a user ──
+  const getGrantedDirectionsForUser = (userId: string) => {
+    return directionAccessGrants.filter((g) => g.user_id === userId)
+  }
+
   // ── Render helpers ──
 
   const renderUsersTable = () => {
@@ -843,6 +951,7 @@ const DashboardHome = (): ReactNode => {
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
               <th className="px-3 py-2 text-left font-medium">Rôle</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
+              {(isAdmin || user?.is_direction_chief) && <th className="px-3 py-2 text-left font-medium">Accès accordés</th>}
               <th className="px-3 py-2 text-left font-medium">Statut</th>
               {isAdmin && <th className="px-3 py-2 text-center font-medium whitespace-nowrap">Chef de direction</th>}
               <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
@@ -922,6 +1031,29 @@ const DashboardHome = (): ReactNode => {
                       )}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">{u.direction_name ?? '—'}</td>
+                    {(isAdmin || user?.is_direction_chief) && (
+                      <td className="px-3 py-2">
+                        {(() => {
+                          const granted = getGrantedDirectionsForUser(u.id)
+                          if (granted.length === 0) {
+                            return <span className="text-muted-foreground text-xs">—</span>
+                          }
+                          return (
+                            <div className="flex flex-wrap gap-1">
+                              {granted.map((g) => (
+                                <span
+                                  key={g.id}
+                                  className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                                  title={`Accès accordé le ${new Date(g.created_at).toLocaleDateString()}`}
+                                >
+                                  {g.direction_name}
+                                </span>
+                              ))}
+                            </div>
+                          )
+                        })()}
+                      </td>
+                    )}
                     <td className="px-3 py-2">
                       {u.is_suspended ? (
                         <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
@@ -949,6 +1081,18 @@ const DashboardHome = (): ReactNode => {
                     <td className="px-3 py-2 text-right">
                       {user?.identifiant !== u.identifiant ? (
                         <div className="flex items-center justify-end gap-1">
+                          {(isAdmin || user?.is_direction_chief) && u.role !== 'admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-blue-600 hover:bg-blue-100"
+                              onClick={() => setManagingAccessUserId(u.id)}
+                              aria-label={`Gérer l'accès aux directions pour ${u.identifiant}`}
+                              title="Gérer l'accès aux directions"
+                            >
+                              <KeyRound className="size-4" />
+                            </Button>
+                          )}
                           {(isAdmin || canCreateUser) && (
                             <Button
                               variant="ghost"
@@ -1014,6 +1158,113 @@ const DashboardHome = (): ReactNode => {
   // ── Admin / privileged: full management dashboard ──
   return (
     <div ref={sectionsRef} className="p-6 space-y-8">
+      {/* Direction Access Management Dialog */}
+      <Dialog open={managingAccessUserId !== null} onOpenChange={(open) => !open && setManagingAccessUserId(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Gérer l'accès aux directions</DialogTitle>
+            <DialogDescription>
+              Accordez ou révoquez l'accès à cet utilisateur pour créer des dossiers et uploader des fichiers dans d'autres directions.
+            </DialogDescription>
+          </DialogHeader>
+          {managingAccessUserId && (() => {
+            const targetUser = users.find((u) => u.id === managingAccessUserId)
+            const granted = getGrantedDirectionsForUser(managingAccessUserId)
+            const availableDirections = directions.filter((d) => {
+              // Admin can grant access to any direction
+              if (isAdmin) return true
+              // Direction chief can only grant access to their own direction
+              if (user?.is_direction_chief && user.direction_id === d.id) return true
+              return false
+            })
+            const directionsToGrant = availableDirections.filter((d) => {
+              // Don't show user's own direction
+              if (targetUser?.direction_id === d.id) return false
+              // Don't show already granted directions
+              return !granted.some((g) => g.direction_id === d.id)
+            })
+
+            return (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium mb-2">
+                    Utilisateur: <span className="font-mono">{targetUser?.identifiant}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Direction actuelle: {targetUser?.direction_name ?? '—'}
+                  </p>
+                </div>
+
+                {/* Granted Directions */}
+                {granted.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">Accès accordés:</p>
+                    <div className="space-y-2">
+                      {granted.map((g) => (
+                        <div
+                          key={g.id}
+                          className="flex items-center justify-between p-2 border rounded-md bg-muted/50"
+                        >
+                          <span className="text-sm">{g.direction_name}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-destructive hover:text-destructive"
+                            onClick={() => handleRevokeDirectionAccess(g.user_id, g.direction_id)}
+                          >
+                            <XCircle className="size-3 mr-1" />
+                            Révoquer
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Grant New Access */}
+                {directionsToGrant.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">Accorder l'accès à:</p>
+                    <div className="space-y-2">
+                      {directionsToGrant.map((d) => (
+                        <div
+                          key={d.id}
+                          className="flex items-center justify-between p-2 border rounded-md hover:bg-muted/50"
+                        >
+                          <span className="text-sm">{d.name}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-emerald-600 hover:text-emerald-700"
+                            onClick={() => handleGrantDirectionAccess(managingAccessUserId, d.id)}
+                          >
+                            <KeyRound className="size-3 mr-1" />
+                            Accorder
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {granted.length === 0 && directionsToGrant.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    {directions.length === 0
+                      ? 'Aucune direction disponible.'
+                      : 'Aucune direction disponible pour accorder l\'accès.'}
+                  </p>
+                )}
+              </div>
+            )
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManagingAccessUserId(null)}>
+              Fermer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ConfirmDialog />
       <h1 className="text-2xl font-semibold">Tableau de bord</h1>
 
