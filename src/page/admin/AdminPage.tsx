@@ -583,6 +583,41 @@ export default function AdminPage() {
     '05': 'Mai', '06': 'Juin', '07': 'Juil', '08': 'Août',
     '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Déc',
   }
+  
+  // Generate all months for the selected period (default to last 12 months)
+  const generateAllMonths = (): string[] => {
+    const months: string[] = []
+    const now = new Date()
+    const startDate = period === 'all' || period === '1y' || !period
+      ? new Date(now.getFullYear(), now.getMonth() - 11, 1) // Last 12 months
+      : period === 'custom' && dateRange?.from
+        ? new Date(dateRange.from)
+        : period === '7d'
+          ? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          : period === '30d'
+            ? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+            : period === '3m'
+              ? new Date(now.getFullYear(), now.getMonth() - 3, 1)
+              : period === '6m'
+                ? new Date(now.getFullYear(), now.getMonth() - 6, 1)
+                : new Date(now.getFullYear(), now.getMonth() - 11, 1)
+    
+    const endDate = period === 'custom' && dateRange?.to
+      ? new Date(dateRange.to)
+      : now
+    
+    const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1)
+    while (current <= endDate) {
+      const yearMonth = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`
+      const [, mm] = yearMonth.split('-')
+      const label = monthNames[mm] ?? yearMonth
+      months.push(label)
+      current.setMonth(current.getMonth() + 1)
+    }
+    
+    return months
+  }
+  
   // Merge uploaded and deleted files data by month
   const uploadedMap = new Map<string, { fichiers: number; taille: number }>()
   stats.files.overTime.forEach((m) => {
@@ -598,9 +633,9 @@ export default function AdminPage() {
     deletedMap.set(label, { fichiers: m.count, taille: Number(m.total_size) })
   })
   
-  // Get all unique months from both datasets
-  const allMonths = new Set([...uploadedMap.keys(), ...deletedMap.keys()])
-  const timelineData = Array.from(allMonths).sort().map((month) => {
+  // Generate all months in the period and fill with data (default to 0 if no data)
+  const allMonthsInPeriod = generateAllMonths()
+  const timelineData = allMonthsInPeriod.map((month) => {
     const uploaded = uploadedMap.get(month) ?? { fichiers: 0, taille: 0 }
     const deleted = deletedMap.get(month) ?? { fichiers: 0, taille: 0 }
     return {
@@ -668,10 +703,10 @@ export default function AdminPage() {
       const prev = monthMap.get(label) ?? { fichiers: 0, taille: 0 }
       monthMap.set(label, { fichiers: prev.fichiers + r.count, taille: prev.taille + Number(r.total_size) })
     }
-    // Keep the same month order as the full timeline, but only show uploaded files
-    return timelineData.map((m) => {
-      const d = monthMap.get(m.name)
-      return { name: m.name, fichiers: d?.fichiers ?? 0, fichiersSupprimes: 0, taille: d?.taille ?? 0 }
+    // Use the same allMonthsInPeriod to ensure all months are shown
+    return allMonthsInPeriod.map((month) => {
+      const d = monthMap.get(month)
+      return { name: month, fichiers: d?.fichiers ?? 0, fichiersSupprimes: 0, taille: d?.taille ?? 0 }
     })
   })()
 
@@ -993,7 +1028,14 @@ export default function AdminPage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <XAxis 
+                    dataKey="name" 
+                    tick={{ fontSize: 12 }} 
+                    interval={0}
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                  />
                   <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Legend 
