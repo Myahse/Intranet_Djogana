@@ -550,6 +550,24 @@ async function initDb() {
     );
   `)
 
+  // Cross-direction access: allows users from one direction to create folders/upload files in another direction
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS direction_access_grants (
+      id uuid PRIMARY KEY,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      granted_direction_id uuid NOT NULL REFERENCES directions(id) ON DELETE CASCADE,
+      granted_by uuid REFERENCES users(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(user_id, granted_direction_id)
+    );
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_direction_access_grants_user_id ON direction_access_grants(user_id);
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_direction_access_grants_direction_id ON direction_access_grants(granted_direction_id);
+  `)
+
   // Seed default roles & permissions (admin, user)
   const adminRoleId = uuidv4()
   await pool.query(
@@ -1763,6 +1781,215 @@ app.patch('/api/users/:id/chief', async (req, res) => {
   }
 })
 
+// Grant cross-direction access to a user (admin or direction chief)
+app.post('/api/direction-access/grant', async (req, res) => {
+  try {
+    const { user_id: userId, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
+    
+    if (!userId || !directionId || !callerIdentifiant) {
+      return res.status(400).json({ error: 'Paramètres manquants.' })
+    }
+    
+    // Check if caller can grant access
+    const canGrant = await canGrantDirectionAccess(callerIdentifiant, directionId)
+    if (!canGrant) {
+      return res.status(403).json({
+        error: 'Vous n\'avez pas la permission d\'accorder l\'accès à cette direction.',
+      })
+    }
+    
+    // Verify user and direction exist
+    const userRes = await pool.query('SELECT id FROM users WHERE id = $1', [userId])
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    
+    const dirRes = await pool.query('SELECT id FROM directions WHERE id = $1', [directionId])
+    if (dirRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Direction introuvable.' })
+    }
+    
+    // Get granter's user ID
+    const granterRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+    const granterId = granterRes.rows.length > 0 ? granterRes.rows[0].id : null
+    
+    // Create or update grant
+    const id = uuidv4()
+    await pool.query(
+      `INSERT INTO direction_access_grants (id, user_id, granted_direction_id, granted_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, granted_direction_id) DO UPDATE SET granted_by = $4`,
+      [id, userId, directionId, granterId]
+    )
+    
+    // Get user and direction names for response
+    const userInfo = await pool.query('SELECT identifiant FROM users WHERE id = $1', [userId])
+    const dirInfo = await pool.query('SELECT name FROM directions WHERE id = $1', [directionId])
+    
+    await insertActivityLog(pool, {
+      action: 'grant_direction_access',
+      actorIdentifiant: callerIdentifiant,
+      actorId: granterId,
+      directionId,
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        user_identifiant: userInfo.rows[0]?.identifiant,
+        direction_name: dirInfo.rows[0]?.name,
+      },
+    })
+    
+    broadcastDataChange('users', 'updated', { id: userId })
+    
+    return res.status(201).json({
+      id,
+      user_id: userId,
+      direction_id: directionId,
+      granted: true,
+    })
+  } catch (err) {
+    console.error('grant direction access error', err)
+    return res.status(500).json({ error: 'Erreur lors de l\'octroi de l\'accès.' })
+  }
+})
+
+// Revoke cross-direction access (admin or direction chief)
+app.delete('/api/direction-access/revoke', async (req, res) => {
+  try {
+    const { user_id: userId, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
+    
+    if (!userId || !directionId || !callerIdentifiant) {
+      return res.status(400).json({ error: 'Paramètres manquants.' })
+    }
+    
+    // Check if caller can revoke access
+    const canGrant = await canGrantDirectionAccess(callerIdentifiant, directionId)
+    if (!canGrant) {
+      return res.status(403).json({
+        error: 'Vous n\'avez pas la permission de révoquer l\'accès à cette direction.',
+      })
+    }
+    
+    // Get granter's user ID
+    const granterRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+    const granterId = granterRes.rows.length > 0 ? granterRes.rows[0].id : null
+    
+    // Delete grant
+    const result = await pool.query(
+      'DELETE FROM direction_access_grants WHERE user_id = $1 AND granted_direction_id = $2 RETURNING id',
+      [userId, directionId]
+    )
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Accès non trouvé.' })
+    }
+    
+    // Get user and direction names for activity log
+    const userInfo = await pool.query('SELECT identifiant FROM users WHERE id = $1', [userId])
+    const dirInfo = await pool.query('SELECT name FROM directions WHERE id = $1', [directionId])
+    
+    await insertActivityLog(pool, {
+      action: 'revoke_direction_access',
+      actorIdentifiant: callerIdentifiant,
+      actorId: granterId,
+      directionId,
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        user_identifiant: userInfo.rows[0]?.identifiant,
+        direction_name: dirInfo.rows[0]?.name,
+      },
+    })
+    
+    broadcastDataChange('users', 'updated', { id: userId })
+    
+    return res.status(204).send()
+  } catch (err) {
+    console.error('revoke direction access error', err)
+    return res.status(500).json({ error: 'Erreur lors de la révocation de l\'accès.' })
+  }
+})
+
+// List all direction access grants for a user or direction
+app.get('/api/direction-access', async (req, res) => {
+  try {
+    const { user_id: userId, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.query
+    
+    if (!callerIdentifiant) {
+      return res.status(401).json({ error: 'Authentification requise.' })
+    }
+    
+    const callerRes = await pool.query(
+      'SELECT role, direction_id, is_direction_chief FROM users WHERE identifiant = $1',
+      [callerIdentifiant]
+    )
+    if (callerRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+    
+    const caller = callerRes.rows[0]
+    const isAdmin = caller.role === 'admin'
+    
+    let sql = `
+      SELECT 
+        g.id,
+        g.user_id,
+        g.granted_direction_id,
+        g.granted_by,
+        g.created_at,
+        u.identifiant AS user_identifiant,
+        d.name AS direction_name,
+        granter.identifiant AS granted_by_identifiant
+      FROM direction_access_grants g
+      JOIN users u ON u.id = g.user_id
+      JOIN directions d ON d.id = g.granted_direction_id
+      LEFT JOIN users granter ON granter.id = g.granted_by
+      WHERE 1=1
+    `
+    const params = []
+    
+    if (userId) {
+      params.push(userId)
+      sql += ` AND g.user_id = $${params.length}`
+    }
+    
+    if (directionId) {
+      params.push(directionId)
+      sql += ` AND g.granted_direction_id = $${params.length}`
+      
+      // Non-admin direction chiefs can only see grants for their own direction
+      if (!isAdmin && caller.is_direction_chief && caller.direction_id !== directionId) {
+        return res.status(403).json({ error: 'Vous ne pouvez voir que les accès pour votre direction.' })
+      }
+    } else if (!isAdmin) {
+      // Non-admin users can only see grants for their own direction
+      if (caller.is_direction_chief && caller.direction_id) {
+        params.push(caller.direction_id)
+        sql += ` AND g.granted_direction_id = $${params.length}`
+      } else {
+        return res.status(403).json({ error: 'Accès refusé.' })
+      }
+    }
+    
+    sql += ' ORDER BY g.created_at DESC'
+    
+    const result = await pool.query(sql, params)
+    
+    return res.json(result.rows.map((r) => ({
+      id: r.id,
+      user_id: r.user_id,
+      user_identifiant: r.user_identifiant,
+      direction_id: r.granted_direction_id,
+      direction_name: r.direction_name,
+      granted_by_identifiant: r.granted_by_identifiant,
+      created_at: r.created_at,
+    })))
+  } catch (err) {
+    console.error('list direction access error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des accès.' })
+  }
+})
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { identifiant, password, role, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
@@ -2549,6 +2776,47 @@ async function getPermissionsForIdentifiant(identifiant) {
   return base
 }
 
+// Helper: check if a user has access to create folders/upload files in a specific direction
+async function hasDirectionAccess(userId, directionId) {
+  // Admin always has access
+  const userRes = await pool.query('SELECT role FROM users WHERE id = $1', [userId])
+  if (userRes.rows.length > 0 && userRes.rows[0].role === 'admin') {
+    return true
+  }
+  
+  // Check if user's own direction matches
+  const userDirRes = await pool.query('SELECT direction_id FROM users WHERE id = $1', [userId])
+  if (userDirRes.rows.length > 0 && userDirRes.rows[0].direction_id === directionId) {
+    return true
+  }
+  
+  // Check if user has been granted access to this direction
+  const grantRes = await pool.query(
+    'SELECT id FROM direction_access_grants WHERE user_id = $1 AND granted_direction_id = $2',
+    [userId, directionId]
+  )
+  return grantRes.rows.length > 0
+}
+
+// Helper: check if a user can grant access (admin or direction chief of the target direction)
+async function canGrantDirectionAccess(granterIdentifiant, targetDirectionId) {
+  const granterRes = await pool.query(
+    'SELECT role, direction_id, is_direction_chief FROM users WHERE identifiant = $1',
+    [granterIdentifiant]
+  )
+  if (granterRes.rows.length === 0) return false
+  
+  const granter = granterRes.rows[0]
+  
+  // Admin can grant access to any direction
+  if (granter.role === 'admin') return true
+  
+  // Direction chief can grant access to their own direction
+  if (granter.is_direction_chief && granter.direction_id === targetDirectionId) return true
+  
+  return false
+}
+
 // List roles with their global permissions (admin role is hidden from the list)
 app.get('/api/roles', async (_req, res) => {
   try {
@@ -2964,10 +3232,11 @@ app.post('/api/files', (req, res, next) => {
     const u = userRes.rows[0]
     const uploadedBy = u.id
 
-    // Non-admin users can only upload to their own direction
-    if (u.role !== 'admin' && u.direction_id !== directionId) {
+    // Check if user has access to upload to this direction
+    const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
+    if (!hasAccess) {
       return res.status(403).json({
-        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction ou dans les directions pour lesquelles vous avez reçu un accès.',
       })
     }
 
@@ -3126,10 +3395,11 @@ app.post('/api/files/sign', async (req, res) => {
     const u = userRes.rows[0]
     const uploadedBy = u.id
 
-    // Non-admin users can only upload to their own direction
-    if (u.role !== 'admin' && u.direction_id !== directionId) {
+    // Check if user has access to upload to this direction
+    const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
+    if (!hasAccess) {
       return res.status(403).json({
-        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction ou dans les directions pour lesquelles vous avez reçu un accès.',
       })
     }
 
@@ -3227,10 +3497,11 @@ app.post('/api/files/register', async (req, res) => {
     const u = userRes.rows[0]
     const uploadedBy = u.id
 
-    // Non-admin users can only upload to their own direction
-    if (u.role !== 'admin' && u.direction_id !== directionId) {
+    // Check if user has access to upload to this direction
+    const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
+    if (!hasAccess) {
       return res.status(403).json({
-        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction ou dans les directions pour lesquelles vous avez reçu un accès.',
       })
     }
 
@@ -3409,10 +3680,11 @@ app.post('/api/folders', async (req, res) => {
     const u = userRes.rows[0]
     const callerRole = u.role
 
-    // Non-admin users can only create folders in their own direction
-    if (u.role !== 'admin' && u.direction_id !== directionId) {
+    // Check if user has access to create folders in this direction
+    const hasAccess = await hasDirectionAccess(u.id, directionId)
+    if (!hasAccess) {
       return res.status(403).json({
-        error: 'Vous ne pouvez créer des dossiers que dans votre direction.',
+        error: 'Vous ne pouvez créer des dossiers que dans votre direction ou dans les directions pour lesquelles vous avez reçu un accès.',
       })
     }
 
