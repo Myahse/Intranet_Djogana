@@ -289,15 +289,20 @@ async function initDb() {
   } catch (_) { /* ignore */ }
 
   // Seed default direction for migration (existing folders/files get this)
-  const defaultDirId = uuidv4()
-  await pool.query(
-    `
-      INSERT INTO directions (id, name, code)
-      VALUES ($1, 'Default', 'DEF')
-      ON CONFLICT (name) DO NOTHING
-    `,
-    [defaultDirId]
+  // Only create if it doesn't already exist
+  const existingDefault = await pool.query(
+    "SELECT id FROM directions WHERE name = 'Default' LIMIT 1"
   )
+  if (existingDefault.rows.length === 0) {
+    const defaultDirId = uuidv4()
+    await pool.query(
+      `
+        INSERT INTO directions (id, name, code)
+        VALUES ($1, 'Default', 'DEF')
+      `,
+      [defaultDirId]
+    )
+  }
   await pool.query(
     `UPDATE directions SET code = 'DEF' WHERE code IS NULL AND name = 'Default'`
   )
@@ -4325,6 +4330,88 @@ app.delete('/api/trash', requireAdmin, async (_req, res) => {
   }
 })
 
+// Automatic trash cleanup: permanently delete items older than 7 days
+async function cleanupOldTrash() {
+  try {
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    
+    // Get all files to delete (older than 7 days) - including those with Cloudinary resources
+    const filesToDelete = await pool.query(
+      'SELECT cloudinary_public_id FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      [oneWeekAgo]
+    )
+    
+    // Delete Cloudinary resources for files that have them
+    for (const f of filesToDelete.rows) {
+      if (f.cloudinary_public_id) {
+        try {
+          await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' })
+        } catch (_) { /* ignore */ }
+        try {
+          await cloudinary.uploader.destroy(f.cloudinary_public_id)
+        } catch (_) { /* ignore */ }
+      }
+    }
+    
+    // Count items before deletion for logging
+    const linksCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM links WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      [oneWeekAgo]
+    )
+    const linksCount = linksCountRes.rows[0]?.count || 0
+    
+    const filesCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      [oneWeekAgo]
+    )
+    const filesCount = filesCountRes.rows[0]?.count || 0
+    
+    const foldersCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM folders WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      [oneWeekAgo]
+    )
+    const foldersCount = foldersCountRes.rows[0]?.count || 0
+    
+    // For folders, delete all associated files and links first, then the folder
+    const foldersToDelete = await pool.query(
+      'SELECT id, name, direction_id FROM folders WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      [oneWeekAgo]
+    )
+    
+    for (const folder of foldersToDelete.rows) {
+      const { name, direction_id } = folder
+      // Delete Cloudinary resources for files in this folder
+      const folderFiles = await pool.query(
+        'SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL',
+        [name, direction_id]
+      )
+      for (const f of folderFiles.rows) {
+        try {
+          await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' })
+        } catch (_) { /* ignore */ }
+        try {
+          await cloudinary.uploader.destroy(f.cloudinary_public_id)
+        } catch (_) { /* ignore */ }
+      }
+      // Delete files and links in the folder
+      await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [name, direction_id])
+      await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [name, direction_id])
+    }
+    
+    // Permanently delete old items from database
+    await pool.query('DELETE FROM links WHERE deleted_at IS NOT NULL AND deleted_at < $1', [oneWeekAgo])
+    await pool.query('DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1', [oneWeekAgo])
+    await pool.query('DELETE FROM folders WHERE deleted_at IS NOT NULL AND deleted_at < $1', [oneWeekAgo])
+    
+    const totalDeleted = linksCount + filesCount + foldersCount
+    if (totalDeleted > 0) {
+      console.log(`[trash-cleanup] Permanently deleted ${totalDeleted} old items from trash (${linksCount} links, ${filesCount} files, ${foldersCount} folders)`)
+    }
+  } catch (err) {
+    console.error('[trash-cleanup] Error during automatic trash cleanup:', err)
+  }
+}
+
 const defaultPort = 3000
 const port = parseInt(process.env.PORT, 10) || defaultPort
 
@@ -4482,6 +4569,16 @@ initDb()
       // eslint-disable-next-line no-console
       console.log(`Server running at ${BASE_URL.replace(/:(\d+)$/, ':' + port)} (port ${port}) — accessible on LAN`)
       console.log(`[ws] WebSocket server ready at ws://0.0.0.0:${port}/ws`)
+      
+      // Run initial trash cleanup
+      cleanupOldTrash()
+      
+      // Schedule automatic trash cleanup every 6 hours
+      setInterval(() => {
+        cleanupOldTrash()
+      }, 6 * 60 * 60 * 1000) // 6 hours in milliseconds
+      
+      console.log('[trash-cleanup] Automatic trash cleanup scheduled (runs every 6 hours, deletes items older than 7 days)')
     })
   })
   .catch((err) => {
