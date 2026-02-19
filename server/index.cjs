@@ -1958,7 +1958,7 @@ app.get('/api/direction-access/my-access', async (req, res) => {
     }
     
     const u = userRes.rows[0]
-    const accessibleDirections: string[] = []
+    const accessibleDirections = []
     
     // Add user's own direction if they have one
     if (u.direction_id) {
