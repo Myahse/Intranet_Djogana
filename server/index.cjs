@@ -2944,21 +2944,26 @@ app.post('/api/files', (req, res, next) => {
       return res.status(400).json({ error: 'Direction requise pour l’upload.' })
     }
 
-    let uploadedBy = null
-    if (identifiant) {
-      const userRes = await pool.query(
-        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
-        [identifiant]
-      )
-      if (userRes.rows.length > 0) {
-        const u = userRes.rows[0]
-        uploadedBy = u.id
-        if (u.role !== 'admin' && u.direction_id !== directionId) {
-          return res.status(403).json({
-            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
-          })
-        }
-      }
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise pour l\'upload de fichiers.' })
+    }
+
+    const userRes = await pool.query(
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+
+    const u = userRes.rows[0]
+    const uploadedBy = u.id
+
+    // Non-admin users can only upload to their own direction
+    if (u.role !== 'admin' && u.direction_id !== directionId) {
+      return res.status(403).json({
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+      })
     }
 
     const dirRes = await pool.query(
@@ -3101,21 +3106,26 @@ app.post('/api/files/sign', async (req, res) => {
       return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
     }
 
-    let uploadedBy = null
-    if (identifiant) {
-      const userRes = await pool.query(
-        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
-        [identifiant]
-      )
-      if (userRes.rows.length > 0) {
-        const u = userRes.rows[0]
-        uploadedBy = u.id
-        if (u.role !== 'admin' && u.direction_id !== directionId) {
-          return res.status(403).json({
-            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
-          })
-        }
-      }
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise pour l\'upload de fichiers.' })
+    }
+
+    const userRes = await pool.query(
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+
+    const u = userRes.rows[0]
+    const uploadedBy = u.id
+
+    // Non-admin users can only upload to their own direction
+    if (u.role !== 'admin' && u.direction_id !== directionId) {
+      return res.status(403).json({
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+      })
     }
 
     const dirRes = await pool.query(
@@ -3197,21 +3207,26 @@ app.post('/api/files/register', async (req, res) => {
       return res.status(400).json({ error: 'Paramètres manquants.' })
     }
 
-    let uploadedBy = null
-    if (identifiant) {
-      const userRes = await pool.query(
-        'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
-        [identifiant]
-      )
-      if (userRes.rows.length > 0) {
-        const u = userRes.rows[0]
-        uploadedBy = u.id
-        if (u.role !== 'admin' && u.direction_id !== directionId) {
-          return res.status(403).json({
-            error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
-          })
-        }
-      }
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise pour l\'enregistrement de fichiers.' })
+    }
+
+    const userRes = await pool.query(
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+
+    const u = userRes.rows[0]
+    const uploadedBy = u.id
+
+    // Non-admin users can only upload to their own direction
+    if (u.role !== 'admin' && u.direction_id !== directionId) {
+      return res.status(403).json({
+        error: 'Vous ne pouvez déposer des fichiers que dans votre direction.',
+      })
     }
 
     const code = (directionCode || 'DEF').toString().toUpperCase()
@@ -3326,10 +3341,12 @@ app.get('/api/folders', async (_req, res) => {
       `)
 
       // Direction-only visibility: hide folders marked 'direction_only' unless the user belongs to that direction
+      // All public folders are visible to everyone regardless of direction
       if (userDirectionId) {
         params.push(userDirectionId)
-        conditions.push(`(f.visibility = 'public' OR f.direction_id = $${params.length})`)
+        conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
       } else {
+        // Users without direction_id can only see public folders
         conditions.push(`f.visibility = 'public'`)
       }
     }
@@ -3368,24 +3385,30 @@ app.post('/api/folders', async (req, res) => {
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour créer un dossier.' })
     }
+
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise pour créer un dossier.' })
+    }
+
     const visibility = rawVisibility === 'direction_only' ? 'direction_only' : 'public'
 
     // Permission: admin can create in any direction; others only in their own direction
-    let callerRole = null
-    if (identifiant) {
-      const userRes = await pool.query(
-        'SELECT role, direction_id FROM users WHERE identifiant = $1',
-        [identifiant]
-      )
-      if (userRes.rows.length > 0) {
-        const u = userRes.rows[0]
-        callerRole = u.role
-        if (u.role !== 'admin' && u.direction_id !== directionId) {
-          return res.status(403).json({
-            error: 'Vous ne pouvez créer des dossiers que dans votre direction.',
-          })
-        }
-      }
+    const userRes = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+
+    const u = userRes.rows[0]
+    const callerRole = u.role
+
+    // Non-admin users can only create folders in their own direction
+    if (u.role !== 'admin' && u.direction_id !== directionId) {
+      return res.status(403).json({
+        error: 'Vous ne pouvez créer des dossiers que dans votre direction.',
+      })
     }
 
     // Only admin or users with can_set_folder_visibility can set visibility to 'direction_only'
@@ -3539,6 +3562,7 @@ app.get('/api/files', async (req, res) => {
       `)
 
       // Direction-only visibility: hide files in folders marked 'direction_only' unless user belongs to that direction
+      // All files in public folders are visible to everyone regardless of direction
       if (userDirectionId) {
         params.push(userDirectionId)
         conditions.push(`
@@ -3550,6 +3574,7 @@ app.get('/api/files', async (req, res) => {
           )
         `)
       } else {
+        // Users without direction_id can only see files in public folders
         conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff
@@ -3954,6 +3979,7 @@ app.get('/api/links', async (req, res) => {
       `)
 
       // Direction-only visibility: hide links in folders marked 'direction_only' unless user belongs to that direction
+      // All links in public folders are visible to everyone regardless of direction
       if (userDirectionId) {
         params.push(userDirectionId)
         conditions.push(`
@@ -3965,6 +3991,7 @@ app.get('/api/links', async (req, res) => {
           )
         `)
       } else {
+        // Users without direction_id can only see links in public folders
         conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff
