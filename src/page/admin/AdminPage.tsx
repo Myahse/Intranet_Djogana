@@ -1256,6 +1256,13 @@ export default function AdminPage() {
                 const colorClass = getActionColor(a.action)
                 const IconComponent = ACTION_ICONS[a.action] ?? Activity
                 const actor = a.actor_role || 'Système'
+                
+                // Special handling for create_user action: show "admin has created {role}"
+                const isCreateUser = a.action === 'create_user'
+                const createdUserRole = isCreateUser && a.details && typeof a.details === 'object' && 'role' in a.details
+                  ? String(a.details.role)
+                  : null
+                
                 return (
                   <div key={i} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                     <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${colorClass}`}>
@@ -1263,11 +1270,21 @@ export default function AdminPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm truncate">
-                        <span className="font-medium">{actor}</span>
-                        {' — '}
-                        <span>{ACTION_LABELS[a.action] ?? a.action}</span>
-                        {entityName && (
-                          <span className="text-muted-foreground"> · {entityName}</span>
+                        {isCreateUser && createdUserRole ? (
+                          <>
+                            <span className="font-medium">{actor}</span>
+                            {' has created '}
+                            <span className="font-medium">{createdUserRole}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium">{actor}</span>
+                            {' — '}
+                            <span>{ACTION_LABELS[a.action] ?? a.action}</span>
+                            {entityName && (
+                              <span className="text-muted-foreground"> · {entityName}</span>
+                            )}
+                          </>
                         )}
                       </p>
                     </div>
