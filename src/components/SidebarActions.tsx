@@ -139,11 +139,26 @@ export default function SidebarActions() {
     if (isAdmin) return directions
     if (!user) return []
     const accessibleIds = new Set<string>()
-    if (user.direction_id) accessibleIds.add(user.direction_id)
-    if (user.granted_direction_ids) {
-      user.granted_direction_ids.forEach((id) => accessibleIds.add(id))
+    if (user.direction_id) {
+      accessibleIds.add(user.direction_id)
     }
-    return directions.filter((d) => accessibleIds.has(d.id))
+    if (user.granted_direction_ids && user.granted_direction_ids.length > 0) {
+      user.granted_direction_ids.forEach((id) => {
+        if (id) accessibleIds.add(id)
+      })
+    }
+    const filtered = directions.filter((d) => accessibleIds.has(d.id))
+    // Debug log
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[SidebarActions] Available directions:', {
+        userDirectionId: user.direction_id,
+        grantedIds: user.granted_direction_ids,
+        accessibleIds: Array.from(accessibleIds),
+        filteredCount: filtered.length,
+        allDirectionsCount: directions.length,
+      })
+    }
+    return filtered
   }, [directions, user, isAdmin])
 
   // Set default direction when directions load
