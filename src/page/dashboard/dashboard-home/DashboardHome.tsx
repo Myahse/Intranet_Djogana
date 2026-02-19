@@ -104,6 +104,7 @@ const DashboardHome = (): ReactNode => {
     }>
   >([])
   const [managingAccessUserId, setManagingAccessUserId] = useState<string | null>(null)
+  const [selectedDirectionToGrant, setSelectedDirectionToGrant] = useState<string>('')
 
   // ── Loading modal ──
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
@@ -854,6 +855,7 @@ const DashboardHome = (): ReactNode => {
         throw new Error(data?.error ?? 'Erreur lors de l\'octroi de l\'accès')
       }
       await loadDirectionAccessGrants()
+      setSelectedDirectionToGrant('') // Reset selection after granting
       toast.success('Accès accordé avec succès')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur')
@@ -1225,24 +1227,34 @@ const DashboardHome = (): ReactNode => {
                 {directionsToGrant.length > 0 && (
                   <div>
                     <p className="text-sm font-medium mb-2">Accorder l'accès à:</p>
-                    <div className="space-y-2">
-                      {directionsToGrant.map((d) => (
-                        <div
-                          key={d.id}
-                          className="flex items-center justify-between p-2 border rounded-md hover:bg-muted/50"
-                        >
-                          <span className="text-sm">{d.name}</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-emerald-600 hover:text-emerald-700"
-                            onClick={() => handleGrantDirectionAccess(managingAccessUserId, d.id)}
-                          >
-                            <KeyRound className="size-3 mr-1" />
-                            Accorder
-                          </Button>
-                        </div>
-                      ))}
+                    <div className="flex gap-2">
+                      <Select value={selectedDirectionToGrant} onValueChange={setSelectedDirectionToGrant}>
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Sélectionner une direction" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {directionsToGrant.map((d) => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="text-emerald-600 hover:text-emerald-700"
+                        onClick={() => {
+                          if (selectedDirectionToGrant) {
+                            handleGrantDirectionAccess(managingAccessUserId, selectedDirectionToGrant)
+                            setSelectedDirectionToGrant('')
+                          }
+                        }}
+                        disabled={!selectedDirectionToGrant}
+                      >
+                        <KeyRound className="size-4 mr-1" />
+                        Accorder
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -1258,7 +1270,13 @@ const DashboardHome = (): ReactNode => {
             )
           })()}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setManagingAccessUserId(null)}>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setManagingAccessUserId(null)
+                setSelectedDirectionToGrant('') // Reset selection when closing
+              }}
+            >
               Fermer
             </Button>
           </DialogFooter>

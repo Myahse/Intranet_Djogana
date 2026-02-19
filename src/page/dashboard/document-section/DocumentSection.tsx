@@ -1154,19 +1154,31 @@ const DocumentSection = () => {
     savePrefs({ sortDir: dir })
   }, [savePrefs])
 
-  // User can edit (delete/upload) only in their direction; view-only in other directions
+  // User can edit (delete/upload) in their own direction or granted directions
   const canEditFolder = (key: string) => {
     if (isAdmin) return true
     const { direction_id } = parseFolderKey(key)
-    return user?.direction_id != null && direction_id === user.direction_id
+    if (!direction_id || !user) return false
+    // Check if it's user's own direction
+    if (user.direction_id === direction_id) return true
+    // Check if user has been granted access to this direction
+    return user.granted_direction_ids?.includes(direction_id) ?? false
   }
   const canEditFile = (file: DocumentItem) => {
     if (isAdmin) return true
-    return user?.direction_id != null && file.direction_id === user.direction_id
+    if (!file.direction_id || !user) return false
+    // Check if it's user's own direction
+    if (user.direction_id === file.direction_id) return true
+    // Check if user has been granted access to this direction
+    return user.granted_direction_ids?.includes(file.direction_id) ?? false
   }
   const canEditLink = (link: LinkItem) => {
     if (isAdmin) return true
-    return user?.direction_id != null && link.direction_id === user.direction_id
+    if (!link.direction_id || !user) return false
+    // Check if it's user's own direction
+    if (user.direction_id === link.direction_id) return true
+    // Check if user has been granted access to this direction
+    return user.granted_direction_ids?.includes(link.direction_id) ?? false
   }
   const currentFolderLabel = folderKey ? formatName(parseFolderKey(folderKey).name) : ''
 

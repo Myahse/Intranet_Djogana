@@ -134,13 +134,25 @@ export default function SidebarActions() {
     [folderOptions]
   )
 
+  // Filter directions: user can only select their own direction or granted directions
+  const availableDirections = useMemo(() => {
+    if (isAdmin) return directions
+    if (!user) return []
+    const accessibleIds = new Set<string>()
+    if (user.direction_id) accessibleIds.add(user.direction_id)
+    if (user.granted_direction_ids) {
+      user.granted_direction_ids.forEach((id) => accessibleIds.add(id))
+    }
+    return directions.filter((d) => accessibleIds.has(d.id))
+  }, [directions, user, isAdmin])
+
   // Set default direction when directions load
   useEffect(() => {
-    if (directions.length > 0) {
-      if (!selectedDirectionFolder) setSelectedDirectionFolder(directions[0].id)
-      if (!selectedDirectionFormation) setSelectedDirectionFormation(directions[0].id)
+    if (availableDirections.length > 0) {
+      if (!selectedDirectionFolder) setSelectedDirectionFolder(availableDirections[0].id)
+      if (!selectedDirectionFormation) setSelectedDirectionFormation(availableDirections[0].id)
     }
-  }, [directions, selectedDirectionFolder, selectedDirectionFormation])
+  }, [availableDirections, selectedDirectionFolder, selectedDirectionFormation])
 
   // Handlers
   const handleAddFolder = async () => {
@@ -309,7 +321,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Sélectionner une direction" />
                 </SelectTrigger>
                 <SelectContent>
-                  {directions.map((d) => (
+                  {availableDirections.map((d) => (
                     <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -371,7 +383,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Sélectionner une direction" />
                 </SelectTrigger>
                 <SelectContent>
-                  {directions.map((d) => (
+                  {availableDirections.map((d) => (
                     <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                   ))}
                 </SelectContent>

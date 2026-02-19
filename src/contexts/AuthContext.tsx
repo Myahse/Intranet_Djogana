@@ -47,6 +47,7 @@ export type User = {
   permissions?: UserPermissions | null
   must_change_password?: boolean
   is_suspended?: boolean
+  granted_direction_ids?: string[] // Directions the user has been granted access to
 }
 
 export type DeviceLoginRequest = {
@@ -218,6 +219,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch (_) { /* ignore */ }
         }
 
+        // Load granted directions
+        let grantedDirectionIds: string[] = []
+        try {
+          const accessRes = await fetch(`${getApiBaseUrl()}/api/direction-access/my-access?identifiant=${encodeURIComponent(data.identifiant)}`)
+          if (accessRes.ok) {
+            const accessData = await accessRes.json() as { direction_ids: string[] }
+            grantedDirectionIds = accessData.direction_ids || []
+          }
+        } catch (_) { /* ignore */ }
+
         setUser({
           identifiant: data.identifiant,
           role: data.role,
@@ -227,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
           must_change_password: Boolean(data.must_change_password),
           is_suspended: Boolean(data.is_suspended),
+          granted_direction_ids: grantedDirectionIds,
         })
         return true
       } catch {
@@ -295,7 +307,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         permissions?: UserPermissions | null
         must_change_password?: boolean
         is_suspended?: boolean
+        granted_direction_ids?: string[]
       }
+      
+      // Load granted directions
+      let grantedDirectionIds: string[] = []
+      try {
+        const accessRes = await fetch(`${getApiBaseUrl()}/api/direction-access/my-access?identifiant=${encodeURIComponent(data.identifiant)}`)
+        if (accessRes.ok) {
+          const accessData = await accessRes.json() as { direction_ids: string[] }
+          grantedDirectionIds = accessData.direction_ids || []
+        }
+      } catch (_) { /* ignore */ }
       if (!data.identifiant || !data.role) return
       setUser({
         identifiant: data.identifiant,
@@ -306,6 +329,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
         must_change_password: Boolean(data.must_change_password),
         is_suspended: Boolean(data.is_suspended),
+        granted_direction_ids: grantedDirectionIds,
       })
     } catch {
       // Network errors or other exceptions → keep existing session
@@ -625,7 +649,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const data = JSON.parse(event.data)
 
           if (data.type === 'permissions_changed') {
-            // Admin changed permissions for our role → refresh immediately
+            // Admin changed permissions for our role or granted/revoked direction access → refresh immediately
             console.log('[ws] permissions changed, refreshing…')
             refreshRef.current()
           }
