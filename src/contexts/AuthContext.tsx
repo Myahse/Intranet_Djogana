@@ -226,8 +226,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (accessRes.ok) {
             const accessData = await accessRes.json() as { direction_ids: string[] }
             grantedDirectionIds = accessData.direction_ids || []
+            if (process.env.NODE_ENV === 'development') {
+              console.log('[AuthContext] Login: Loaded granted directions:', grantedDirectionIds)
+            }
+          } else {
+            console.warn('[AuthContext] Login: Failed to load granted directions:', accessRes.status)
           }
-        } catch (_) { /* ignore */ }
+        } catch (err) {
+          console.error('[AuthContext] Login: Error loading granted directions:', err)
+        }
 
         setUser({
           identifiant: data.identifiant,
@@ -317,8 +324,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (accessRes.ok) {
           const accessData = await accessRes.json() as { direction_ids: string[] }
           grantedDirectionIds = accessData.direction_ids || []
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[AuthContext] Loaded granted directions:', grantedDirectionIds)
+          }
+        } else {
+          console.warn('[AuthContext] Failed to load granted directions:', accessRes.status)
         }
-      } catch (_) { /* ignore */ }
+      } catch (err) {
+        console.error('[AuthContext] Error loading granted directions:', err)
+      }
       if (!data.identifiant || !data.role) return
       setUser({
         identifiant: data.identifiant,
@@ -650,7 +664,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (data.type === 'permissions_changed') {
             // Admin changed permissions for our role or granted/revoked direction access → refresh immediately
-            console.log('[ws] permissions changed, refreshing…')
+            console.log('[ws] permissions changed, refreshing user data and granted directions…')
             refreshRef.current()
           }
 

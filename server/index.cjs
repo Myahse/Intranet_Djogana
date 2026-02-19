@@ -1909,12 +1909,20 @@ app.delete('/api/direction-access/revoke', async (req, res) => {
     if (userRes.rows.length > 0) {
       const userIdentifiant = userRes.rows[0].identifiant
       const message = JSON.stringify({ type: 'permissions_changed' })
+      let notified = false
       for (const client of wsClients) {
         try {
           if (client._userIdentifiant === userIdentifiant && client.readyState === 1) {
             client.send(message)
+            notified = true
+            console.log(`[revoke-access] Sent permissions_changed WebSocket to ${userIdentifiant}`)
           }
-        } catch (_) { /* ignore */ }
+        } catch (err) {
+          console.error(`[revoke-access] Error sending WebSocket to ${userIdentifiant}:`, err)
+        }
+      }
+      if (!notified) {
+        console.log(`[revoke-access] User ${userIdentifiant} not connected via WebSocket (will refresh on next page load)`)
       }
     }
     
@@ -1951,11 +1959,13 @@ app.get('/api/direction-access/my-access', async (req, res) => {
         'SELECT granted_direction_id FROM direction_access_grants WHERE user_id = $1',
         [u.id]
       )
+      console.log(`[my-access] User ${identifiant} (id: ${u.id}) has ${grantsRes.rows.length} grants`)
       grantsRes.rows.forEach((row) => {
         if (row.granted_direction_id && !accessibleDirections.includes(row.granted_direction_id)) {
           accessibleDirections.push(row.granted_direction_id)
         }
       })
+      console.log(`[my-access] User ${identifiant} accessible directions:`, accessibleDirections)
     }
     
     return res.json({ direction_ids: accessibleDirections })
