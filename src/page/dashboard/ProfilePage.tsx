@@ -73,8 +73,16 @@ const ProfilePage = (): ReactNode => {
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="grid gap-1">
+            <span className="text-muted-foreground text-sm">Nom</span>
+            <p className="font-medium">{user?.name || '—'}</p>
+          </div>
+          <div className="grid gap-1">
+            <span className="text-muted-foreground text-sm">Prénoms</span>
+            <p className="font-medium">{user?.prenoms || '—'}</p>
+          </div>
+          <div className="grid gap-1">
             <span className="text-muted-foreground text-sm">Identifiant</span>
-            <p className="font-medium">{user?.identifiant ?? '—'}</p>
+            <p className="font-medium font-mono">{user?.identifiant ?? '—'}</p>
           </div>
           <div className="grid gap-1">
             <span className="text-muted-foreground text-sm">Acteur</span>

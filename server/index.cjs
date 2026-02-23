@@ -836,18 +836,21 @@ function broadcastDataChange(resource, action, details) {
 
 /**
  * Get the list of currently online (connected via WebSocket) non-admin users.
- * Returns an array of { identifiant, role, connectedAt }.
+ * Returns an array of { identifiant, role, connectedAt, name, prenoms }.
  */
 function getOnlineUsers() {
   const seen = new Map()
   for (const client of wsClients) {
     if (client.readyState === 1 && client._userIdentifiant && client._userRole !== 'admin') {
-      // Deduplicate by identifiant (user may have multiple tabs)
-      if (!seen.has(client._userIdentifiant)) {
-        seen.set(client._userIdentifiant, {
-          identifiant: client._userIdentifiant,
+      const ident = client._userIdentifiant
+      if (!seen.has(ident)) {
+        const cached = userDisplayCache.get(ident) || {}
+        seen.set(ident, {
+          identifiant: ident,
           role: client._userRole || 'user',
           connectedAt: client._connectedAt || null,
+          name: cached.name || '',
+          prenoms: cached.prenoms || '',
         })
       }
     }
@@ -872,8 +875,10 @@ function broadcastOnlineUsersToAdmins() {
 }
 
 // ---------- Live surveillance: presence tracking + activity ring buffer (admin only) ----------
-// Map<identifiant, { page, section, lastSeen, connectedAt, role, direction_id, direction_name }>
+// Map<identifiant, { page, section, lastSeen, connectedAt, role, direction_name, name, prenoms }>
 const userPresence = new Map()
+// Cache identifiant -> { name, prenoms } for display in live actions (persists after disconnect)
+const userDisplayCache = new Map()
 
 // Capped ring buffer for recent live actions (last 200 events)
 const MAX_LIVE_ACTIONS = 200
@@ -908,9 +913,12 @@ function broadcastLiveAction(action) {
 
 /** Record a login/logout/connect/disconnect event in the live feed. */
 function recordLiveEvent(identifiant, action, detail) {
+  const cached = userDisplayCache.get(identifiant) || {}
   const entry = {
     ts: new Date().toISOString(),
     identifiant,
+    name: cached.name || '',
+    prenoms: cached.prenoms || '',
     action,
     detail: detail || null,
   }
@@ -1153,7 +1161,8 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       q('SELECT COUNT(*)::int AS count FROM links __WHERE__'),
       // ── Activity (date + direction filtered) ──
       // Admin viewers see all activity; non-admin viewers don't see admin actions
-      q(`SELECT a.action, a.actor_identifiant, COALESCE(u.role, 'Système') AS actor_role, a.entity_type, a.details, a.created_at
+      q(`SELECT a.action, a.actor_identifiant, COALESCE(u.role, 'Système') AS actor_role,
+         u.name AS actor_name, u.prenoms AS actor_prenoms, a.entity_type, a.details, a.created_at
          FROM activity_log a
          LEFT JOIN users u ON a.actor_identifiant = u.identifiant
          __WHERE__ ORDER BY a.created_at DESC LIMIT 20`,
@@ -2185,7 +2194,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.is_suspended, d.name AS direction_name
+      `SELECT u.id, u.name, u.prenoms, u.identifiant, u.password_hash, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.is_suspended, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -2206,6 +2215,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     return res.json({
       id: user.id,
+      name: user.name || '',
+      prenoms: user.prenoms || '',
       identifiant: user.identifiant,
       role: user.role,
       direction_id: user.direction_id,
@@ -2242,7 +2253,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(401).json({ error: 'Token invalide.' })
     }
     const result = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.is_suspended, d.name AS direction_name
+      `SELECT u.id, u.name, u.prenoms, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.is_suspended, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -2255,6 +2266,8 @@ app.get('/api/auth/me', async (req, res) => {
     const permissions = user.is_suspended ? null : await getPermissionsForIdentifiant(user.identifiant)
     return res.json({
       id: user.id,
+      name: user.name || '',
+      prenoms: user.prenoms || '',
       identifiant: user.identifiant,
       role: user.role,
       direction_id: user.direction_id,
@@ -2619,7 +2632,7 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
     }
 
     const userRes = await pool.query(
-      `SELECT u.id, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_suspended, d.name AS direction_name
+      `SELECT u.id, u.name, u.prenoms, u.identifiant, u.role, u.direction_id, u.must_change_password, u.is_direction_chief, u.is_suspended, d.name AS direction_name
        FROM users u
        LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
@@ -2631,10 +2644,13 @@ app.post('/api/auth/device/approve', requireAuth, async (req, res) => {
     const user = userRes.rows[0]
     const permissions = user.is_suspended ? null : await getPermissionsForIdentifiant(identifiant)
     const sessionPayload = {
+      name: user.name || '',
+      prenoms: user.prenoms || '',
       identifiant: user.identifiant,
       role: user.role,
       direction_id: user.direction_id || null,
       direction_name: user.direction_name || null,
+      is_direction_chief: Boolean(user.is_direction_chief),
       is_suspended: Boolean(user.is_suspended),
       permissions: permissions || undefined,
       must_change_password: Boolean(user.must_change_password),
@@ -2756,9 +2772,11 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
     const params = []
     let sql = `
       SELECT a.id, a.action, a.actor_identifiant, a.direction_id, a.entity_type, a.entity_id, a.details, a.created_at,
-             d.name AS direction_name
+             d.name AS direction_name,
+             u.name AS actor_name, u.prenoms AS actor_prenoms
       FROM activity_log a
       LEFT JOIN directions d ON d.id = a.direction_id
+      LEFT JOIN users u ON a.actor_identifiant = u.identifiant
       WHERE 1=1
     `
     if (user.role !== 'admin') {
@@ -2783,6 +2801,8 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
         id: row.id,
         action: row.action,
         actor_identifiant: row.actor_identifiant,
+        actor_name: row.actor_name || '',
+        actor_prenoms: row.actor_prenoms || '',
         direction_id: row.direction_id,
         direction_name: row.direction_name,
         entity_type: row.entity_type,
@@ -4838,14 +4858,16 @@ wss.on('connection', async (ws, req) => {
   let userDirectionName = null
   try {
     const userRes = await pool.query(
-      `SELECT u.role, d.name AS direction_name
+      `SELECT u.role, u.name, u.prenoms, d.name AS direction_name
        FROM users u LEFT JOIN directions d ON d.id = u.direction_id
        WHERE u.identifiant = $1`,
       [identifiant]
     )
     if (userRes.rows.length > 0) {
-      userRole = userRes.rows[0].role
-      userDirectionName = userRes.rows[0].direction_name || null
+      const row = userRes.rows[0]
+      userRole = row.role
+      userDirectionName = row.direction_name || null
+      userDisplayCache.set(identifiant, { name: row.name || '', prenoms: row.prenoms || '' })
     }
   } catch (_) { /* ignore */ }
 
@@ -4862,6 +4884,7 @@ wss.on('connection', async (ws, req) => {
 
   // Track presence for non-admin users
   if (userRole !== 'admin') {
+    const cached = userDisplayCache.get(identifiant) || {}
     userPresence.set(identifiant, {
       page: '/dashboard',
       section: null,
@@ -4869,6 +4892,8 @@ wss.on('connection', async (ws, req) => {
       connectedAt: ws._connectedAt,
       role: userRole || 'user',
       direction_name: userDirectionName,
+      name: cached.name || '',
+      prenoms: cached.prenoms || '',
     })
     recordLiveEvent(identifiant, 'connected', null)
     broadcastLivePresence()
@@ -4890,6 +4915,8 @@ wss.on('connection', async (ws, req) => {
           page: String(data.page || '/dashboard').slice(0, 200),
           section: data.section ? String(data.section).slice(0, 200) : null,
           lastSeen: new Date().toISOString(),
+          name: existing.name ?? '',
+          prenoms: existing.prenoms ?? '',
         })
         console.log(`[live] presence: ${identifiant} → ${data.page}`)
         broadcastLivePresence()

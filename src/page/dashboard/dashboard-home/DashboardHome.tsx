@@ -117,6 +117,8 @@ const DashboardHome = (): ReactNode => {
       id: string
       action: string
       actor_identifiant: string | null
+      actor_name?: string
+      actor_prenoms?: string
       direction_id: string | null
       direction_name: string | null
       entity_type: string | null
@@ -131,7 +133,7 @@ const DashboardHome = (): ReactNode => {
 
   // ── Online users (admin only — silent tracking) ──
   const [onlineUsers, setOnlineUsers] = useState<
-    Array<{ identifiant: string; role: string; connectedAt: string | null }>
+    Array<{ identifiant: string; role: string; connectedAt: string | null; name?: string; prenoms?: string }>
   >([])
 
   // ── Load users, roles, directions ──
@@ -220,6 +222,8 @@ const DashboardHome = (): ReactNode => {
           id: string
           action: string
           actor_identifiant: string | null
+          actor_name?: string
+          actor_prenoms?: string
           direction_id: string | null
           direction_name: string | null
           entity_type: string | null
@@ -1343,7 +1347,9 @@ const DashboardHome = (): ReactNode => {
 
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium text-sm leading-tight">
-                          {ou.identifiant}
+                          {[ou.name, ou.prenoms].filter(Boolean).length > 0
+                            ? `${[ou.name, ou.prenoms].filter(Boolean).join(' ')} (${ou.identifiant})`
+                            : ou.identifiant}
                         </p>
                         <p className="mt-0.5 truncate text-xs capitalize text-muted-foreground">
                           {ou.role}
@@ -1766,7 +1772,11 @@ const DashboardHome = (): ReactNode => {
                           <td className="px-3 py-2 whitespace-nowrap">
                             {new Date(entry.created_at).toLocaleString('fr-FR')}
                           </td>
-                          <td className="px-3 py-2 font-mono">{entry.actor_identifiant ?? '—'}</td>
+                          <td className="px-3 py-2">
+                            {[entry.actor_name, entry.actor_prenoms].filter(Boolean).length > 0
+                              ? `${[entry.actor_name, entry.actor_prenoms].filter(Boolean).join(' ')} (${entry.actor_identifiant ?? '—'})`
+                              : (entry.actor_identifiant ?? '—')}
+                          </td>
                           <td className="px-3 py-2">
                             {entry.action === 'upload_file' && 'Upload fichier'}
                             {entry.action === 'delete_file' && 'Suppression fichier'}
