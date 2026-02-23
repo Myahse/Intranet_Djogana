@@ -347,13 +347,13 @@ const DashboardHome = (): ReactNode => {
     const count = usersWithRole.length
 
     const confirmMsg = count > 0
-      ? `Supprimer l'profil "${role.name}" ?\n\n${count} utilisateur(s) utilisent cet profil et seront supprimés et déconnectés immédiatement :\n${usersWithRole.map((u) => `  • ${u.identifiant}`).join('\n')}\n\nCette action est irréversible.`
-      : `Supprimer l'profil "${role.name}" ? Cette action est irréversible.`
+      ? `Supprimer le profil "${role.name}" ?\n\n${count} utilisateur(s) seront réaffectés au profil par défaut. Les utilisateurs ne seront pas supprimés.`
+      : `Supprimer le profil "${role.name}" ? Cette action est irréversible.`
 
     if (!globalThis.confirm?.(confirmMsg)) {
       return
     }
-    setLoading({ open: true, message: `Suppression de l'profil "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
+    setLoading({ open: true, message: `Suppression du profil "${role.name}"${count > 0 ? ` (${count} utilisateur(s) réaffectés)` : ''}…` })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
@@ -364,11 +364,12 @@ const DashboardHome = (): ReactNode => {
       }
       const data = await res.json().catch(() => ({}))
       setRoles((prev) => prev.filter((r) => r.id !== role.id))
-      if (data.deletedUsers > 0) {
-        setUsers((prev) => prev.filter((u) => u.role !== role.name))
+      if (data.reassignedUsers > 0) {
+        const res = await fetch(`${API_BASE_URL}/api/users`)
+        if (res.ok) setUsers(await res.json())
       }
-      const msg = data.deletedUsers > 0
-        ? `Profil supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+      const msg = data.reassignedUsers > 0
+        ? `Profil supprimé (${data.reassignedUsers} utilisateur(s) réaffectés)`
         : "Profil supprimé"
       setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
       toast.success(msg)

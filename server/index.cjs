@@ -350,6 +350,25 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
+  // Deleted users archive (soft-delete: users are copied here before removal, can be restored)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deleted_users (
+      id uuid PRIMARY KEY,
+      name text DEFAULT '',
+      prenoms text DEFAULT '',
+      identifiant text NOT NULL,
+      password_hash text NOT NULL,
+      role text NOT NULL,
+      direction_id uuid REFERENCES directions(id) ON DELETE SET NULL,
+      must_change_password boolean NOT NULL DEFAULT true,
+      is_direction_chief boolean NOT NULL DEFAULT false,
+      is_suspended boolean NOT NULL DEFAULT false,
+      created_at timestamptz NOT NULL,
+      deleted_at timestamptz NOT NULL DEFAULT now(),
+      deleted_by text
+    );
+  `)
+
   // Device login requests (GitHub-style: request access → approve on mobile → grant session)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_requests (
@@ -1528,7 +1547,6 @@ app.get('/api/users', async (_req, res) => {
 })
 
 app.delete('/api/users/:id', async (req, res) => {
-  return res.status(405).json({ error: 'La suppression est désactivée. Utilisez la suspension.' })
   try {
     const { id } = req.params
     const callerIdentifiant = req.query.identifiant || req.body?.identifiant
@@ -1540,7 +1558,7 @@ app.delete('/api/users/:id', async (req, res) => {
     }
 
     const userRow = await pool.query(
-      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      'SELECT id, name, prenoms, identifiant, password_hash, role, direction_id, must_change_password, is_direction_chief, is_suspended, created_at FROM users WHERE id = $1',
       [id]
     )
     if (userRow.rows.length === 0) {
@@ -1568,6 +1586,26 @@ app.delete('/api/users/:id', async (req, res) => {
       details: { identifiant: deletedUser.identifiant, role: deletedUser.role },
     })
 
+    // Copy to deleted_users before removing (for recovery)
+    await pool.query(
+      `INSERT INTO deleted_users (id, name, prenoms, identifiant, password_hash, role, direction_id, must_change_password, is_direction_chief, is_suspended, created_at, deleted_at, deleted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12)`,
+      [
+        deletedUser.id,
+        deletedUser.name || '',
+        deletedUser.prenoms || '',
+        deletedUser.identifiant,
+        deletedUser.password_hash,
+        deletedUser.role,
+        deletedUser.direction_id,
+        deletedUser.must_change_password,
+        deletedUser.is_direction_chief,
+        deletedUser.is_suspended,
+        deletedUser.created_at,
+        callerIdentifiant || null,
+      ]
+    )
+
     // Notify the deleted user via WebSocket (force logout)
     broadcastUserDeleted(deletedUser.identifiant)
 
@@ -1581,6 +1619,80 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 })
 
+// List deleted users (admin only)
+app.get('/api/deleted-users', requireAuth, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [req.authIdentifiant])
+    if (userRes.rows.length === 0 || userRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+    }
+    const result = await pool.query(`
+      SELECT du.id, du.name, du.prenoms, du.identifiant, du.role, du.deleted_at, du.deleted_by,
+             d.name AS direction_name
+      FROM deleted_users du
+      LEFT JOIN directions d ON d.id = du.direction_id
+      ORDER BY du.deleted_at DESC
+    `)
+    return res.json(
+      result.rows.map((r) => ({
+        id: r.id,
+        name: r.name || '',
+        prenoms: r.prenoms || '',
+        identifiant: r.identifiant,
+        role: r.role,
+        direction_name: r.direction_name,
+        deleted_at: r.deleted_at,
+        deleted_by: r.deleted_by,
+      }))
+    )
+  } catch (err) {
+    console.error('list deleted users error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs supprimés.' })
+  }
+})
+
+// Restore a deleted user (admin only)
+app.post('/api/deleted-users/:id/restore', requireAuth, async (req, res) => {
+  try {
+    const userRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [req.authIdentifiant])
+    if (userRes.rows.length === 0 || userRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+    }
+    const { id } = req.params
+    const du = await pool.query('SELECT * FROM deleted_users WHERE id = $1', [id])
+    if (du.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable dans les archives.' })
+    }
+    const row = du.rows[0]
+    const existing = await pool.query('SELECT id FROM users WHERE identifiant = $1', [row.identifiant])
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'Un utilisateur avec cet identifiant existe déjà. Renommez-le avant de restaurer.' })
+    }
+    await pool.query(
+      `INSERT INTO users (id, name, prenoms, identifiant, password_hash, role, direction_id, must_change_password, is_direction_chief, is_suspended, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        row.id,
+        row.name,
+        row.prenoms,
+        row.identifiant,
+        row.password_hash,
+        row.role,
+        row.direction_id,
+        row.must_change_password,
+        row.is_direction_chief,
+        row.is_suspended,
+        row.created_at,
+      ]
+    )
+    await pool.query('DELETE FROM deleted_users WHERE id = $1', [id])
+    broadcastDataChange('users', 'created', { id })
+    return res.json({ ok: true, id: row.id })
+  } catch (err) {
+    console.error('restore user error', err)
+    return res.status(500).json({ error: 'Erreur lors de la restauration.' })
+  }
+})
 
 // Update user role and/or direction
 app.patch('/api/users/:id', async (req, res) => {
@@ -3152,7 +3264,7 @@ app.patch('/api/roles/:id/permissions', async (req, res) => {
   }
 })
 
-// Delete a role (cannot delete 'admin'; users with this role are deleted & force-logged-out)
+// Delete a role (cannot delete 'admin'; users with this role are reassigned to default 'user' profile)
 app.delete('/api/roles/:id', async (req, res) => {
   try {
     const { id } = req.params
@@ -3170,45 +3282,30 @@ app.delete('/api/roles/:id', async (req, res) => {
       return res.status(400).json({ error: 'Impossible de supprimer le rôle admin.' })
     }
 
-    // Find all users still assigned to this role (excluding admins as safety guard)
-    const usersWithRole = await pool.query(
-      'SELECT id, identifiant, role, direction_id FROM users WHERE role = $1',
-      [roleName]
+    // Find a fallback role: prefer 'user', otherwise first non-admin role
+    const fallbackRes = await pool.query(
+      "SELECT name FROM roles WHERE name <> 'admin' AND id <> $1 ORDER BY CASE WHEN name = 'user' THEN 0 ELSE 1 END LIMIT 1",
+      [id]
     )
+    const fallbackRole = fallbackRes.rows.length > 0 ? fallbackRes.rows[0].name : 'user'
 
-    // Force-logout and delete each user that has this role
-    let actorId = null
-    if (callerIdentifiant) {
-      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
-      if (u.rows.length > 0) actorId = u.rows[0].id
-    }
+    // Reassign users to fallback role instead of deleting them
+    const updateRes = await pool.query(
+      'UPDATE users SET role = $1 WHERE role = $2 RETURNING id',
+      [fallbackRole, roleName]
+    )
+    const reassignedCount = updateRes.rowCount || 0
 
-    for (const user of usersWithRole.rows) {
-      // Log each user deletion
-      await insertActivityLog(pool, {
-        action: 'delete_user',
-        actorIdentifiant: callerIdentifiant || null,
-        actorId,
-        directionId: user.direction_id,
-        entityType: 'user',
-        entityId: user.id,
-        details: { identifiant: user.identifiant, role: user.role, reason: 'role_deleted' },
-      })
-
-      // Force logout via WebSocket before deleting
-      broadcastUserDeleted(user.identifiant)
-
-      // Delete the user
-      await pool.query('DELETE FROM users WHERE id = $1', [user.id])
-      broadcastDataChange('users', 'deleted', { id: user.id })
+    // Notify affected users to refresh their session (permissions may have changed)
+    for (const row of updateRes.rows) {
+      broadcastDataChange('users', 'updated', { id: row.id })
     }
 
     // Delete the role (cascades to role_permissions and folder_role_visibility)
     await pool.query('DELETE FROM roles WHERE id = $1', [id])
 
     broadcastDataChange('roles', 'deleted', { id })
-    const deletedUserCount = usersWithRole.rows.length
-    return res.json({ ok: true, deletedUsers: deletedUserCount })
+    return res.json({ ok: true, reassignedUsers: reassignedCount })
   } catch (err) {
     console.error('delete role error', err)
     return res.status(500).json({ error: 'Erreur lors de la suppression du rôle.' })
@@ -4660,6 +4757,41 @@ app.post('/api/trash/restore', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('trash restore error', err)
     return res.status(500).json({ error: 'Erreur lors de la restauration.' })
+  }
+})
+
+// Rename a soft-deleted item (admin only)
+app.patch('/api/trash/:type/:id', requireAdmin, async (req, res) => {
+  try {
+    const { type, id } = req.params
+    const { name, label } = req.body || {}
+    const newName = (name || label || '').trim()
+    if (!newName) return res.status(400).json({ error: 'Nom requis.' })
+
+    if (type === 'file') {
+      const r = await pool.query('UPDATE files SET name = $1 WHERE id = $2 AND deleted_at IS NOT NULL RETURNING id, name', [newName, id])
+      if (r.rowCount === 0) return res.status(404).json({ error: 'Fichier introuvable dans la corbeille.' })
+      return res.json(r.rows[0])
+    }
+    if (type === 'link') {
+      const r = await pool.query('UPDATE links SET label = $1 WHERE id = $2 AND deleted_at IS NOT NULL RETURNING id, label', [newName, id])
+      if (r.rowCount === 0) return res.status(404).json({ error: 'Lien introuvable dans la corbeille.' })
+      return res.json({ id: r.rows[0].id, name: r.rows[0].label })
+    }
+    if (type === 'folder') {
+      const folderRow = await pool.query('SELECT name, direction_id FROM folders WHERE id = $1 AND deleted_at IS NOT NULL', [id])
+      if (folderRow.rows.length === 0) return res.status(404).json({ error: 'Dossier introuvable dans la corbeille.' })
+      const oldName = folderRow.rows[0].name
+      const directionId = folderRow.rows[0].direction_id
+      await pool.query('UPDATE folders SET name = $1 WHERE id = $2', [newName, id])
+      await pool.query('UPDATE files SET folder = $1 WHERE folder = $2 AND direction_id = $3 AND deleted_at IS NOT NULL', [newName, oldName, directionId])
+      await pool.query('UPDATE links SET folder = $1 WHERE folder = $2 AND direction_id = $3 AND deleted_at IS NOT NULL', [newName, oldName, directionId])
+      return res.json({ id, name: newName })
+    }
+    return res.status(400).json({ error: 'Type invalide.' })
+  } catch (err) {
+    console.error('trash rename error', err)
+    return res.status(500).json({ error: 'Erreur lors du renommage.' })
   }
 })
 
