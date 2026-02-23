@@ -67,6 +67,8 @@ type AuthContextValue = {
   logout: () => void
   refreshPermissions: () => Promise<void>
   registerUser: (
+    name: string,
+    prenoms: string,
     identifiant: string,
     password: string,
     role?: string,
@@ -510,6 +512,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const registerUser = useCallback(
     async (
+      name: string,
+      prenoms: string,
       identifiant: string,
       password: string,
       role?: string,
@@ -517,12 +521,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ): Promise<boolean> => {
       try {
         const payload: {
+          name: string
+          prenoms: string
           identifiant: string
           password: string
           role?: string
           direction_id?: string
           caller_identifiant?: string
         } = {
+          name: name.trim(),
+          prenoms: prenoms.trim(),
           identifiant,
           password,
         }

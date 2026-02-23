@@ -336,6 +336,20 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
+  // Add name column (required when creating new users)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS name text DEFAULT '';
+    `)
+  } catch (_) { /* column may already exist */ }
+
+  // Add prenoms column (first names, displayed with identifiant and acteur)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS prenoms text DEFAULT '';
+    `)
+  } catch (_) { /* column may already exist */ }
+
   // Device login requests (GitHub-style: request access → approve on mobile → grant session)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS login_requests (
@@ -1476,7 +1490,7 @@ app.delete('/api/directions/:id', async (req, res) => {
 app.get('/api/users', async (_req, res) => {
   try {
     const result = await pool.query(`
-      SELECT u.id, u.identifiant, u.role, u.direction_id, u.created_at, u.is_direction_chief, u.is_suspended,
+      SELECT u.id, u.name, u.prenoms, u.identifiant, u.role, u.direction_id, u.created_at, u.is_direction_chief, u.is_suspended,
              d.name AS direction_name
       FROM users u
       LEFT JOIN directions d ON d.id = u.direction_id
@@ -1486,6 +1500,8 @@ app.get('/api/users', async (_req, res) => {
     return res.json(
       result.rows.map((r) => ({
         id: r.id,
+        name: r.name || '',
+        prenoms: r.prenoms || '',
         identifiant: r.identifiant,
         role: r.role,
         direction_id: r.direction_id,
@@ -2072,9 +2088,15 @@ app.get('/api/direction-access', async (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { identifiant, password, role, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
+    const { name, prenoms, identifiant, password, role, direction_id: directionId, caller_identifiant: callerIdentifiant } = req.body || {}
     if (!identifiant || !password) {
       return res.status(400).json({ error: 'Identifiant et mot de passe sont requis.' })
+    }
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Le nom est requis.' })
+    }
+    if (!prenoms || typeof prenoms !== 'string' || !prenoms.trim()) {
+      return res.status(400).json({ error: 'Les prénoms sont requis.' })
     }
 
     if (callerIdentifiant) {
@@ -2123,9 +2145,9 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO users (id, identifiant, password_hash, role, direction_id)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, identifiant, hashed, finalRole, finalRole === 'admin' ? null : directionId]
+      `INSERT INTO users (id, name, prenoms, identifiant, password_hash, role, direction_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, (name || '').trim(), (prenoms || '').trim(), identifiant, hashed, finalRole, finalRole === 'admin' ? null : directionId]
     )
 
     let actorId = null
@@ -2144,7 +2166,7 @@ app.post('/api/auth/register', async (req, res) => {
     })
 
     broadcastDataChange('users', 'created', { id })
-    return res.status(201).json({ id, identifiant, role: finalRole, direction_id: finalRole === 'admin' ? null : directionId })
+    return res.status(201).json({ id, name: (name || '').trim(), prenoms: (prenoms || '').trim(), identifiant, role: finalRole, direction_id: finalRole === 'admin' ? null : directionId })
   } catch (err) {
     if (err && err.code === '23505') {
       return res.status(409).json({ error: 'Identifiant déjà utilisé.' })

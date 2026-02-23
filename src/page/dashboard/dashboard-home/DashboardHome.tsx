@@ -42,9 +42,11 @@ const DashboardHome = (): ReactNode => {
 
   // ── Users ──
   const [users, setUsers] = useState<
-    Array<{ id: string; identifiant: string; role: string; direction_id?: string; direction_name?: string; is_direction_chief?: boolean; is_suspended?: boolean }>
+    Array<{ id: string; name?: string; prenoms?: string; identifiant: string; role: string; direction_id?: string; direction_name?: string; is_direction_chief?: boolean; is_suspended?: boolean }>
   >([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserPrenoms, setNewUserPrenoms] = useState('')
   const [newUserPhone, setNewUserPhone] = useState('')
   const [isCreatingUser, setIsCreatingUser] = useState(false)
 
@@ -341,11 +343,11 @@ const DashboardHome = (): ReactNode => {
   const handleCreateRole = async () => {
     const name = newRoleName.trim()
     if (!name) {
-      toast.error('Veuillez saisir un nom de rôle')
+      toast.error("Veuillez saisir un nom d'acteur")
       return
     }
     setIsCreatingRole(true)
-    setLoading({ open: true, message: 'Création du rôle en cours…' })
+    setLoading({ open: true, message: "Création de l'acteur en cours…" })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles`, {
         method: 'POST',
@@ -353,8 +355,8 @@ const DashboardHome = (): ReactNode => {
         body: JSON.stringify({ name }),
       })
       if (!res.ok) {
-        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Impossible de créer le rôle' }))
-        toast.error('Impossible de créer le rôle')
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de créer l'acteur" }))
+        toast.error("Impossible de créer l'acteur")
         return
       }
       const created = (await res.json()) as {
@@ -388,12 +390,12 @@ const DashboardHome = (): ReactNode => {
             ]
       )
       setNewRoleName('')
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Rôle créé' }))
-      toast.success('Rôle créé')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Acteur créé" }))
+      toast.success("Acteur créé")
     } catch (err) {
       console.error(err)
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du rôle' }))
-      toast.error('Erreur lors de la création du rôle')
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la création de l'acteur" }))
+      toast.error("Erreur lors de la création de l'acteur")
     } finally {
       setIsCreatingRole(false)
     }
@@ -404,17 +406,17 @@ const DashboardHome = (): ReactNode => {
     const count = usersWithRole.length
 
     const description = count > 0
-      ? `${count} utilisateur(s) utilisent ce rôle et seront supprimés et déconnectés immédiatement. Cette action est irréversible.`
-      : `Le rôle "${role.name}" sera supprimé. Cette action est irréversible.`
+      ? `${count} utilisateur(s) utilisent cet acteur et seront supprimés et déconnectés immédiatement. Cette action est irréversible.`
+      : `L'acteur "${role.name}" sera supprimé. Cette action est irréversible.`
 
     const ok = await confirm({
-      title: `Supprimer le rôle "${role.name}" ?`,
+      title: `Supprimer l'acteur "${role.name}" ?`,
       description,
       confirmLabel: 'Supprimer',
       variant: 'destructive',
     })
     if (!ok) return
-    setLoading({ open: true, message: `Suppression du rôle "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
+    setLoading({ open: true, message: `Suppression de l'acteur "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
@@ -429,8 +431,8 @@ const DashboardHome = (): ReactNode => {
         setUsers((prev) => prev.filter((u) => u.role !== role.name))
       }
       const msg = data.deletedUsers > 0
-        ? `Rôle supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
-        : 'Rôle supprimé'
+        ? `Acteur supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+        : "Acteur supprimé"
       setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
       toast.success(msg)
     } catch (err) {
@@ -456,7 +458,7 @@ const DashboardHome = (): ReactNode => {
       | 'can_view_stats',
     value: boolean
   ) => {
-    setLoading({ open: true, message: 'Mise à jour des permissions…' })
+    setLoading({ open: true, message: "Mise à jour des abilitations…" })
     try {
       const payload: Record<string, boolean> = {}
       if (field === 'can_create_folder') payload.canCreateFolder = value
@@ -480,8 +482,8 @@ const DashboardHome = (): ReactNode => {
         }
       )
       if (!res.ok) {
-        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Impossible de mettre à jour les permissions' }))
-        toast.error('Impossible de mettre à jour les permissions')
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de mettre à jour les abilitations" }))
+        toast.error("Impossible de mettre à jour les abilitations")
         return
       }
       const updated = (await res.json()) as {
@@ -500,12 +502,12 @@ const DashboardHome = (): ReactNode => {
         can_view_stats: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Permissions mises à jour' }))
-      toast.success('Permissions mises à jour. Les utilisateurs connectés recevront les changements automatiquement.')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Abilitations mises à jour" }))
+      toast.success("Abilitations mises à jour. Les utilisateurs connectés recevront les changements automatiquement.")
     } catch (err) {
       console.error(err)
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la mise à jour des permissions' }))
-      toast.error('Erreur lors de la mise à jour des permissions')
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la mise à jour des abilitations" }))
+      toast.error("Erreur lors de la mise à jour des abilitations")
     }
   }
 
@@ -550,10 +552,10 @@ const DashboardHome = (): ReactNode => {
     if (!editingRoleId) return
     const trimmed = editingRoleName.trim()
     if (!trimmed) {
-      toast.error('Veuillez saisir un nom de rôle')
+      toast.error("Veuillez saisir un nom d'acteur")
       return
     }
-    setLoading({ open: true, message: 'Mise à jour du rôle…' })
+    setLoading({ open: true, message: "Mise à jour de l'acteur…" })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(editingRoleId)}`, {
         method: 'PATCH',
@@ -562,14 +564,14 @@ const DashboardHome = (): ReactNode => {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data?.error ?? 'Impossible de renommer le rôle')
+        throw new Error(data?.error ?? "Impossible de renommer l'acteur")
       }
       const updated = (await res.json()) as { id: string; name: string }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? { ...r, name: updated.name } : r)))
       setEditingRoleId(null)
       setEditingRoleName('')
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Rôle renommé' }))
-      toast.success('Rôle renommé')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Acteur renommé" }))
+      toast.success("Acteur renommé")
     } catch (err) {
       setLoading((s) => ({
         ...s,
@@ -712,7 +714,17 @@ const DashboardHome = (): ReactNode => {
   }
 
   const handleCreateUser = async () => {
+    const name = newUserName.trim()
+    const prenoms = newUserPrenoms.trim()
     const phone = newUserPhone.trim()
+    if (!name) {
+      toast.error('Veuillez saisir le nom de l\'utilisateur')
+      return
+    }
+    if (!prenoms) {
+      toast.error('Veuillez saisir les prénoms de l\'utilisateur')
+      return
+    }
     if (!phone) {
       toast.error('Veuillez saisir un numéro de téléphone')
       return
@@ -725,8 +737,10 @@ const DashboardHome = (): ReactNode => {
     setLoading({ open: true, message: "Création de l'utilisateur en cours…" })
     try {
       const directionId = selectedRole === 'admin' ? undefined : selectedDirection
-      const ok = await registerUser(phone, phone, selectedRole, directionId)
+      const ok = await registerUser(name, prenoms, phone, phone, selectedRole, directionId)
       if (ok) {
+        setNewUserName('')
+        setNewUserPrenoms('')
         setNewUserPhone('')
         // Refresh user list
         try {
@@ -947,11 +961,13 @@ const DashboardHome = (): ReactNode => {
 
     return (
       <div className="max-h-64 overflow-auto border rounded-md">
-        <table className="w-full text-sm min-w-[520px]">
+        <table className="w-full text-sm min-w-[680px]">
           <thead className="bg-muted sticky top-0">
             <tr>
+              <th className="px-3 py-2 text-left font-medium">Nom</th>
+              <th className="px-3 py-2 text-left font-medium">Prénoms</th>
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
-              <th className="px-3 py-2 text-left font-medium">Rôle</th>
+              <th className="px-3 py-2 text-left font-medium">Acteur</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
               {(isAdmin || user?.is_direction_chief) && <th className="px-3 py-2 text-left font-medium">Accès accordés</th>}
               <th className="px-3 py-2 text-left font-medium">Statut</th>
@@ -962,13 +978,13 @@ const DashboardHome = (): ReactNode => {
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className={`border-t ${u.is_suspended ? 'opacity-70 bg-muted/50' : ''}`}>
-                <td className="px-3 py-2">{u.identifiant}</td>
                 {editingUserId === u.id ? (
                   <>
+                    <td className="px-3 py-1 text-muted-foreground text-xs" colSpan={3}>{[u.prenoms, u.name].filter(Boolean).join(' ') || u.identifiant}</td>
                     <td className="px-3 py-1">
                       <Select value={editingUserRole} onValueChange={setEditingUserRole}>
                         <SelectTrigger className="h-8 text-sm w-36">
-                          <SelectValue placeholder="Rôle" />
+                          <SelectValue placeholder="Acteur" />
                         </SelectTrigger>
                         <SelectContent>
                           {roles.map((r) => (
@@ -1024,6 +1040,9 @@ const DashboardHome = (): ReactNode => {
                   </>
                 ) : (
                   <>
+                    <td className="px-3 py-2">{u.name || '—'}</td>
+                    <td className="px-3 py-2">{u.prenoms || '—'}</td>
+                    <td className="px-3 py-2 font-mono">{u.identifiant}</td>
                     <td className="px-3 py-2">
                       <span className="capitalize">{u.role}</span>
                       {u.is_direction_chief && (
@@ -1496,22 +1515,22 @@ const DashboardHome = (): ReactNode => {
         </Card>
       )}
 
-      {/* ── Roles & permissions ── */}
+      {/* ── Acteurs & abilitations ── */}
       {isAdmin && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              Rôles &amp; permissions
+              Acteurs &amp; abilitations
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <p className="text-muted-foreground text-sm">
-                Créez des rôles et définissez leurs permissions globales.
+                Créez des acteurs et définissez leurs abilitations globales.
               </p>
               <div className="flex flex-col sm:flex-row gap-2 max-w-md">
                 <div className="flex-1">
-                  <Label htmlFor="new-role-name">Nom du rôle</Label>
+                  <Label htmlFor="new-role-name">Nom de l'acteur</Label>
                   <Input
                     id="new-role-name"
                     value={newRoleName}
@@ -1521,7 +1540,7 @@ const DashboardHome = (): ReactNode => {
                 </div>
                 <div className="flex items-end">
                   <Button onClick={handleCreateRole} disabled={isCreatingRole}>
-                    {isCreatingRole ? 'Création...' : 'Créer le rôle'}
+                    {isCreatingRole ? 'Création...' : "Créer l'acteur"}
                   </Button>
                 </div>
               </div>
@@ -1532,7 +1551,7 @@ const DashboardHome = (): ReactNode => {
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
-                      <th className="px-3 py-2 text-left font-medium">Rôle</th>
+                      <th className="px-3 py-2 text-left font-medium">Acteur</th>
                       <th className="px-3 py-2 text-center font-medium">Créer dossier</th>
                       <th className="px-3 py-2 text-center font-medium">Uploader fichier</th>
                       <th className="px-3 py-2 text-center font-medium">Supprimer fichier</th>
@@ -1591,7 +1610,7 @@ const DashboardHome = (): ReactNode => {
                                   size="icon"
                                   className="size-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                                   onClick={() => handleStartEditRole(r)}
-                                  aria-label={`Renommer le rôle ${r.name}`}
+                                  aria-label={`Renommer l'acteur ${r.name}`}
                                 >
                                   <Pencil className="size-3.5" />
                                 </Button>
@@ -1600,37 +1619,37 @@ const DashboardHome = (): ReactNode => {
                           )}
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_create_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_folder', checked)} aria-label={`Autoriser ${r.name} à créer des dossiers`} />
+                          <Switch checked={Boolean(r.can_create_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_folder', checked)} aria-label={`Habiliter ${r.name} à créer des dossiers`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_upload_file)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_upload_file', checked)} aria-label={`Autoriser ${r.name} à uploader des fichiers`} />
+                          <Switch checked={Boolean(r.can_upload_file)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_upload_file', checked)} aria-label={`Habiliter ${r.name} à uploader des fichiers`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_delete_file)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_file', checked)} aria-label={`Autoriser ${r.name} à supprimer des fichiers`} />
+                          <Switch checked={Boolean(r.can_delete_file)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_file', checked)} aria-label={`Habiliter ${r.name} à supprimer des fichiers`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_delete_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_folder', checked)} aria-label={`Autoriser ${r.name} à supprimer des dossiers`} />
+                          <Switch checked={Boolean(r.can_delete_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_folder', checked)} aria-label={`Habiliter ${r.name} à supprimer des dossiers`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_create_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_user', checked)} aria-label={`Autoriser ${r.name} à créer des utilisateurs`} />
+                          <Switch checked={Boolean(r.can_create_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_user', checked)} aria-label={`Habiliter ${r.name} à créer des utilisateurs`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_delete_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_user', checked)} aria-label={`Autoriser ${r.name} à suspendre des utilisateurs`} />
+                          <Switch checked={Boolean(r.can_delete_user)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_user', checked)} aria-label={`Habiliter ${r.name} à suspendre des utilisateurs`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_create_direction)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_direction', checked)} aria-label={`Autoriser ${r.name} à créer des directions`} />
+                          <Switch checked={Boolean(r.can_create_direction)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_direction', checked)} aria-label={`Habiliter ${r.name} à créer des directions`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_delete_direction)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_direction', checked)} aria-label={`Autoriser ${r.name} à supprimer des directions`} />
+                          <Switch checked={Boolean(r.can_delete_direction)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_delete_direction', checked)} aria-label={`Habiliter ${r.name} à supprimer des directions`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_view_activity_log)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_view_activity_log', checked)} aria-label={`Autoriser ${r.name} à voir le journal d'activité`} />
+                          <Switch checked={Boolean(r.can_view_activity_log)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_view_activity_log', checked)} aria-label={`Habiliter ${r.name} à voir le journal d'activité`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_set_folder_visibility)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_set_folder_visibility', checked)} aria-label={`Autoriser ${r.name} à définir la visibilité des dossiers`} />
+                          <Switch checked={Boolean(r.can_set_folder_visibility)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_set_folder_visibility', checked)} aria-label={`Habiliter ${r.name} à définir la visibilité des dossiers`} />
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <Switch checked={Boolean(r.can_view_stats)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_view_stats', checked)} aria-label={`Autoriser ${r.name} à voir les statistiques`} />
+                          <Switch checked={Boolean(r.can_view_stats)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_view_stats', checked)} aria-label={`Habiliter ${r.name} à voir les statistiques`} />
                         </td>
                         <td className="px-3 py-2 text-right">
                           {r.name !== 'admin' ? (
@@ -1639,7 +1658,7 @@ const DashboardHome = (): ReactNode => {
                               size="icon"
                               className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => handleDeleteRole(r)}
-                              aria-label={`Supprimer le rôle ${r.name}`}
+                              aria-label={`Supprimer l'acteur ${r.name}`}
                             >
                               <Trash2 className="size-4" />
                             </Button>
@@ -1652,7 +1671,7 @@ const DashboardHome = (): ReactNode => {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Aucun rôle défini pour le moment.
+                Aucun acteur défini pour le moment.
               </p>
             )}
           </CardContent>
@@ -1812,6 +1831,24 @@ const DashboardHome = (): ReactNode => {
               passe initial. Il pourra le changer ensuite.
             </p>
             <div className="grid gap-2 max-w-xs">
+              <Label htmlFor="new-user-name">Nom</Label>
+              <Input
+                id="new-user-name"
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+                placeholder="Ex. Dupont"
+              />
+            </div>
+            <div className="grid gap-2 max-w-xs">
+              <Label htmlFor="new-user-prenoms">Prénoms</Label>
+              <Input
+                id="new-user-prenoms"
+                value={newUserPrenoms}
+                onChange={(e) => setNewUserPrenoms(e.target.value)}
+                placeholder="Ex. Jean Marie"
+              />
+            </div>
+            <div className="grid gap-2 max-w-xs">
               <Label htmlFor="new-user-phone">Numéro de téléphone</Label>
               <Input
                 id="new-user-phone"
@@ -1823,10 +1860,10 @@ const DashboardHome = (): ReactNode => {
               />
             </div>
             <div className="grid gap-2 max-w-xs">
-              <Label htmlFor="new-user-role">Rôle</Label>
+              <Label htmlFor="new-user-role">Acteur</Label>
               <Select value={selectedRole} onValueChange={setSelectedRole}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Sélectionner un rôle" />
+                  <SelectValue placeholder="Sélectionner un acteur" />
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((r) => (
