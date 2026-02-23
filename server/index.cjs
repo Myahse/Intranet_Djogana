@@ -343,7 +343,7 @@ async function initDb() {
     `)
   } catch (_) { /* column may already exist */ }
 
-  // Add prenoms column (first names, displayed with identifiant and acteur)
+  // Add prenoms column (first names, displayed with identifiant and profil)
   try {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS prenoms text DEFAULT '';

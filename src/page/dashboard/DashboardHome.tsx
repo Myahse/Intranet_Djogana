@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2, UserX, UserCheck } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, UserX, UserCheck, Pencil, Check, X } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -59,6 +59,8 @@ const DashboardHome = (): ReactNode => {
   const [selectedRole, setSelectedRole] = useState<string>('user')
   const [newRoleName, setNewRoleName] = useState('')
   const [isCreatingRole, setIsCreatingRole] = useState<boolean>(false)
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null)
+  const [editingRoleName, setEditingRoleName] = useState('')
 
   // ── Directions ──
   const [directions, setDirections] = useState<Array<{ id: string; name: string; code?: string }>>([])
@@ -246,11 +248,11 @@ const DashboardHome = (): ReactNode => {
   const handleCreateRole = async () => {
     const name = newRoleName.trim()
     if (!name) {
-      toast.error("Veuillez saisir un nom d'acteur")
+      toast.error("Veuillez saisir un nom d'profil")
       return
     }
     setIsCreatingRole(true)
-    setLoading({ open: true, message: "Création de l'acteur en cours…" })
+    setLoading({ open: true, message: "Création de l'profil en cours…" })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles`, {
         method: 'POST',
@@ -258,8 +260,8 @@ const DashboardHome = (): ReactNode => {
         body: JSON.stringify({ name }),
       })
       if (!res.ok) {
-        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de créer l'acteur" }))
-        toast.error("Impossible de créer l'acteur")
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de créer l'profil" }))
+        toast.error("Impossible de créer l'profil")
         return
       }
       const created = (await res.json()) as {
@@ -291,14 +293,52 @@ const DashboardHome = (): ReactNode => {
             ]
       )
       setNewRoleName('')
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Acteur créé" }))
-      toast.success("Acteur créé")
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Profil créé" }))
+      toast.success("Profil créé")
     } catch (err) {
       console.error(err)
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la création de l'acteur" }))
-      toast.error("Erreur lors de la création de l'acteur")
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la création de l'profil" }))
+      toast.error("Erreur lors de la création de l'profil")
     } finally {
       setIsCreatingRole(false)
+    }
+  }
+
+  const handleStartEditRole = (role: { id: string; name: string }) => {
+    setEditingRoleId(role.id)
+    setEditingRoleName(role.name)
+  }
+  const handleCancelEditRole = () => {
+    setEditingRoleId(null)
+    setEditingRoleName('')
+  }
+  const handleSaveRoleName = async () => {
+    if (!editingRoleId) return
+    const trimmed = editingRoleName.trim()
+    if (!trimmed) {
+      toast.error("Veuillez saisir un nom de profil")
+      return
+    }
+    setLoading({ open: true, message: "Mise à jour du profil…" })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(editingRoleId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Impossible de renommer le profil")
+      }
+      const updated = data as { id: string; name: string }
+      setRoles((prev) => prev.map((r) => (r.id === updated.id ? { ...r, name: updated.name } : r)))
+      setEditingRoleId(null)
+      setEditingRoleName('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Profil renommé" }))
+      toast.success("Profil renommé")
+    } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : "Erreur lors du renommage" }))
+      toast.error(err instanceof Error ? err.message : "Erreur lors du renommage")
     }
   }
 
@@ -307,13 +347,13 @@ const DashboardHome = (): ReactNode => {
     const count = usersWithRole.length
 
     const confirmMsg = count > 0
-      ? `Supprimer l'acteur "${role.name}" ?\n\n${count} utilisateur(s) utilisent cet acteur et seront supprimés et déconnectés immédiatement :\n${usersWithRole.map((u) => `  • ${u.identifiant}`).join('\n')}\n\nCette action est irréversible.`
-      : `Supprimer l'acteur "${role.name}" ? Cette action est irréversible.`
+      ? `Supprimer l'profil "${role.name}" ?\n\n${count} utilisateur(s) utilisent cet profil et seront supprimés et déconnectés immédiatement :\n${usersWithRole.map((u) => `  • ${u.identifiant}`).join('\n')}\n\nCette action est irréversible.`
+      : `Supprimer l'profil "${role.name}" ? Cette action est irréversible.`
 
     if (!globalThis.confirm?.(confirmMsg)) {
       return
     }
-    setLoading({ open: true, message: `Suppression de l'acteur "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
+    setLoading({ open: true, message: `Suppression de l'profil "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
@@ -328,8 +368,8 @@ const DashboardHome = (): ReactNode => {
         setUsers((prev) => prev.filter((u) => u.role !== role.name))
       }
       const msg = data.deletedUsers > 0
-        ? `Acteur supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
-        : "Acteur supprimé"
+        ? `Profil supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+        : "Profil supprimé"
       setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
       toast.success(msg)
     } catch (err) {
@@ -354,7 +394,7 @@ const DashboardHome = (): ReactNode => {
       | 'can_set_folder_visibility',
     value: boolean
   ) => {
-    setLoading({ open: true, message: "Mise à jour des abilitations…" })
+    setLoading({ open: true, message: "Mise à jour des Habilitations…" })
     try {
       const payload: Record<string, boolean> = {}
       if (field === 'can_create_folder') payload.canCreateFolder = value
@@ -377,8 +417,8 @@ const DashboardHome = (): ReactNode => {
         }
       )
       if (!res.ok) {
-        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de mettre à jour les abilitations" }))
-        toast.error("Impossible de mettre à jour les abilitations")
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Impossible de mettre à jour les Habilitations" }))
+        toast.error("Impossible de mettre à jour les Habilitations")
         return
       }
       const updated = (await res.json()) as {
@@ -396,12 +436,12 @@ const DashboardHome = (): ReactNode => {
         can_set_folder_visibility: boolean
       }
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Abilitations mises à jour" }))
-      toast.success("Abilitations mises à jour. Les utilisateurs connectés recevront les changements automatiquement.")
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: "Habilitations mises à jour" }))
+      toast.success("Habilitations mises à jour. Les utilisateurs connectés recevront les changements automatiquement.")
     } catch (err) {
       console.error(err)
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la mise à jour des abilitations" }))
-      toast.error("Erreur lors de la mise à jour des abilitations")
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de la mise à jour des Habilitations" }))
+      toast.error("Erreur lors de la mise à jour des Habilitations")
     }
   }
 
@@ -571,7 +611,7 @@ const DashboardHome = (): ReactNode => {
               <th className="px-3 py-2 text-left font-medium">Nom</th>
               <th className="px-3 py-2 text-left font-medium">Prénoms</th>
               <th className="px-3 py-2 text-left font-medium">Identifiant</th>
-              <th className="px-3 py-2 text-left font-medium">Acteur</th>
+              <th className="px-3 py-2 text-left font-medium">Profil</th>
               <th className="px-3 py-2 text-left font-medium">Direction</th>
               <th className="px-3 py-2 text-left font-medium">Statut</th>
               <th className="px-3 py-2 text-right font-medium w-12">Actions</th>
@@ -727,22 +767,22 @@ const DashboardHome = (): ReactNode => {
         </Card>
       )}
 
-      {/* ── Acteurs & abilitations ── */}
+      {/* ── Profils & Habilitations ── */}
       {isAdmin && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              Acteurs &amp; abilitations
+              Profils &amp; Habilitations
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <p className="text-muted-foreground text-sm">
-                Créez des acteurs et définissez leurs abilitations globales.
+                Créez des profils et définissez leurs Habilitations globales.
               </p>
               <div className="flex flex-col sm:flex-row gap-2 max-w-md">
                 <div className="flex-1">
-                  <Label htmlFor="new-role-name">Nom de l'acteur</Label>
+                  <Label htmlFor="new-role-name">Nom de l'profil</Label>
                   <Input
                     id="new-role-name"
                     value={newRoleName}
@@ -752,7 +792,7 @@ const DashboardHome = (): ReactNode => {
                 </div>
                 <div className="flex items-end">
                   <Button onClick={handleCreateRole} disabled={isCreatingRole}>
-                    {isCreatingRole ? 'Création...' : "Créer l'acteur"}
+                    {isCreatingRole ? 'Création...' : "Créer l'profil"}
                   </Button>
                 </div>
               </div>
@@ -763,7 +803,7 @@ const DashboardHome = (): ReactNode => {
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
-                      <th className="px-3 py-2 text-left font-medium">Acteur</th>
+                      <th className="px-3 py-2 text-left font-medium">Profil</th>
                       <th className="px-3 py-2 text-center font-medium">Créer dossier</th>
                       <th className="px-3 py-2 text-center font-medium">Uploader fichier</th>
                       <th className="px-3 py-2 text-center font-medium">Supprimer fichier</th>
@@ -780,7 +820,55 @@ const DashboardHome = (): ReactNode => {
                   <tbody>
                     {roles.map((r) => (
                       <tr key={r.id} className="border-t">
-                        <td className="px-3 py-2 capitalize">{r.name}</td>
+                        <td className="px-3 py-2 capitalize">
+                          {editingRoleId === r.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={editingRoleName}
+                                onChange={(e) => setEditingRoleName(e.target.value)}
+                                className="h-8 text-sm w-32"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveRoleName()
+                                  if (e.key === 'Escape') handleCancelEditRole()
+                                }}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-green-600 hover:bg-green-100"
+                                onClick={handleSaveRoleName}
+                                aria-label="Enregistrer"
+                              >
+                                <Check className="size-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-muted-foreground hover:bg-muted"
+                                onClick={handleCancelEditRole}
+                                aria-label="Annuler"
+                              >
+                                <X className="size-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 group">
+                              <span>{r.name}</span>
+                              {r.name !== 'admin' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                                  onClick={() => handleStartEditRole(r)}
+                                  aria-label={`Renommer le profil ${r.name}`}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-center">
                           <Switch checked={Boolean(r.can_create_folder)} onCheckedChange={(checked) => handleTogglePermission(r.id, 'can_create_folder', checked)} aria-label={`Habiliter ${r.name} à créer des dossiers`} />
                         </td>
@@ -818,7 +906,7 @@ const DashboardHome = (): ReactNode => {
                               size="icon"
                               className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => handleDeleteRole(r)}
-                              aria-label={`Supprimer l'acteur ${r.name}`}
+                              aria-label={`Supprimer l'profil ${r.name}`}
                             >
                               <Trash2 className="size-4" />
                             </Button>
@@ -831,7 +919,7 @@ const DashboardHome = (): ReactNode => {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Aucun acteur défini pour le moment.
+                Aucun profil défini pour le moment.
               </p>
             )}
           </CardContent>
@@ -1024,10 +1112,10 @@ const DashboardHome = (): ReactNode => {
               />
             </div>
             <div className="grid gap-2 max-w-xs">
-              <Label htmlFor="new-user-role">Acteur</Label>
+              <Label htmlFor="new-user-role">Profil</Label>
               <Select value={selectedRole} onValueChange={setSelectedRole}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Sélectionner un acteur" />
+                  <SelectValue placeholder="Sélectionner un profil" />
                 </SelectTrigger>
                 <SelectContent>
                   {roles.map((r) => (
