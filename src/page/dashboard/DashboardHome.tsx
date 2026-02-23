@@ -76,6 +76,8 @@ const DashboardHome = (): ReactNode => {
       id: string
       action: string
       actor_identifiant: string | null
+      actor_name?: string
+      actor_prenoms?: string
       direction_id: string | null
       direction_name: string | null
       entity_type: string | null
@@ -174,6 +176,8 @@ const DashboardHome = (): ReactNode => {
             id: string
             action: string
             actor_identifiant: string | null
+            actor_name?: string
+            actor_prenoms?: string
             direction_id: string | null
             direction_name: string | null
             entity_type: string | null
@@ -922,7 +926,11 @@ const DashboardHome = (): ReactNode => {
                           <td className="px-3 py-2 whitespace-nowrap">
                             {new Date(entry.created_at).toLocaleString('fr-FR')}
                           </td>
-                          <td className="px-3 py-2 font-mono">{entry.actor_identifiant ?? '—'}</td>
+                          <td className="px-3 py-2">
+                            {[entry.actor_name, entry.actor_prenoms].filter(Boolean).length > 0
+                              ? `${[entry.actor_name, entry.actor_prenoms].filter(Boolean).join(' ')} (${entry.actor_identifiant ?? '—'})`
+                              : (entry.actor_identifiant ?? '—')}
+                          </td>
                           <td className="px-3 py-2">
                             {entry.action === 'upload_file' && 'Upload fichier'}
                             {entry.action === 'delete_file' && 'Suppression fichier'}

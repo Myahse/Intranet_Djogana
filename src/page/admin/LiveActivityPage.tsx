@@ -32,11 +32,15 @@ type PresenceEntry = {
   connectedAt: string
   role: string
   direction_name: string | null
+  name?: string
+  prenoms?: string
 }
 
 type LiveAction = {
   ts: string
   identifiant: string
+  name?: string
+  prenoms?: string
   action: string
   detail: string | null
 }
@@ -255,7 +259,11 @@ export default function LiveActivityPage(): ReactNode {
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium leading-tight">{ident}</p>
+                          <p className="truncate text-sm font-medium leading-tight">
+                            {[p.name, p.prenoms].filter(Boolean).length > 0
+                              ? `${[p.name, p.prenoms].filter(Boolean).join(' ')} (${ident})`
+                              : ident}
+                          </p>
                           <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                             <MapPin className="size-3 shrink-0" />
                             <span className="truncate">{friendlyPageName(p.page)}</span>
@@ -347,7 +355,11 @@ export default function LiveActivityPage(): ReactNode {
                       <div className="mt-0.5 shrink-0">{actionIcon(a.action)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-                          <span className="font-medium">{a.identifiant}</span>
+                          <span className="font-medium">
+                            {[a.name, a.prenoms].filter(Boolean).length > 0
+                              ? `${[a.name, a.prenoms].filter(Boolean).join(' ')} (${a.identifiant})`
+                              : a.identifiant}
+                          </span>
                           <span className="text-muted-foreground">{friendlyActionName(a.action)}</span>
                         </div>
                         {a.detail && (

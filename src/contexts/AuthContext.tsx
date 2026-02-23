@@ -39,6 +39,8 @@ export type UserPermissions = {
 }
 
 export type User = {
+  name?: string
+  prenoms?: string
   identifiant: string
   role: string
   direction_id?: string | null
@@ -201,6 +203,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const data = (await res.json()) as {
+          name?: string
+          prenoms?: string
           identifiant: string
           role: string
           direction_id?: string | null
@@ -239,6 +243,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         setUser({
+          name: data.name ?? '',
+          prenoms: data.prenoms ?? '',
           identifiant: data.identifiant,
           role: data.role,
           direction_id: data.direction_id ?? null,
@@ -308,6 +314,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       const data = (await res.json()) as {
+        name?: string
+        prenoms?: string
         identifiant: string
         role: string
         direction_id?: string | null
@@ -337,6 +345,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (!data.identifiant || !data.role) return
       setUser({
+        name: data.name ?? '',
+        prenoms: data.prenoms ?? '',
         identifiant: data.identifiant,
         role: data.role,
         direction_id: data.direction_id ?? null,
@@ -422,6 +432,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } catch (_) { /* ignore */ }
           }
           setUser({
+            name: data.user.name ?? '',
+            prenoms: data.user.prenoms ?? '',
             identifiant: data.user.identifiant,
             role: data.user.role,
             direction_id: data.user.direction_id ?? null,

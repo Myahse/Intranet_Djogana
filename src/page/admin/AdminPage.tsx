@@ -156,6 +156,8 @@ interface Stats {
     action: string
     actor_identifiant: string
     actor_role: string
+    actor_name?: string
+    actor_prenoms?: string
     entity_type: string
     details: Record<string, unknown> | null
     created_at: string
@@ -1297,7 +1299,9 @@ export default function AdminPage() {
                 const entityName = getEntityName(a.action, a.details)
                 const colorClass = getActionColor(a.action)
                 const IconComponent = ACTION_ICONS[a.action] ?? Activity
-                const actor = a.actor_role || 'Système'
+                const actor = [a.actor_name, a.actor_prenoms].filter(Boolean).length > 0
+                  ? `${[a.actor_name, a.actor_prenoms].filter(Boolean).join(' ')} (${a.actor_identifiant ?? '—'})`
+                  : a.actor_identifiant || 'Système'
                 
                 // Special handling for create_user action: show "admin has created {role}"
                 const isCreateUser = a.action === 'create_user'
