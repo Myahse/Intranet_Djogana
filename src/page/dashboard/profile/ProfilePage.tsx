@@ -85,7 +85,7 @@ const ProfilePage = (): ReactNode => {
             <p className="font-medium font-mono">{user?.identifiant ?? '—'}</p>
           </div>
           <div className="grid gap-1">
-            <span className="text-muted-foreground text-sm">Acteur</span>
+            <span className="text-muted-foreground text-sm">Profil</span>
             <p className="font-medium capitalize">{user?.role ?? '—'}</p>
           </div>
           {user?.direction_name && (

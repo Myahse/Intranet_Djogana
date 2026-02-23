@@ -15,7 +15,7 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 ### 1.2 Objectifs
 
 - **Centraliser** la documentation d’entreprise dans un espace unique et structuré
-- **Sécuriser** l’accès aux documents via une gestion des acteurs et des abilitations (RBAC)
+- **Sécuriser** l’accès aux documents via une gestion des profils et des Habilitations (RBAC)
 - **Faciliter** la collaboration entre les directions et les équipes
 - **Permettre** une authentification renforcée via une connexion par appareil (flux type GitHub)
 - **Fournir** des outils d’administration et de pilotage (statistiques, surveillance en temps réel)
@@ -32,8 +32,8 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Authentification | Connexion classique, connexion par appareil, changement de mot de passe, suspension de compte |
 | Gestion documentaire | Dossiers, fichiers, liens, upload, prévisualisation, corbeille |
 | Gestion des directions | Création, modification, suppression, accès par direction |
-| Gestion des utilisateurs | Création, suppression, suspension, attribution d'acteurs |
-| Gestion des acteurs | RBAC avec abilitations granulaires |
+| Gestion des utilisateurs | Création, suppression, suspension, attribution d'profils |
+| Gestion des profils | RBAC avec Habilitations granulaires |
 | Administration | Statistiques, journal d’activité, surveillance en temps réel |
 | Application mobile | Approbation des demandes de connexion, notifications push, authentification biométrique |
 
@@ -93,7 +93,7 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Top contributeurs | Classement des contributeurs les plus actifs | P1 |
 | Périodes d’analyse | 7j, 30j, 3m, 6m, 12m, personnalisé | P0 |
 | Surveillance en temps réel | Utilisateurs connectés, actions en direct (connexion, upload, suppression, etc.) | P1 |
-| Mise à jour temps réel | Mise à jour en temps réel des abilitations et de la présence | P0 |
+| Mise à jour temps réel | Mise à jour en temps réel des Habilitations et de la présence | P0 |
 
 ### 3.5 Gestion des utilisateurs et des directions
 
@@ -102,12 +102,12 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Directions | Création, modification, suppression | P0 |
 | Utilisateurs | Création (nom et prénoms obligatoires), suppression, suspension | P0 |
 | Chef de direction | Gestion de sa direction, statistiques limitées à sa direction | P0 |
-| Accès multi-directions | Abilitations pour plusieurs directions par utilisateur | P0 |
-| Acteurs et RBAC | Abilitations granulaires par acteur | P0 |
+| Accès multi-directions | Habilitations pour plusieurs directions par utilisateur | P0 |
+| Profils et RBAC | Habilitations granulaires par profil | P0 |
 
-### 3.6 Abilitations (RBAC)
+### 3.6 Habilitations (RBAC)
 
-| Abilitation | Description |
+| Habilitation | Description |
 |------------|-------------|
 | `can_create_folder` | Créer des dossiers |
 | `can_upload_file` | Téléverser des fichiers |
@@ -121,13 +121,13 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | `can_set_folder_visibility` | Définir la visibilité des dossiers |
 | `can_view_stats` | Consulter les statistiques |
 
-### 3.7 Acteurs et parcours utilisateurs
+### 3.7 Profils et parcours utilisateurs
 
-| Acteur | Parcours principal |
+| Profil | Parcours principal |
 |--------|---------------------|
-| **Administrateur** | Accès complet : directions, utilisateurs, acteurs, statistiques, corbeille, surveillance en temps réel, approbation des demandes de connexion |
+| **Administrateur** | Accès complet : directions, utilisateurs, profils, statistiques, corbeille, surveillance en temps réel, approbation des demandes de connexion |
 | **Chef de direction** | Gestion de sa direction, statistiques de sa direction, accès aux dossiers de sa direction |
-| **Utilisateur** | Accès aux dossiers selon sa direction et ses abilitations, upload/lecture/suppression selon l'acteur, statistiques si `can_view_stats` |
+| **Utilisateur** | Accès aux dossiers selon sa direction et ses Habilitations, upload/lecture/suppression selon le profil, statistiques si `can_view_stats` |
 
 ---
 
@@ -137,18 +137,18 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 
 | Table | Description |
 |-------|-------------|
-| `users` | Utilisateurs (nom, prénoms, identifiant, mot de passe hashé, acteur, direction, etc.) |
+| `users` | Utilisateurs (nom, prénoms, identifiant, mot de passe hashé, profil, direction, etc.) |
 | `directions` | Directions / départements |
 | `folders` | Dossiers (hiérarchie via `direction_id::nom`) |
 | `files` | Fichiers (référence stockage, métadonnées) |
 | `links` | Liens URL associés aux dossiers |
-| `roles` | Acteurs |
-| `role_permissions` | Abilitations par acteur |
+| `roles` | Profils |
+| `role_permissions` | Habilitations par profil |
 | `activity_log` | Journal d’activité |
 | `login_requests` | Demandes de connexion par appareil |
 | `push_tokens` | Tokens pour notifications push |
 | `direction_access` | Accès utilisateur par direction |
-| `folder_permissions` | Abilitations par dossier |
+| `folder_permissions` | Habilitations par dossier |
 
 ### 4.2 API (principaux endpoints)
 
@@ -162,7 +162,7 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | `/api/auth/device/deny` | POST | Refus |
 | `/api/directions` | GET/POST | Directions |
 | `/api/users` | GET | Utilisateurs |
-| `/api/roles` | GET/POST | Acteurs |
+| `/api/roles` | GET/POST | Profils |
 | `/api/folders` | GET/POST | Dossiers |
 | `/api/files` | GET/POST | Fichiers |
 | `/api/files/sign` | POST | Signature pour upload |
@@ -224,7 +224,7 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 - Les utilisateurs disposent d’un accès internet stable
 - Les documents sont principalement en français
 - L’organisation par directions est stable et connue
-- Au moins un administrateur est formé pour la gestion des acteurs et des abilitations
+- Au moins un administrateur est formé pour la gestion des profils et des Habilitations
 - L’application mobile est utilisée principalement pour l’approbation des connexions
 
 ---
@@ -260,7 +260,7 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 
 | Terme | Définition |
 |-------|------------|
-| **RBAC** | Contrôle d'accès basé sur les acteurs |
+| **RBAC** | Contrôle d'accès basé sur les profils |
 | **Soft delete** | Suppression logicielle (enregistrement conservé, récupérable) |
 | **Connexion par appareil** | Flux d’authentification où une demande web est approuvée depuis un appareil mobile |
 | **Direction** | Unité organisationnelle (département, service) |

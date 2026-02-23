@@ -1236,7 +1236,7 @@ export default function AdminPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <Users className="h-4 w-4" /> Répartition par acteur
+              <Users className="h-4 w-4" /> Répartition par profil
             </CardTitle>
           </CardHeader>
           <CardContent>
