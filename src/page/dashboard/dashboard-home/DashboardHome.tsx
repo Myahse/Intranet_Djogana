@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck, KeyRound, XCircle } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck, KeyRound, XCircle, RotateCcw, UserMinus } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
@@ -111,6 +111,12 @@ const DashboardHome = (): ReactNode => {
   // ── Loading modal ──
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
 
+  // ── Deleted users (admin only) ──
+  const [deletedUsers, setDeletedUsers] = useState<
+    Array<{ id: string; name?: string; prenoms?: string; identifiant: string; role: string; direction_name?: string; deleted_at: string; deleted_by?: string }>
+  >([])
+  const [isLoadingDeletedUsers, setIsLoadingDeletedUsers] = useState(false)
+
   // ── Activity log ──
   const [activityLog, setActivityLog] = useState<
     Array<{
@@ -201,6 +207,21 @@ const DashboardHome = (): ReactNode => {
   }, [isAdmin, canCreateUser, canDeleteUser, canCreateDirection, canDeleteDirection])
 
   useEffect(() => { loadUsersRolesDirections() }, [loadUsersRolesDirections])
+
+  const loadDeletedUsers = useCallback(async () => {
+    if (!isAdmin) return
+    try {
+      setIsLoadingDeletedUsers(true)
+      const res = await fetch(`${API_BASE_URL}/api/deleted-users`, { headers: getAuthHeaders() })
+      if (res.ok) setDeletedUsers(await res.json())
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsLoadingDeletedUsers(false)
+    }
+  }, [isAdmin, getAuthHeaders])
+
+  useEffect(() => { loadDeletedUsers() }, [loadDeletedUsers])
 
   // ── Load activity log ──
   const loadActivityLog = useCallback(async () => {
@@ -405,13 +426,60 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
+  const handleDeleteUser = async (u: { id: string; identifiant: string; name?: string; prenoms?: string }) => {
+    const displayName = [u.name, u.prenoms].filter(Boolean).join(' ') || u.identifiant
+    const ok = await confirm({
+      title: `Supprimer l'utilisateur "${displayName}" ?`,
+      description: "L'utilisateur sera archivé et pourra être restauré depuis la section « Utilisateurs supprimés ».",
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    })
+    if (!ok) return
+    setLoading({ open: true, message: `Suppression de ${u.identifiant}…` })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users/${u.id}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Échec de la suppression')
+      }
+      setUsers((prev) => prev.filter((x) => x.id !== u.id))
+      loadDeletedUsers()
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Utilisateur supprimé (archivé)' }))
+      toast.success('Utilisateur supprimé. Il peut être restauré depuis « Utilisateurs supprimés ».')
+    } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
+    }
+  }
+
+  const handleRestoreUser = async (user: { id: string; identifiant: string }) => {
+    setLoading({ open: true, message: `Restauration de ${user.identifiant}…` })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/deleted-users/${user.id}/restore`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? 'Échec de la restauration')
+      setDeletedUsers((prev) => prev.filter((u) => u.id !== user.id))
+      loadUsersRolesDirections()
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Utilisateur restauré' }))
+      toast.success('Utilisateur restauré')
+    } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la restauration')
+    }
+  }
+
   const handleDeleteRole = async (role: { id: string; name: string }) => {
     const usersWithRole = users.filter((u) => u.role === role.name)
     const count = usersWithRole.length
 
     const description = count > 0
-      ? `${count} utilisateur(s) utilisent cet profil et seront supprimés et déconnectés immédiatement. Cette action est irréversible.`
-      : `L'profil "${role.name}" sera supprimé. Cette action est irréversible.`
+      ? `${count} utilisateur(s) utilisent ce profil et seront réaffectés au profil par défaut. Les utilisateurs ne seront pas supprimés.`
+      : `Le profil "${role.name}" sera supprimé. Cette action est irréversible.`
 
     const ok = await confirm({
       title: `Supprimer le profil "${role.name}" ?`,
@@ -420,7 +488,7 @@ const DashboardHome = (): ReactNode => {
       variant: 'destructive',
     })
     if (!ok) return
-    setLoading({ open: true, message: `Suppression de le profil "${role.name}"${count > 0 ? ` et de ${count} utilisateur(s)` : ''}…` })
+    setLoading({ open: true, message: `Suppression du profil "${role.name}"${count > 0 ? ` (${count} utilisateur(s) réaffectés)` : ''}…` })
     try {
       const res = await fetch(`${API_BASE_URL}/api/roles/${encodeURIComponent(role.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`, {
         method: 'DELETE',
@@ -431,11 +499,11 @@ const DashboardHome = (): ReactNode => {
       }
       const data = await res.json().catch(() => ({}))
       setRoles((prev) => prev.filter((r) => r.id !== role.id))
-      if (data.deletedUsers > 0) {
-        setUsers((prev) => prev.filter((u) => u.role !== role.name))
+      if (data.reassignedUsers > 0) {
+        loadUsersRolesDirections()
       }
-      const msg = data.deletedUsers > 0
-        ? `Profil supprimé (${data.deletedUsers} utilisateur(s) supprimé(s))`
+      const msg = data.reassignedUsers > 0
+        ? `Profil supprimé (${data.reassignedUsers} utilisateur(s) réaffectés)`
         : "Profil supprimé"
       setLoading((s) => ({ ...s, result: 'success', resultMessage: msg }))
       toast.success(msg)
@@ -1130,16 +1198,30 @@ const DashboardHome = (): ReactNode => {
                             </Button>
                           )}
                           {canDeleteUser && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={`size-8 ${u.is_suspended ? 'text-emerald-600 hover:bg-emerald-500/10' : 'text-amber-600 hover:bg-amber-500/10'}`}
-                              onClick={() => handleSuspendUser(u)}
-                              aria-label={u.is_suspended ? `Réactiver ${u.identifiant}` : `Suspendre ${u.identifiant}`}
-                              title={u.is_suspended ? 'Réactiver' : 'Suspendre'}
-                            >
-                              {u.is_suspended ? <UserCheck className="size-4" /> : <UserX className="size-4" />}
-                            </Button>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`size-8 ${u.is_suspended ? 'text-emerald-600 hover:bg-emerald-500/10' : 'text-amber-600 hover:bg-amber-500/10'}`}
+                                onClick={() => handleSuspendUser(u)}
+                                aria-label={u.is_suspended ? `Réactiver ${u.identifiant}` : `Suspendre ${u.identifiant}`}
+                                title={u.is_suspended ? 'Réactiver' : 'Suspendre'}
+                              >
+                                {u.is_suspended ? <UserCheck className="size-4" /> : <UserX className="size-4" />}
+                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8 text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleDeleteUser(u)}
+                                  aria-label={`Supprimer ${u.identifiant}`}
+                                  title="Supprimer (archiver)"
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              )}
+                            </>
                           )}
                         </div>
                       ) : (
@@ -1822,6 +1904,70 @@ const DashboardHome = (): ReactNode => {
           </CardHeader>
           <CardContent className="space-y-4">
             {renderUsersTable()}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Deleted users (admin only) ── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <UserMinus className="size-5" />
+              Utilisateurs supprimés
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Les utilisateurs supprimés sont archivés ici et peuvent être restaurés.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {isLoadingDeletedUsers ? (
+              <p className="text-sm text-muted-foreground">Chargement…</p>
+            ) : deletedUsers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Aucun utilisateur supprimé.</p>
+            ) : (
+              <div className="border rounded-md overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Nom</th>
+                      <th className="px-3 py-2 text-left font-medium">Prénoms</th>
+                      <th className="px-3 py-2 text-left font-medium">Identifiant</th>
+                      <th className="px-3 py-2 text-left font-medium">Profil</th>
+                      <th className="px-3 py-2 text-left font-medium">Direction</th>
+                      <th className="px-3 py-2 text-left font-medium">Supprimé le</th>
+                      <th className="px-3 py-2 text-right font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deletedUsers.map((u) => (
+                      <tr key={u.id} className="border-t">
+                        <td className="px-3 py-2">{u.name || '—'}</td>
+                        <td className="px-3 py-2">{u.prenoms || '—'}</td>
+                        <td className="px-3 py-2 font-mono">{u.identifiant}</td>
+                        <td className="px-3 py-2 capitalize">{u.role}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{u.direction_name ?? '—'}</td>
+                        <td className="px-3 py-2 text-muted-foreground text-xs">
+                          {new Date(u.deleted_at).toLocaleString('fr-FR')}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-green-600 hover:bg-green-100"
+                            onClick={() => handleRestoreUser(u)}
+                            aria-label={`Restaurer ${u.identifiant}`}
+                            title="Restaurer"
+                          >
+                            <RotateCcw className="size-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

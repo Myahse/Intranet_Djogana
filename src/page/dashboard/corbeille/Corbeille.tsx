@@ -3,6 +3,16 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -13,7 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { Trash2, RotateCcw, FileText, Link2, FolderOpen, Trash } from 'lucide-react'
+import { Trash2, RotateCcw, FileText, Link2, FolderOpen, Trash, Pencil } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useStaggerChildren } from '@/hooks/useAnimations'
 import { gsap } from '@/lib/gsap'
@@ -63,6 +73,11 @@ const Corbeille = () => {
   const [confirmTitle, setConfirmTitle] = useState('')
   const [confirmDescription, setConfirmDescription] = useState('')
   const [confirmVariant, setConfirmVariant] = useState<'destructive' | 'default'>('destructive')
+
+  // Rename dialog state
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameItem, setRenameItem] = useState<TrashItem | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const loadTrash = useCallback(async () => {
     if (!isAdmin) return
@@ -128,6 +143,52 @@ const Corbeille = () => {
       },
       'default'
     )
+  }
+
+  const handleRename = (item: TrashItem) => {
+    setRenameItem(item)
+    setRenameValue(item.name || item.label || item.url || '')
+    setRenameOpen(true)
+  }
+
+  const handleSaveRename = async () => {
+    if (!renameItem) return
+    const trimmed = renameValue.trim()
+    if (!trimmed) {
+      toast.error('Veuillez saisir un nom')
+      return
+    }
+    setLoading({ open: true, message: 'Renommage en cours…' })
+    try {
+      const body = renameItem.type === 'link' ? { label: trimmed } : { name: trimmed }
+      const res = await fetch(
+        `${API_BASE_URL}/api/trash/${renameItem.type}/${encodeURIComponent(renameItem.id)}?identifiant=${encodeURIComponent(user?.identifiant ?? '')}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      )
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d?.error ?? 'Échec du renommage')
+      }
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === renameItem.id && i.type === renameItem.type
+            ? { ...i, name: renameItem.type !== 'link' ? trimmed : i.name, label: renameItem.type === 'link' ? trimmed : i.label }
+            : i
+        )
+      )
+      setRenameOpen(false)
+      setRenameItem(null)
+      setRenameValue('')
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Élément renommé' }))
+      toast.success('Élément renommé')
+    } catch (err) {
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: err instanceof Error ? err.message : 'Erreur' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du renommage')
+    }
   }
 
   const handlePermanentDelete = (item: TrashItem) => {
@@ -218,6 +279,33 @@ const Corbeille = () => {
   return (
     <div className="p-6 space-y-6">
       <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
+
+      {/* Rename dialog */}
+      <Dialog open={renameOpen} onOpenChange={(open) => { setRenameOpen(open); if (!open) setRenameItem(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renommer</DialogTitle>
+            <DialogDescription>
+              Saisissez le nouveau nom pour cet élément.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="rename-input">Nouveau nom</Label>
+            <Input
+              id="rename-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveRename()}
+              placeholder="Nom de l'élément"
+              className="mt-2"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>Annuler</Button>
+            <Button onClick={handleSaveRename}>Enregistrer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirm dialog */}
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -339,6 +427,16 @@ const Corbeille = () => {
                             title="Restaurer"
                           >
                             <RotateCcw className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={() => handleRename(item)}
+                            aria-label="Renommer"
+                            title="Renommer"
+                          >
+                            <Pencil className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
