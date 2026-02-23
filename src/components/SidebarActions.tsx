@@ -149,7 +149,7 @@ export default function SidebarActions() {
     }
     const filtered = directions.filter((d) => accessibleIds.has(d.id))
     // Debug log
-    if (process.env.NODE_ENV === 'development') {
+    if (import.meta.env.DEV) {
       console.log('[SidebarActions] Available directions:', {
         userDirectionId: user.direction_id,
         grantedIds: user.granted_direction_ids,

@@ -228,7 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (accessRes.ok) {
             const accessData = await accessRes.json() as { direction_ids: string[] }
             grantedDirectionIds = accessData.direction_ids || []
-            if (process.env.NODE_ENV === 'development') {
+            if (import.meta.env.DEV) {
               console.log('[AuthContext] Login: Loaded granted directions:', grantedDirectionIds)
             }
           } else {
@@ -326,7 +326,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (accessRes.ok) {
           const accessData = await accessRes.json() as { direction_ids: string[] }
           grantedDirectionIds = accessData.direction_ids || []
-          if (process.env.NODE_ENV === 'development') {
+          if (import.meta.env.DEV) {
             console.log('[AuthContext] Loaded granted directions:', grantedDirectionIds)
           }
         } else {
