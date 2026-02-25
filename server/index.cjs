@@ -3336,7 +3336,7 @@ app.get('/api/activity-log/export', requireAuth, async (req, res) => {
               width: { size: 15, type: WidthType.DXA },
             })
           ),
-        })],
+        })),
       ]
       const doc = new Document({
         sections: [{
