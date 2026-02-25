@@ -175,7 +175,21 @@ export default function NotificationHandler() {
 
   /* ── Handle a regular notification tap (no action button) ── */
   const handleNotificationTap = useCallback(
-    async (data: { requestId?: string; code?: string } | undefined) => {
+    async (data: { requestId?: string; code?: string; type?: string } | undefined) => {
+      // Notifications document / accès / compte : pas de demande de connexion, on ouvre juste l'app
+      if (
+        data?.type === "document_uploaded" ||
+        data?.type === "direction_access_granted" ||
+        data?.type === "folder_access_granted" ||
+        data?.type === "user_suspended" ||
+        data?.type === "user_restored" ||
+        data?.type === "password_changed" ||
+        data?.type === "profile_updated"
+      ) {
+        router.push("/approve-requests");
+        return;
+      }
+
       const code = data?.code;
 
       // 1. Check if a passkey exists
@@ -234,7 +248,8 @@ export default function NotificationHandler() {
         | {
             requestId?: string;
             code?: string;
-            pendingAction?: string; // set by background task fallback
+            pendingAction?: string;
+            type?: string;
           }
         | undefined;
 

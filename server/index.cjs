@@ -588,6 +588,24 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_direction_access_grants_direction_id ON direction_access_grants(granted_direction_id);
   `)
 
+  // Accès à un dossier en particulier pour des utilisateurs d'autres directions (dossiers cachés)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS folder_access_grants (
+      id uuid PRIMARY KEY,
+      folder_id uuid NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      granted_by uuid REFERENCES users(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(folder_id, user_id)
+    );
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_folder_access_grants_user_id ON folder_access_grants(user_id);
+  `)
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_folder_access_grants_folder_id ON folder_access_grants(folder_id);
+  `)
+
   // Seed default roles & permissions (admin, user)
   const adminRoleId = uuidv4()
   await pool.query(
@@ -1698,9 +1716,9 @@ app.post('/api/deleted-users/:id/restore', requireAuth, async (req, res) => {
 app.patch('/api/users/:id', async (req, res) => {
   try {
     const { id } = req.params
-    const { role, direction_id, is_suspended, caller_identifiant } = req.body || {}
+    const { role, direction_id, is_suspended, name, prenoms, caller_identifiant } = req.body || {}
 
-    // Permission: can_create_user for role/direction; can_delete_user for suspension
+    // Permission: can_create_user for role/direction/name/prenoms; can_delete_user for suspension
     if (caller_identifiant) {
       const perms = await getPermissionsForIdentifiant(caller_identifiant)
       const callerRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [caller_identifiant])
@@ -1708,14 +1726,14 @@ app.patch('/api/users/:id', async (req, res) => {
       if (is_suspended !== undefined && !isCallerAdmin && perms && !perms.can_delete_user) {
         return res.status(403).json({ error: 'Vous n\'avez pas le droit de suspendre des utilisateurs.' })
       }
-      if ((role !== undefined || direction_id !== undefined) && !isCallerAdmin && perms && !perms.can_create_user) {
+      if ((role !== undefined || direction_id !== undefined || name !== undefined || prenoms !== undefined) && !isCallerAdmin && perms && !perms.can_create_user) {
         return res.status(403).json({ error: 'Vous n\'avez pas le droit de modifier des utilisateurs.' })
       }
     }
 
     // Ensure the target user exists
     const userRow = await pool.query(
-      'SELECT id, identifiant, role, direction_id, is_suspended FROM users WHERE id = $1',
+      'SELECT id, identifiant, role, direction_id, is_suspended, name, prenoms FROM users WHERE id = $1',
       [id]
     )
     if (userRow.rows.length === 0) {
@@ -1771,13 +1789,24 @@ app.patch('/api/users/:id', async (req, res) => {
       idx++
     }
 
+    if (name !== undefined) {
+      sets.push(`name = $${idx}`)
+      vals.push(typeof name === 'string' ? name.trim() : '')
+      idx++
+    }
+    if (prenoms !== undefined) {
+      sets.push(`prenoms = $${idx}`)
+      vals.push(typeof prenoms === 'string' ? prenoms.trim() : '')
+      idx++
+    }
+
     if (sets.length === 0) {
       return res.status(400).json({ error: 'Aucune modification fournie.' })
     }
 
     vals.push(id)
     const result = await pool.query(
-      `UPDATE users SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, identifiant, role, direction_id, is_direction_chief, is_suspended`,
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, identifiant, role, direction_id, is_direction_chief, is_suspended, name, prenoms`,
       vals
     )
 
@@ -1786,8 +1815,20 @@ app.patch('/api/users/:id', async (req, res) => {
     if (is_suspended !== undefined && targetUser.is_suspended !== newSuspended) {
       if (newSuspended) {
         broadcastUserSuspended(targetUser.identifiant)
+        sendPushToIdentifiants(
+          [targetUser.identifiant],
+          'Compte suspendu',
+          'Votre compte a été suspendu par un administrateur.',
+          { type: 'user_suspended' }
+        ).catch((err) => console.error('[push] user_suspended', err))
       } else {
         broadcastUserRestored(targetUser.identifiant)
+        sendPushToIdentifiants(
+          [targetUser.identifiant],
+          'Compte réactivé',
+          'Votre compte a été réactivé. Vous pouvez à nouveau vous connecter.',
+          { type: 'user_restored' }
+        ).catch((err) => console.error('[push] user_restored', err))
       }
     }
 
@@ -1839,10 +1880,52 @@ app.patch('/api/users/:id', async (req, res) => {
         },
       })
     }
+    // Activity log for name/prenoms changes
+    if ((name !== undefined || prenoms !== undefined) && (targetUser.name !== (result.rows[0].name ?? '') || targetUser.prenoms !== (result.rows[0].prenoms ?? ''))) {
+      let actorId = null
+      if (caller_identifiant) {
+        const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [caller_identifiant])
+        if (u.rows.length > 0) actorId = u.rows[0].id
+      }
+      await insertActivityLog(pool, {
+        action: 'update_user_profile',
+        actorIdentifiant: caller_identifiant || null,
+        actorId,
+        directionId: result.rows[0].direction_id,
+        entityType: 'user',
+        entityId: id,
+        details: {
+          identifiant: targetUser.identifiant,
+          oldName: targetUser.name,
+          newName: result.rows[0].name,
+          oldPrenoms: targetUser.prenoms,
+          newPrenoms: result.rows[0].prenoms,
+        },
+      })
+    }
 
     broadcastDataChange('users', 'updated', { id })
     // Notify the user so their permissions refresh
     broadcastPermissionsChange(result.rows[0].role)
+
+    // Notification push (app mobile) : profil modifié (rôle, direction, nom ou prénoms)
+    const profileChanged =
+      (role !== undefined && targetUser.role !== result.rows[0].role) ||
+      (direction_id !== undefined && targetUser.direction_id !== result.rows[0].direction_id) ||
+      (name !== undefined && (targetUser.name ?? '') !== (result.rows[0].name ?? '')) ||
+      (prenoms !== undefined && (targetUser.prenoms ?? '') !== (result.rows[0].prenoms ?? ''))
+    if (profileChanged) {
+      const msg =
+        (name !== undefined || prenoms !== undefined) && (targetUser.name !== (result.rows[0].name ?? '') || targetUser.prenoms !== (result.rows[0].prenoms ?? ''))
+          ? 'Vos nom et prénom ont été modifiés par un administrateur.'
+          : 'Votre profil (rôle ou direction) a été modifié par un administrateur.'
+      sendPushToIdentifiants(
+        [targetUser.identifiant],
+        'Profil modifié',
+        msg,
+        { type: 'profile_updated' }
+      ).catch((err) => console.error('[push] profile_updated', err))
+    }
 
     return res.json({
       ...result.rows[0],
@@ -1893,6 +1976,13 @@ app.patch('/api/users/:id/chief', async (req, res) => {
     broadcastDataChange('users', 'updated', { id })
     // Notify the affected user's role so their permissions refresh
     await broadcastPermissionsChange(targetUser.role)
+
+    sendPushToIdentifiants(
+      [targetUser.identifiant],
+      'Statut modifié',
+      'Votre statut de chef de direction a été modifié.',
+      { type: 'profile_updated' }
+    ).catch((err) => console.error('[push] chief_updated', err))
 
     return res.json({
       id: targetUser.id,
@@ -1964,11 +2054,11 @@ app.post('/api/direction-access/grant', async (req, res) => {
     })
     
     broadcastDataChange('users', 'updated', { id: userId })
-    
-    // Notify the affected user to refresh their permissions
-    // userInfo was already fetched above, reuse it
+
+    // Notify the affected user to refresh their permissions (WebSocket + push mobile)
     if (userInfo.rows.length > 0) {
       const userIdentifiant = userInfo.rows[0].identifiant
+      const dirName = dirInfo.rows[0]?.name || 'Direction'
       const message = JSON.stringify({ type: 'permissions_changed' })
       let notified = false
       for (const client of wsClients) {
@@ -1985,8 +2075,15 @@ app.post('/api/direction-access/grant', async (req, res) => {
       if (!notified) {
         console.log(`[grant-access] User ${userIdentifiant} not connected via WebSocket (will refresh on next page load)`)
       }
+      // Notification push (app mobile) : accès à une direction accordé
+      sendPushToIdentifiants(
+        [userIdentifiant],
+        'Accès accordé',
+        `Vous avez reçu l'accès à la direction : ${dirName}`,
+        { type: 'direction_access_granted', direction_id: directionId, direction_name: dirName }
+      ).catch((err) => console.error('[push] direction_access_granted', err))
     }
-    
+
     return res.status(201).json({
       id,
       user_id: userId,
@@ -2075,6 +2172,196 @@ app.delete('/api/direction-access/revoke', async (req, res) => {
   } catch (err) {
     console.error('revoke direction access error', err)
     return res.status(500).json({ error: 'Erreur lors de la révocation de l\'accès.' })
+  }
+})
+
+// Helper: check if caller can grant/revoke folder access (admin or chef of the folder's direction)
+async function canGrantFolderAccess(callerIdentifiant, folderId) {
+  const folderRes = await pool.query('SELECT direction_id FROM folders WHERE id = $1', [folderId])
+  if (folderRes.rows.length === 0) return false
+  return canGrantDirectionAccess(callerIdentifiant, folderRes.rows[0].direction_id)
+}
+
+// List folder access grants (for a folder or for a user)
+app.get('/api/folder-access', async (req, res) => {
+  try {
+    const { folder_id: folderId, user_id: userId } = req.query
+    if (folderId) {
+      const rows = await pool.query(
+        `SELECT fag.id, fag.folder_id, fag.user_id, fag.granted_by, fag.created_at,
+                u.identifiant AS user_identifiant, u.name AS user_name, u.prenoms AS user_prenoms,
+                f.name AS folder_name, d.name AS direction_name
+         FROM folder_access_grants fag
+         JOIN users u ON u.id = fag.user_id
+         JOIN folders f ON f.id = fag.folder_id
+         JOIN directions d ON d.id = f.direction_id
+         WHERE fag.folder_id = $1`,
+        [folderId]
+      )
+      return res.json(rows.rows.map((r) => ({
+        id: r.id,
+        folder_id: r.folder_id,
+        user_id: r.user_id,
+        user_identifiant: r.user_identifiant,
+        user_name: r.user_name,
+        user_prenoms: r.user_prenoms,
+        folder_name: r.folder_name,
+        direction_name: r.direction_name,
+        granted_by: r.granted_by,
+        created_at: r.created_at,
+      })))
+    }
+    if (userId) {
+      const rows = await pool.query(
+        `SELECT fag.id, fag.folder_id, fag.user_id, fag.granted_by, fag.created_at,
+                f.name AS folder_name, f.direction_id, d.name AS direction_name
+         FROM folder_access_grants fag
+         JOIN folders f ON f.id = fag.folder_id
+         JOIN directions d ON d.id = f.direction_id
+         WHERE fag.user_id = $1`,
+        [userId]
+      )
+      return res.json(rows.rows.map((r) => ({
+        id: r.id,
+        folder_id: r.folder_id,
+        folder_name: r.folder_name,
+        direction_id: r.direction_id,
+        direction_name: r.direction_name,
+        granted_by: r.granted_by,
+        created_at: r.created_at,
+      })))
+    }
+    return res.status(400).json({ error: 'Précisez folder_id ou user_id.' })
+  } catch (err) {
+    console.error('folder-access list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des accès dossier.' })
+  }
+})
+
+// Grant folder access (allow a user from another direction to see a specific folder)
+app.post('/api/folder-access', async (req, res) => {
+  try {
+    const { folder_id: folderId, user_id: userId, caller_identifiant: callerIdentifiant } = req.body || {}
+    if (!folderId || !userId || !callerIdentifiant) {
+      return res.status(400).json({ error: 'Paramètres manquants (folder_id, user_id, caller_identifiant).' })
+    }
+    const canGrant = await canGrantFolderAccess(callerIdentifiant, folderId)
+    if (!canGrant) {
+      return res.status(403).json({
+        error: 'Vous n\'avez pas la permission d\'accorder l\'accès à ce dossier.',
+      })
+    }
+    const folderRes = await pool.query('SELECT id, name, direction_id FROM folders WHERE id = $1', [folderId])
+    if (folderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Dossier introuvable.' })
+    }
+    const userRes = await pool.query('SELECT id, identifiant FROM users WHERE id = $1', [userId])
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const granterRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+    const granterId = granterRes.rows.length > 0 ? granterRes.rows[0].id : null
+    const id = uuidv4()
+    await pool.query(
+      `INSERT INTO folder_access_grants (id, folder_id, user_id, granted_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (folder_id, user_id) DO UPDATE SET granted_by = $4`,
+      [id, folderId, userId, granterId]
+    )
+    await insertActivityLog(pool, {
+      action: 'grant_folder_access',
+      actorIdentifiant: callerIdentifiant,
+      actorId: granterId,
+      directionId: folderRes.rows[0].direction_id,
+      entityType: 'folder',
+      entityId: folderId,
+      details: {
+        folder_name: folderRes.rows[0].name,
+        user_identifiant: userRes.rows[0].identifiant,
+      },
+    })
+    broadcastDataChange('folders', 'updated', { id: folderId })
+    const userIdentifiant = userRes.rows[0].identifiant
+    const folderName = folderRes.rows[0].name
+    const message = JSON.stringify({ type: 'permissions_changed' })
+    for (const client of wsClients) {
+      try {
+        if (client._userIdentifiant === userIdentifiant && client.readyState === 1) {
+          client.send(message)
+          break
+        }
+      } catch (_) { /* ignore */ }
+    }
+    // Notification push (app mobile) : accès à un dossier accordé
+    sendPushToIdentifiants(
+      [userIdentifiant],
+      'Accès au dossier accordé',
+      `Vous avez reçu l'accès au dossier : ${folderName}`,
+      { type: 'folder_access_granted', folder_id: folderId, folder_name: folderName }
+    ).catch((err) => console.error('[push] folder_access_granted', err))
+    return res.status(201).json({ id, folder_id: folderId, user_id: userId, granted: true })
+  } catch (err) {
+    console.error('grant folder access error', err)
+    return res.status(500).json({ error: 'Erreur lors de l\'octroi de l\'accès au dossier.' })
+  }
+})
+
+// Revoke folder access
+app.delete('/api/folder-access/revoke', async (req, res) => {
+  try {
+    const { folder_id: folderId, user_id: userId, caller_identifiant: callerIdentifiant } = req.body || {}
+    if (!folderId || !userId || !callerIdentifiant) {
+      return res.status(400).json({ error: 'Paramètres manquants.' })
+    }
+    const canGrant = await canGrantFolderAccess(callerIdentifiant, folderId)
+    if (!canGrant) {
+      return res.status(403).json({
+        error: 'Vous n\'avez pas la permission de révoquer l\'accès à ce dossier.',
+      })
+    }
+    const folderRes = await pool.query('SELECT id, name, direction_id FROM folders WHERE id = $1', [folderId])
+    if (folderRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Dossier introuvable.' })
+    }
+    const result = await pool.query(
+      'DELETE FROM folder_access_grants WHERE folder_id = $1 AND user_id = $2 RETURNING id',
+      [folderId, userId]
+    )
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Accès au dossier non trouvé.' })
+    }
+    const granterRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+    const granterId = granterRes.rows.length > 0 ? granterRes.rows[0].id : null
+    const userRes = await pool.query('SELECT identifiant FROM users WHERE id = $1', [userId])
+    await insertActivityLog(pool, {
+      action: 'revoke_folder_access',
+      actorIdentifiant: callerIdentifiant,
+      actorId: granterId,
+      directionId: folderRes.rows[0].direction_id,
+      entityType: 'folder',
+      entityId: folderId,
+      details: {
+        folder_name: folderRes.rows[0].name,
+        user_identifiant: userRes.rows[0]?.identifiant,
+      },
+    })
+    broadcastDataChange('folders', 'updated', { id: folderId })
+    const userIdentifiant = userRes.rows[0]?.identifiant
+    if (userIdentifiant) {
+      const message = JSON.stringify({ type: 'permissions_changed' })
+      for (const client of wsClients) {
+        try {
+          if (client._userIdentifiant === userIdentifiant && client.readyState === 1) {
+            client.send(message)
+            break
+          }
+        } catch (_) { /* ignore */ }
+      }
+    }
+    return res.status(204).send()
+  } catch (err) {
+    console.error('revoke folder access error', err)
+    return res.status(500).json({ error: 'Erreur lors de la révocation de l\'accès au dossier.' })
   }
 })
 
@@ -2421,6 +2708,13 @@ app.post('/api/auth/change-password', async (req, res) => {
 
     const hashed = await bcrypt.hash(newPassword, 10)
     await pool.query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [hashed, user.id])
+
+    sendPushToIdentifiants(
+      [identifiant],
+      'Mot de passe modifié',
+      'Votre mot de passe a été modifié avec succès.',
+      { type: 'password_changed' }
+    ).catch((err) => console.error('[push] password_changed', err))
 
     return res.json({ success: true, must_change_password: false })
   } catch (err) {
@@ -2862,10 +3156,18 @@ app.get('/api/auth/device/poll/:requestId', async (req, res) => {
 })
 
 // ---------- Activity log API (audit trail; direction-based access) ----------
+// Query params: direction_id, action, actor_identifiant (numéro), actor_name (recherche nom/prénom), limit, offset
 app.get('/api/activity-log', requireAuth, async (req, res) => {
   try {
     const identifiant = req.authIdentifiant
-    const { direction_id: filterDirectionId, action: filterAction, limit = 100, offset = 0 } = req.query || {}
+    const {
+      direction_id: filterDirectionId,
+      action: filterAction,
+      actor_identifiant: filterActorIdentifiant,
+      actor_name: filterActorName,
+      limit = 100,
+      offset = 0,
+    } = req.query || {}
 
     const userRes = await pool.query(
       'SELECT role, direction_id FROM users WHERE identifiant = $1',
@@ -2881,31 +3183,14 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Vous n’avez pas accès au journal d’activité.' })
     }
 
-    const params = []
-    let sql = `
-      SELECT a.id, a.action, a.actor_identifiant, a.direction_id, a.entity_type, a.entity_id, a.details, a.created_at,
-             d.name AS direction_name,
-             u.name AS actor_name, u.prenoms AS actor_prenoms
-      FROM activity_log a
-      LEFT JOIN directions d ON d.id = a.direction_id
-      LEFT JOIN users u ON a.actor_identifiant = u.identifiant
-      WHERE 1=1
-    `
-    if (user.role !== 'admin') {
-      params.push(user.direction_id)
-      sql += ` AND a.direction_id = $${params.length}`
-      // Hide admin actions from non-admin users
-      sql += ` AND (a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))`
-    }
-    if (filterDirectionId && user.role === 'admin') {
-      params.push(filterDirectionId)
-      sql += ` AND a.direction_id = $${params.length}`
-    }
-    if (filterAction) {
-      params.push(String(filterAction).trim())
-      sql += ` AND a.action = $${params.length}`
-    }
-    sql += ` ORDER BY a.created_at DESC LIMIT ${Math.min(parseInt(limit, 10) || 100, 500)} OFFSET ${Math.max(0, parseInt(offset, 10) || 0)}`
+    const limitNum = Math.min(parseInt(limit, 10) || 100, 500)
+    const offsetNum = Math.max(0, parseInt(offset, 10) || 0)
+    const { sql, params } = buildActivityLogQuery(user, {
+      direction_id: filterDirectionId,
+      action: filterAction,
+      actor_identifiant: filterActorIdentifiant,
+      actor_name: filterActorName,
+    }, limitNum, offsetNum)
 
     const result = await pool.query(sql, params)
     return res.json(
@@ -2926,6 +3211,196 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('activity-log list error', err)
     return res.status(500).json({ error: 'Erreur lors de la récupération du journal d’activité.' })
+  }
+})
+
+// Helper: build activity log query and params (shared between list and export)
+function buildActivityLogQuery(user, filters, limit = 10000, offset = 0) {
+  const {
+    direction_id: filterDirectionId,
+    action: filterAction,
+    actor_identifiant: filterActorIdentifiant,
+    actor_name: filterActorName,
+  } = filters || {}
+  const params = []
+  let sql = `
+    SELECT a.id, a.action, a.actor_identifiant, a.direction_id, a.entity_type, a.entity_id, a.details, a.created_at,
+           d.name AS direction_name,
+           u.name AS actor_name, u.prenoms AS actor_prenoms
+    FROM activity_log a
+    LEFT JOIN directions d ON d.id = a.direction_id
+    LEFT JOIN users u ON a.actor_identifiant = u.identifiant
+    WHERE 1=1
+  `
+  if (user.role !== 'admin') {
+    params.push(user.direction_id)
+    sql += ` AND a.direction_id = $${params.length}`
+    sql += ` AND (a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))`
+  }
+  if (filterDirectionId && user.role === 'admin') {
+    params.push(filterDirectionId)
+    sql += ` AND a.direction_id = $${params.length}`
+  }
+  if (filterAction) {
+    params.push(String(filterAction).trim())
+    sql += ` AND a.action = $${params.length}`
+  }
+  if (filterActorIdentifiant && String(filterActorIdentifiant).trim()) {
+    params.push(`%${String(filterActorIdentifiant).trim()}%`)
+    sql += ` AND (a.actor_identifiant ILIKE $${params.length})`
+  }
+  if (filterActorName && String(filterActorName).trim()) {
+    const namePattern = `%${String(filterActorName).trim()}%`
+    params.push(namePattern, namePattern)
+    sql += ` AND (u.name ILIKE $${params.length - 1} OR u.prenoms ILIKE $${params.length})`
+  }
+  sql += ` ORDER BY a.created_at DESC LIMIT ${Math.min(parseInt(limit, 10) || 10000, 10000)} OFFSET ${Math.max(0, parseInt(offset, 10) || 0)}`
+  return { sql, params }
+}
+
+// Export activity log (Excel, Word, PDF) — same filters as GET /api/activity-log
+app.get('/api/activity-log/export', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const {
+      direction_id: filterDirectionId,
+      action: filterAction,
+      actor_identifiant: filterActorIdentifiant,
+      actor_name: filterActorName,
+      format = 'xlsx',
+    } = req.query || {}
+
+    const userRes = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = userRes.rows[0]
+    const perms = await getPermissionsForIdentifiant(identifiant)
+    const canViewLog = user.role === 'admin' || (perms && perms.can_view_activity_log)
+    if (!canViewLog) {
+      return res.status(403).json({ error: 'Vous n’avez pas accès au journal d’activité.' })
+    }
+
+    const { sql, params } = buildActivityLogQuery(user, {
+      direction_id: filterDirectionId,
+      action: filterAction,
+      actor_identifiant: filterActorIdentifiant,
+      actor_name: filterActorName,
+    }, 10000, 0)
+    const result = await pool.query(sql, params)
+    const rows = result.rows.map((r) => ({
+      Date: r.created_at ? new Date(r.created_at).toLocaleString('fr-FR') : '',
+      Action: r.action,
+      'N° utilisateur': r.actor_identifiant || '',
+      Nom: r.actor_name || '',
+      Prénoms: r.actor_prenoms || '',
+      Direction: r.direction_name || '',
+      'Type entité': r.entity_type || '',
+      Détails: r.details ? JSON.stringify(r.details) : '',
+    }))
+
+    const safeFormat = String(format).toLowerCase()
+    const filenameBase = `journal-activite-${new Date().toISOString().slice(0, 10)}`
+
+    if (safeFormat === 'xlsx' || safeFormat === 'excel') {
+      const XLSX = require('xlsx')
+      const wb = XLSX.utils.book_new()
+      const ws = XLSX.utils.json_to_sheet(rows)
+      XLSX.utils.book_append_sheet(wb, ws, 'Journal')
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.xlsx"`)
+      return res.send(buf)
+    }
+
+    if (safeFormat === 'docx' || safeFormat === 'word') {
+      const docx = require('docx')
+      const { Document, Packer, Table, TableRow, TableCell, Paragraph, TextRun, WidthType, BorderStyle } = docx
+      const headers = ['Date', 'Action', 'N° utilisateur', 'Nom', 'Prénoms', 'Direction', 'Type entité', 'Détails']
+      const tableRows = [
+        new TableRow({
+          children: (rows[0] ? Object.keys(rows[0]) : headers).map(
+            (h) => new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })],
+              width: { size: 15, type: WidthType.DXA },
+            })
+          ),
+        }),
+        ...rows.map((row) => new TableRow({
+          children: Object.values(row).map(
+            (v) => new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: String(v == null ? '' : v) })] })],
+              width: { size: 15, type: WidthType.DXA },
+            })
+          ),
+        })],
+      ]
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: [
+            new Paragraph({ children: [new TextRun({ text: 'Journal d’activité', bold: true, size: 28 })] }),
+            new Paragraph({ text: '' }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              borders: { top: BorderStyle.SINGLE, bottom: BorderStyle.SINGLE, left: BorderStyle.SINGLE, right: BorderStyle.SINGLE },
+              rows: tableRows,
+            }),
+          ],
+        }],
+      })
+      const buf = await Packer.toBuffer(doc)
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+      res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.docx"`)
+      return res.send(buf)
+    }
+
+    if (safeFormat === 'pdf') {
+      const { PDFDocument, StandardFonts, rgb } = require('pdf-lib')
+      const pdfDoc = await PDFDocument.create()
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+      let currentPage = pdfDoc.addPage([842, 595]) // A4 landscape
+      const fontSize = 8
+      const lineHeight = 12
+      const margin = 40
+      let y = currentPage.getHeight() - margin
+      const colWidths = [70, 90, 70, 60, 60, 70, 50, 120]
+      const headers = ['Date', 'Action', 'N° utilisateur', 'Nom', 'Prénoms', 'Direction', 'Type', 'Détails']
+      const drawRow = (page, row) => {
+        if (y < margin + lineHeight) {
+          currentPage = pdfDoc.addPage([842, 595])
+          y = currentPage.getHeight() - margin
+          return drawRow(currentPage, row)
+        }
+        let x = margin
+        const values = row instanceof Array ? row : headers.map((h) => row[h] ?? '')
+        values.forEach((val, i) => {
+          const w = colWidths[i] || 80
+          page.drawText(String(val).slice(0, 40), { x, y, size: fontSize, font, color: rgb(0, 0, 0) })
+          x += w
+        })
+        y -= lineHeight
+        return currentPage
+      }
+      currentPage.drawText('Journal d’activité', { x: margin, y, size: 14, font, color: rgb(0, 0, 0) })
+      y -= 20
+      currentPage = drawRow(currentPage, headers)
+      for (const r of rows) {
+        currentPage = drawRow(currentPage, r)
+      }
+      const buf = await pdfDoc.save()
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.pdf"`)
+      return res.send(Buffer.from(buf))
+    }
+
+    return res.status(400).json({ error: 'Format non supporté. Utilisez format=xlsx, docx ou pdf.' })
+  } catch (err) {
+    console.error('activity-log export error', err)
+    return res.status(500).json({ error: 'Erreur lors de l’export du journal d’activité.' })
   }
 })
 
@@ -3039,16 +3514,112 @@ async function canGrantDirectionAccess(granterIdentifiant, targetDirectionId) {
     [granterIdentifiant]
   )
   if (granterRes.rows.length === 0) return false
-  
+
   const granter = granterRes.rows[0]
-  
+
   // Admin can grant access to any direction
   if (granter.role === 'admin') return true
-  
+
   // Direction chief can grant access to their own direction
   if (granter.is_direction_chief && granter.direction_id === targetDirectionId) return true
-  
+
   return false
+}
+
+/**
+ * Get list of user identifiants to notify when something happens in a direction
+ * (members of the direction + users with direction_access_grants for that direction).
+ * Optionally exclude one identifiant (e.g. the uploader).
+ */
+async function getIdentifiantsToNotifyForDirection(directionId, excludeIdentifiant = null) {
+  const members = await pool.query(
+    'SELECT identifiant FROM users WHERE direction_id = $1 AND is_suspended = false',
+    [directionId]
+  )
+  const granted = await pool.query(
+    `SELECT u.identifiant FROM direction_access_grants g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.granted_direction_id = $1 AND u.is_suspended = false`,
+    [directionId]
+  )
+  const set = new Set([
+    ...members.rows.map((r) => r.identifiant),
+    ...granted.rows.map((r) => r.identifiant),
+  ])
+  if (excludeIdentifiant) set.delete(excludeIdentifiant)
+  return [...set]
+}
+
+/**
+ * Get list of user identifiants to notify for a folder (direction members + folder_access_grants).
+ */
+async function getIdentifiantsToNotifyForFolder(folderId, excludeIdentifiant = null) {
+  const folderRes = await pool.query('SELECT direction_id FROM folders WHERE id = $1', [folderId])
+  if (folderRes.rows.length === 0) return []
+  const directionId = folderRes.rows[0].direction_id
+  const directionIdentifiants = await getIdentifiantsToNotifyForDirection(directionId, excludeIdentifiant)
+  const folderGrants = await pool.query(
+    `SELECT u.identifiant FROM folder_access_grants g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.folder_id = $1 AND u.is_suspended = false`,
+    [folderId]
+  )
+  const set = new Set([...directionIdentifiants, ...folderGrants.rows.map((r) => r.identifiant)])
+  if (excludeIdentifiant) set.delete(excludeIdentifiant)
+  return [...set]
+}
+
+/**
+ * Send FCM push notification to a list of user identifiants (fire-and-forget).
+ * data can include categoryId, channelId for mobile handling.
+ */
+async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
+  if (identifiants.length === 0) return
+  const tokenRows = await pool.query(
+    'SELECT user_identifiant, expo_push_token, fcm_token FROM push_tokens WHERE user_identifiant = ANY($1)',
+    [identifiants]
+  )
+  if (tokenRows.rows.length === 0) return
+  try {
+    const messaging = admin.messaging()
+    for (const row of tokenRows.rows) {
+      const deviceToken = row.fcm_token || row.expo_push_token
+      if (!deviceToken) continue
+      try {
+        await messaging.send({
+          token: deviceToken,
+          data: {
+            title: String(title),
+            body: String(body),
+            ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
+          },
+          android: { priority: 'high' },
+          apns: {
+            payload: {
+              aps: {
+                sound: 'default',
+                'content-available': 1,
+                alert: { title: String(title), body: String(body) },
+              },
+            },
+            headers: { 'apns-priority': '10' },
+          },
+        })
+      } catch (sendErr) {
+        if (
+          sendErr.code === 'messaging/invalid-registration-token' ||
+          sendErr.code === 'messaging/registration-token-not-registered'
+        ) {
+          await pool.query(
+            'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
+            [row.user_identifiant, deviceToken]
+          )
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[push] sendPushToIdentifiants error', err)
+  }
 }
 
 // List roles with their global permissions (admin role is hidden from the list)
@@ -3565,6 +4136,33 @@ app.post('/api/files', (req, res, next) => {
     })
 
     broadcastDataChange('files', 'created', { id, directionId, folder })
+
+    // Notifier les membres de la direction et les utilisateurs avec accès au dossier (app mobile)
+    const folderRow = await pool.query(
+      'SELECT id FROM folders WHERE direction_id = $1 AND name = $2 LIMIT 1',
+      [directionId, folder]
+    )
+    const folderId = folderRow.rows[0]?.id
+    const toNotify = folderId
+      ? await getIdentifiantsToNotifyForFolder(folderId, identifiant)
+      : await getIdentifiantsToNotifyForDirection(directionId, identifiant)
+    if (toNotify.length > 0) {
+      const uploaderRow = await pool.query(
+        'SELECT name, prenoms FROM users WHERE identifiant = $1 LIMIT 1',
+        [identifiant]
+      )
+      const uploaderName = uploaderRow.rows[0]
+        ? [uploaderRow.rows[0].name, uploaderRow.rows[0].prenoms].filter(Boolean).join(' ').trim() || identifiant
+        : identifiant
+      const bodyText = `${storedFileName} — déposé par ${uploaderName}`
+      sendPushToIdentifiants(
+        toNotify,
+        'Nouveau document',
+        bodyText,
+        { type: 'document_uploaded', fileId: id, fileName: storedFileName, uploaderName, directionId, folder }
+      ).catch((err) => console.error('[push] upload_file notify', err))
+    }
+
     return res.json({
       id,
       name: storedFileName,
@@ -3788,6 +4386,33 @@ app.post('/api/files/register', async (req, res) => {
     })
 
     broadcastDataChange('files', 'created', { id, directionId, folder: folderName })
+
+    // Notifier les membres de la direction et les utilisateurs avec accès au dossier (app mobile)
+    const folderRow = await pool.query(
+      'SELECT id FROM folders WHERE direction_id = $1 AND name = $2 LIMIT 1',
+      [directionId, folderName]
+    )
+    const folderIdForNotify = folderRow.rows[0]?.id
+    const toNotify = folderIdForNotify
+      ? await getIdentifiantsToNotifyForFolder(folderIdForNotify, identifiant)
+      : await getIdentifiantsToNotifyForDirection(directionId, identifiant)
+    if (toNotify.length > 0) {
+      const uploaderRow = await pool.query(
+        'SELECT name, prenoms FROM users WHERE identifiant = $1 LIMIT 1',
+        [identifiant]
+      )
+      const uploaderName = uploaderRow.rows[0]
+        ? [uploaderRow.rows[0].name, uploaderRow.rows[0].prenoms].filter(Boolean).join(' ').trim() || identifiant
+        : identifiant
+      const bodyText = `${storedFileName} — déposé par ${uploaderName}`
+      sendPushToIdentifiants(
+        toNotify,
+        'Nouveau document',
+        bodyText,
+        { type: 'document_uploaded', fileId: id, fileName: storedFileName, uploaderName, directionId, folder: folderName }
+      ).catch((err) => console.error('[push] file register notify', err))
+    }
+
     return res.json({
       id,
       name: storedFileName,
@@ -3804,18 +4429,25 @@ app.post('/api/files/register', async (req, res) => {
 })
 
 // Explicit folders / groups (each folder belongs to a direction)
-// Query params: role, direction_id (user's direction — used to filter direction_only folders)
+// Query params: role, direction_id (user's direction), identifiant (pour inclure dossiers avec accès accordé)
 app.get('/api/folders', async (_req, res) => {
   try {
-    const { role, direction_id: userDirectionId } = _req.query
+    const { role, direction_id: userDirectionId, identifiant } = _req.query
 
     let sql = `
-      SELECT f.id, f.name, f.direction_id, f.created_at, f.visibility, d.name AS direction_name
+      SELECT DISTINCT f.id, f.name, f.direction_id, f.created_at, f.visibility, d.name AS direction_name
       FROM folders f
       JOIN directions d ON d.id = f.direction_id
     `
     const params = []
     const conditions = ['f.deleted_at IS NULL']
+
+    // Si identifiant fourni, inclure aussi les dossiers pour lesquels l'utilisateur a un accès explicite (folder_access_grants)
+    let userIdForGrants = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) userIdForGrants = u.rows[0].id
+    }
 
     if (role && role !== 'admin') {
       // Role-based folder visibility (existing feature)
@@ -3835,13 +4467,24 @@ app.get('/api/folders', async (_req, res) => {
         )
       `)
 
-      // Direction-only visibility: hide folders marked 'direction_only' unless the user belongs to that direction
-      // All public folders are visible to everyone regardless of direction
+      // Direction-only: visible si public, ou si user dans la direction, ou si accès accordé via folder_access_grants
       if (userDirectionId) {
         params.push(userDirectionId)
-        conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
+        if (userIdForGrants) {
+          params.push(userIdForGrants)
+          conditions.push(`(
+            f.visibility = 'public'
+            OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length - 1})
+            OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length})
+          )`)
+        } else {
+          conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
+        }
+      } else if (userIdForGrants) {
+        // Utilisateur sans direction_id: public + dossiers avec accès accordé
+        params.push(userIdForGrants)
+        conditions.push(`(f.visibility = 'public' OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length}))`)
       } else {
-        // Users without direction_id can only see public folders
         conditions.push(`f.visibility = 'public'`)
       }
     }
@@ -4024,7 +4667,13 @@ app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
 
 app.get('/api/files', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionId } = req.query
+    const { folder, role, direction_id: userDirectionId, identifiant } = req.query
+
+    let userIdForFolderGrants = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) userIdForFolderGrants = u.rows[0].id
+    }
 
     const params = []
     let sql = 'SELECT id, name, mime_type, size, folder, direction_id, cloudinary_url, icon_url, created_at FROM files'
@@ -4057,20 +4706,54 @@ app.get('/api/files', async (req, res) => {
         )
       `)
 
-      // Direction-only visibility: hide files in folders marked 'direction_only' unless user belongs to that direction
-      // All files in public folders are visible to everyone regardless of direction
+      // Direction-only: visible si public, ou user dans la direction, ou accès accordé via folder_access_grants
       if (userDirectionId) {
         params.push(userDirectionId)
-        conditions.push(`
+        if (userIdForFolderGrants) {
+          params.push(userIdForFolderGrants)
+          conditions.push(`
+          (
+            NOT EXISTS (
+              SELECT 1 FROM folders ff
+              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+                AND ff.visibility = 'direction_only'
+                AND ff.direction_id != $${params.length - 1}
+            )
+            OR EXISTS (
+              SELECT 1 FROM folders ff
+              JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
+              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+                AND ff.visibility = 'direction_only'
+            )
+          )
+          `)
+        } else {
+          conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff
             WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
               AND ff.visibility = 'direction_only'
               AND ff.direction_id != $${params.length}
           )
+          `)
+        }
+      } else if (userIdForFolderGrants) {
+        params.push(userIdForFolderGrants)
+        conditions.push(`
+          (
+            NOT EXISTS (
+              SELECT 1 FROM folders ff
+              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+                AND ff.visibility = 'direction_only'
+            )
+            OR EXISTS (
+              SELECT 1 FROM folders ff
+              JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
+              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+            )
+          )
         `)
       } else {
-        // Users without direction_id can only see files in public folders
         conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff
@@ -4442,7 +5125,14 @@ app.post('/api/links', async (req, res) => {
 
 app.get('/api/links', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionId } = req.query
+    const { folder, role, direction_id: userDirectionId, identifiant } = req.query
+
+    let userIdForFolderGrants = null
+    if (identifiant) {
+      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) userIdForFolderGrants = u.rows[0].id
+    }
+
     const params = []
     let sql = `
       SELECT l.id, l.folder, l.direction_id, l.url, l.label, l.created_at
@@ -4474,20 +5164,54 @@ app.get('/api/links', async (req, res) => {
         )
       `)
 
-      // Direction-only visibility: hide links in folders marked 'direction_only' unless user belongs to that direction
-      // All links in public folders are visible to everyone regardless of direction
+      // Direction-only: visible si public, ou user dans la direction, ou accès accordé via folder_access_grants
       if (userDirectionId) {
         params.push(userDirectionId)
-        conditions.push(`
+        if (userIdForFolderGrants) {
+          params.push(userIdForFolderGrants)
+          conditions.push(`
+          (
+            NOT EXISTS (
+              SELECT 1 FROM folders ff
+              WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+                AND ff.visibility = 'direction_only'
+                AND ff.direction_id != $${params.length - 1}
+            )
+            OR EXISTS (
+              SELECT 1 FROM folders ff
+              JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
+              WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+                AND ff.visibility = 'direction_only'
+            )
+          )
+          `)
+        } else {
+          conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff
             WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
               AND ff.visibility = 'direction_only'
               AND ff.direction_id != $${params.length}
           )
+          `)
+        }
+      } else if (userIdForFolderGrants) {
+        params.push(userIdForFolderGrants)
+        conditions.push(`
+          (
+            NOT EXISTS (
+              SELECT 1 FROM folders ff
+              WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+                AND ff.visibility = 'direction_only'
+            )
+            OR EXISTS (
+              SELECT 1 FROM folders ff
+              JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
+              WHERE ff.name = l.folder AND ff.direction_id = l.direction_id
+            )
+          )
         `)
       } else {
-        // Users without direction_id can only see links in public folders
         conditions.push(`
           NOT EXISTS (
             SELECT 1 FROM folders ff

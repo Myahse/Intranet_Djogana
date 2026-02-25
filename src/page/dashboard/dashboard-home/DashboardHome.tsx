@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck, KeyRound, XCircle, RotateCcw, UserMinus } from 'lucide-react'
+import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, UserX, UserCheck, KeyRound, XCircle, RotateCcw, UserMinus, Download, FileSpreadsheet, FileText } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
@@ -136,6 +136,9 @@ const DashboardHome = (): ReactNode => {
   const [activityLogLoading, setActivityLogLoading] = useState(false)
   const [activityLogDirectionId, setActivityLogDirectionId] = useState<string>('')
   const [activityLogAction, setActivityLogAction] = useState<string>('')
+  const [activityLogActorIdentifiant, setActivityLogActorIdentifiant] = useState<string>('')
+  const [activityLogActorName, setActivityLogActorName] = useState<string>('')
+  const [activityLogExporting, setActivityLogExporting] = useState<string | null>(null)
 
   // ── Online users (admin only — silent tracking) ──
   const [onlineUsers, setOnlineUsers] = useState<
@@ -231,6 +234,8 @@ const DashboardHome = (): ReactNode => {
     const params = new URLSearchParams()
     if (activityLogDirectionId) params.set('direction_id', activityLogDirectionId)
     if (activityLogAction) params.set('action', activityLogAction)
+    if (activityLogActorIdentifiant.trim()) params.set('actor_identifiant', activityLogActorIdentifiant.trim())
+    if (activityLogActorName.trim()) params.set('actor_name', activityLogActorName.trim())
     const qs = params.toString()
     setActivityLogLoading(true)
     try {
@@ -265,7 +270,7 @@ const DashboardHome = (): ReactNode => {
     } finally {
       setActivityLogLoading(false)
     }
-  }, [canViewActivityLog, activityLogDirectionId, activityLogAction, getAuthHeaders, logout])
+  }, [canViewActivityLog, activityLogDirectionId, activityLogAction, activityLogActorIdentifiant, activityLogActorName, getAuthHeaders, logout])
 
   useEffect(() => { loadActivityLog() }, [loadActivityLog])
 
@@ -1779,7 +1784,7 @@ const DashboardHome = (): ReactNode => {
             <p className="text-muted-foreground text-sm">
               Historique des actions sur la plateforme (upload, suppression, création, etc.). Les non-admins ne voient que les actions de leur direction.
             </p>
-            <div className="flex flex-wrap gap-2 items-center">
+              <div className="flex flex-wrap gap-2 items-center">
               {isAdmin && directions.length > 0 && (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">Direction</Label>
@@ -1819,8 +1824,79 @@ const DashboardHome = (): ReactNode => {
                     <SelectItem value="unsuspend_user">Réactivation utilisateur</SelectItem>
                     <SelectItem value="create_direction">Création direction</SelectItem>
                     <SelectItem value="delete_direction">Suppression direction</SelectItem>
+                    <SelectItem value="grant_direction_access">Accès direction accordé</SelectItem>
+                    <SelectItem value="revoke_direction_access">Accès direction révoqué</SelectItem>
+                    <SelectItem value="grant_folder_access">Accès dossier accordé</SelectItem>
+                    <SelectItem value="revoke_folder_access">Accès dossier révoqué</SelectItem>
+                    <SelectItem value="update_user_profile">Nom / prénom modifié</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-sm whitespace-nowrap">N° utilisateur</Label>
+                <Input
+                  className="w-[140px]"
+                  placeholder="Numéro..."
+                  value={activityLogActorIdentifiant}
+                  onChange={(e) => setActivityLogActorIdentifiant(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-sm whitespace-nowrap">Nom</Label>
+                <Input
+                  className="w-[140px]"
+                  placeholder="Nom ou prénom..."
+                  value={activityLogActorName}
+                  onChange={(e) => setActivityLogActorName(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2 ml-auto">
+                <Label className="text-sm whitespace-nowrap text-muted-foreground">Exporter</Label>
+                {(['xlsx', 'docx', 'pdf'] as const).map((fmt) => (
+                  <Button
+                    key={fmt}
+                    variant="outline"
+                    size="sm"
+                    disabled={!!activityLogExporting}
+                    onClick={async () => {
+                      const headers = getAuthHeaders() as Record<string, string> | undefined
+                      if (!headers?.Authorization) return
+                      setActivityLogExporting(fmt)
+                      try {
+                        const params = new URLSearchParams()
+                        if (activityLogDirectionId) params.set('direction_id', activityLogDirectionId)
+                        if (activityLogAction) params.set('action', activityLogAction)
+                        if (activityLogActorIdentifiant.trim()) params.set('actor_identifiant', activityLogActorIdentifiant.trim())
+                        if (activityLogActorName.trim()) params.set('actor_name', activityLogActorName.trim())
+                        params.set('format', fmt)
+                        const res = await fetch(`${API_BASE_URL}/api/activity-log/export?${params.toString()}`, { headers })
+                        if (!res.ok) throw new Error((await res.json().catch(() => ({})) as { error?: string }).error ?? 'Export échoué')
+                        const blob = await res.blob()
+                        const ext = fmt === 'xlsx' ? 'xlsx' : fmt === 'docx' ? 'docx' : 'pdf'
+                        const a = document.createElement('a')
+                        a.href = URL.createObjectURL(blob)
+                        a.download = `journal-activite-${new Date().toISOString().slice(0, 10)}.${ext}`
+                        a.click()
+                        URL.revokeObjectURL(a.href)
+                        toast.success(`Export ${ext.toUpperCase()} téléchargé`)
+                      } catch (err) {
+                        toast.error((err as Error).message ?? 'Erreur lors de l\'export')
+                      } finally {
+                        setActivityLogExporting(null)
+                      }
+                    }}
+                  >
+                    {activityLogExporting === fmt ? (
+                      <span className="animate-pulse">…</span>
+                    ) : fmt === 'xlsx' ? (
+                      <span title="Excel"><FileSpreadsheet className="size-4" aria-label="Export Excel" /></span>
+                    ) : fmt === 'docx' ? (
+                      <span title="Word"><FileText className="size-4" aria-label="Export Word" /></span>
+                    ) : (
+                      <span title="PDF"><Download className="size-4" aria-label="Export PDF" /></span>
+                    )}
+                  </Button>
+                ))}
               </div>
             </div>
             {activityLogLoading ? (
@@ -1874,7 +1950,12 @@ const DashboardHome = (): ReactNode => {
                             {entry.action === 'create_direction' && 'Création direction'}
                             {entry.action === 'delete_direction' && 'Suppression direction'}
                             {entry.action === 'update_folder_visibility' && 'Visibilité dossier'}
-                            {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','suspend_user','unsuspend_user','create_direction','delete_direction','update_folder_visibility'].includes(entry.action) && entry.action}
+                            {entry.action === 'grant_direction_access' && 'Accès direction accordé'}
+                            {entry.action === 'revoke_direction_access' && 'Accès direction révoqué'}
+                            {entry.action === 'grant_folder_access' && 'Accès dossier accordé'}
+                            {entry.action === 'revoke_folder_access' && 'Accès dossier révoqué'}
+                            {entry.action === 'update_user_profile' && 'Nom / prénom modifié'}
+                            {!['upload_file','delete_file','rename_file','create_folder','delete_folder','create_link','update_link','delete_link','create_user','suspend_user','unsuspend_user','create_direction','delete_direction','update_folder_visibility','grant_direction_access','revoke_direction_access','grant_folder_access','revoke_folder_access','update_user_profile'].includes(entry.action) && entry.action}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">{entry.direction_name ?? '—'}</td>
                           <td className="px-3 py-2 max-w-[200px] truncate" title={entry.details ? JSON.stringify(entry.details) : ''}>

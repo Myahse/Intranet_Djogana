@@ -70,6 +70,11 @@ const ACTION_LABELS: Record<string, string> = {
   delete_link: 'Lien supprimé',
   update_link: 'Lien modifié',
   update_folder_visibility: 'Visibilité du dossier modifiée',
+  grant_direction_access: 'Accès direction accordé',
+  revoke_direction_access: 'Accès direction révoqué',
+  grant_folder_access: 'Accès dossier accordé',
+  revoke_folder_access: 'Accès dossier révoqué',
+  update_user_profile: 'Nom / prénom modifié',
   change_password: 'Mot de passe changé',
   login: 'Connexion',
 }
@@ -116,6 +121,10 @@ const ACTION_ICONS: Record<string, React.ElementType> = {
   create_link: LinkIcon,
   delete_link: LinkIcon,
   update_link: LinkIcon,
+  grant_direction_access: KeyRound,
+  revoke_direction_access: KeyRound,
+  grant_folder_access: FolderPlus,
+  revoke_folder_access: FolderMinus,
   change_password: KeyRound,
   login: LogIn,
 }
