@@ -25,6 +25,9 @@ export type FolderOption = {
   label: string
   direction_id?: string
   direction_name?: string
+  name?: string
+  /** UUID du dossier (pour accorder l'accès à un dossier) */
+  id?: string
 }
 
 export type DocumentItem = {
@@ -270,6 +273,7 @@ type FolderMeta = {
   direction_id: string
   direction_name: string
   name: string
+  id?: string
 }
 
 export function DocumentsProvider({ children }: { children: ReactNode }) {
@@ -292,6 +296,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         params.set('role', user.role)
         if (user.direction_id) params.set('direction_id', user.direction_id)
       }
+      if (user?.identifiant) params.set('identifiant', user.identifiant)
       const roleParam = params.toString() ? `?${params.toString()}` : ''
 
       const res = await fetch(`${API_BASE_URL}/api/files${roleParam}`)
@@ -389,6 +394,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
               direction_id: f.direction_id,
               direction_name: f.direction_name,
               name: f.name,
+              id: f.id,
             }))
           )
         } else {
@@ -472,6 +478,8 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         label: f.label,
         direction_id: f.direction_id,
         direction_name: f.direction_name,
+        name: f.name,
+        id: f.id,
       })),
     [folderList]
   )
