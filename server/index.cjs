@@ -4142,9 +4142,9 @@ app.post('/api/files', (req, res, next) => {
       'SELECT id FROM folders WHERE direction_id = $1 AND name = $2 LIMIT 1',
       [directionId, folder]
     )
-    const folderId = folderRow.rows[0]?.id
-    const toNotify = folderId
-      ? await getIdentifiantsToNotifyForFolder(folderId, identifiant)
+    const folderIdForNotify = folderRow.rows[0]?.id
+    const toNotify = folderIdForNotify
+      ? await getIdentifiantsToNotifyForFolder(folderIdForNotify, identifiant)
       : await getIdentifiantsToNotifyForDirection(directionId, identifiant)
     if (toNotify.length > 0) {
       const uploaderRow = await pool.query(
