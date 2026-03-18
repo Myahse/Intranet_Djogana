@@ -3407,6 +3407,10 @@ app.get('/api/activity-log/export', requireAuth, async (req, res) => {
 // ---------- Roles & permissions (RBAC) ----------
 
 // Helper: get permissions for a user by identifiant (admin => all true)
+function isAdminRole(role) {
+  return typeof role === 'string' && role.toLowerCase() === 'admin'
+}
+
 async function getPermissionsForIdentifiant(identifiant) {
   const userRes = await pool.query(
     'SELECT role, is_direction_chief FROM users WHERE identifiant = $1',
@@ -3415,7 +3419,7 @@ async function getPermissionsForIdentifiant(identifiant) {
   if (userRes.rows.length === 0) return null
   const roleName = userRes.rows[0].role
   const isChief = Boolean(userRes.rows[0].is_direction_chief)
-  if (roleName === 'admin') {
+  if (isAdminRole(roleName)) {
     return {
       can_create_folder: true,
       can_upload_file: true,
@@ -3489,7 +3493,7 @@ async function getPermissionsForIdentifiant(identifiant) {
 async function hasDirectionAccess(userId, directionId) {
   // Admin always has access
   const userRes = await pool.query('SELECT role FROM users WHERE id = $1', [userId])
-  if (userRes.rows.length > 0 && userRes.rows[0].role === 'admin') {
+  if (userRes.rows.length > 0 && isAdminRole(userRes.rows[0].role)) {
     return true
   }
   
