@@ -4534,9 +4534,9 @@ app.post('/api/folders', async (req, res) => {
 
     const visibility = rawVisibility === 'direction_only' ? 'direction_only' : 'public'
 
-    // Permission: admin can create in any direction; others only in their own direction
+    // Permission: admin can create in any direction; others only in their own/granted directions
     const userRes = await pool.query(
-      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
       [identifiant]
     )
     if (userRes.rows.length === 0) {
