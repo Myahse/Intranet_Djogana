@@ -130,6 +130,10 @@ const adminPermissions: UserPermissions = {
   can_view_stats: true,
 }
 
+function isAdminRole(role?: string | null): boolean {
+  return (role ?? '').toLowerCase() === 'admin'
+}
+
 function localFallbackLogin(
   identifiant: string,
   motDePasse: string,
@@ -250,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           direction_id: data.direction_id ?? null,
           direction_name: data.direction_name ?? null,
           is_direction_chief: Boolean(data.is_direction_chief),
-          permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+          permissions: isAdminRole(data.role) ? adminPermissions : (data.permissions ?? null),
           must_change_password: Boolean(data.must_change_password),
           is_suspended: Boolean(data.is_suspended),
           granted_direction_ids: grantedDirectionIds,
@@ -352,7 +356,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         direction_id: data.direction_id ?? null,
         direction_name: data.direction_name ?? null,
         is_direction_chief: Boolean(data.is_direction_chief),
-        permissions: data.role === 'admin' ? adminPermissions : (data.permissions ?? null),
+        permissions: isAdminRole(data.role) ? adminPermissions : (data.permissions ?? null),
         must_change_password: Boolean(data.must_change_password),
         is_suspended: Boolean(data.is_suspended),
         granted_direction_ids: grantedDirectionIds,
@@ -786,7 +790,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
-      isAdmin: user?.role === 'admin',
+      isAdmin: isAdminRole(user?.role),
       isDirectionChief: Boolean(user?.is_direction_chief),
       setUser,
       login,
