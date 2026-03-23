@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { BarChart3, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Home, Link2, Search, User } from 'lucide-react'
+import { BarChart3, ChevronDown, ChevronRight, FileText, Filter, FolderOpen, Globe, Home, Link2, Search, User } from 'lucide-react'
 import SidebarActions from '@/components/SidebarActions'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -54,8 +54,9 @@ function DashboardLayout() {
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { contentFilter, setContentFilter } = useDashboardFilter()
   const navigate = useNavigate()
-  const { folderOptions, getFiles, getLinks, removeFolder } = useDocuments()
+  const { folderOptions, getFiles, getLinks, removeFolder, setFolderVisibility } = useDocuments()
   const canDeleteFolder = isAdmin || !!user?.permissions?.can_delete_folder
+  const canSetFolderVisibility = isAdmin || !!user?.permissions?.can_set_folder_visibility
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({})
 
@@ -120,6 +121,11 @@ function DashboardLayout() {
     return out
   }, [groupedFolders, searchLower])
 
+  const folderByValue = useMemo(
+    () => new Map(folderOptions.map((f) => [f.value, f])),
+    [folderOptions]
+  )
+
   const handleInstantDeleteFolder = async (e: React.MouseEvent, folderKey: string) => {
     e.preventDefault()
     e.stopPropagation()
@@ -132,6 +138,26 @@ function DashboardLayout() {
       toast.success('Dossier supprimé')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression du dossier')
+    }
+  }
+
+  const handleSetFolderPublic = async (e: React.MouseEvent, folderKey: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!canSetFolderVisibility) {
+      toast.error('Vous n’avez pas la permission de modifier la visibilité')
+      return
+    }
+    const folder = folderByValue.get(folderKey)
+    if (!folder?.id) {
+      toast.error('Impossible de retrouver le dossier à mettre en public')
+      return
+    }
+    try {
+      await setFolderVisibility(folder.id, 'public')
+      toast.success('Dossier remis en visible (public)')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la mise à jour de la visibilité')
     }
   }
 
@@ -256,6 +282,17 @@ function DashboardLayout() {
                               rootIsExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />
                             ) : null}
                             <span>{folder.label}</span>
+                            {folder.visibility === 'direction_only' && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleSetFolderPublic(e, folder.value)}
+                                className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
+                                title={canSetFolderVisibility ? 'Direction uniquement (cliquer pour rendre public)' : 'Direction uniquement'}
+                              >
+                                <Globe className="size-3" />
+                                Privé
+                              </button>
+                            )}
                           </SidebarMenuButton>
                           {rootIsExpanded && rootHasContent && (
                             <SidebarMenuSub>
@@ -334,6 +371,17 @@ function DashboardLayout() {
                                         subIsExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
                                       ) : null}
                                       <span>{subfolder.label}</span>
+                                      {folderByValue.get(subfolder.value)?.visibility === 'direction_only' && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handleSetFolderPublic(e, subfolder.value)}
+                                          className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
+                                          title={canSetFolderVisibility ? 'Direction uniquement (cliquer pour rendre public)' : 'Direction uniquement'}
+                                        >
+                                          <Globe className="size-3" />
+                                          Privé
+                                        </button>
+                                      )}
                                     </SidebarMenuSubButton>
                                     {subIsExpanded && subHasContent && (
                                       <ul className="ml-3.5 mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-2.5">

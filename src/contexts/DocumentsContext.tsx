@@ -28,6 +28,7 @@ export type FolderOption = {
   name?: string
   /** UUID du dossier (pour accorder l'accès à un dossier) */
   id?: string
+  visibility?: 'public' | 'direction_only'
 }
 
 export type DocumentItem = {
@@ -76,6 +77,7 @@ type DocumentsContextValue = {
   removeLink: (id: string) => Promise<void>
   renameFile: (id: string, name: string) => Promise<string>
   removeFolder: (folderKey: string) => Promise<void>
+  setFolderVisibility: (folderId: string, visibility: 'public' | 'direction_only') => Promise<void>
   folderOptions: FolderOption[]
 }
 
@@ -274,6 +276,7 @@ type FolderMeta = {
   direction_name: string
   name: string
   id?: string
+  visibility?: 'public' | 'direction_only'
 }
 
 export function DocumentsProvider({ children }: { children: ReactNode }) {
@@ -386,6 +389,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
             name: string
             direction_id: string
             direction_name: string
+            visibility?: 'public' | 'direction_only'
           }>
           setFolderList(
             foldersData.map((f) => ({
@@ -395,6 +399,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
               direction_name: f.direction_name,
               name: f.name,
               id: f.id,
+              visibility: f.visibility === 'direction_only' ? 'direction_only' : 'public',
             }))
           )
         } else {
@@ -480,6 +485,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         direction_name: f.direction_name,
         name: f.name,
         id: f.id,
+        visibility: f.visibility === 'direction_only' ? 'direction_only' : 'public',
       })),
     [folderList]
   )
@@ -729,6 +735,27 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     [items, user?.identifiant, sendWs]
   )
 
+  const setFolderVisibility = useCallback(
+    async (folderId: string, visibility: 'public' | 'direction_only') => {
+      const identifiant = user?.identifiant ?? ''
+      const res = await fetch(`${API_BASE_URL}/api/folders/${encodeURIComponent(folderId)}/visibility`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifiant, visibility }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de la mise à jour de la visibilité du dossier')
+      }
+      const updated = (await res.json()) as { id: string; visibility?: 'public' | 'direction_only' }
+      const nextVisibility = updated.visibility === 'direction_only' ? 'direction_only' : 'public'
+      setFolderList((prev) =>
+        prev.map((f) => (f.id === folderId ? { ...f, visibility: nextVisibility } : f))
+      )
+    },
+    [user?.identifiant]
+  )
+
   const value = useMemo<DocumentsContextValue>(
     () => ({
       getFiles,
@@ -741,9 +768,10 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       removeLink,
       renameFile,
       removeFolder,
+      setFolderVisibility,
       folderOptions,
     }),
-    [getFiles, getLinks, addFile, addLink, addFolder, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, folderOptions]
+    [getFiles, getLinks, addFile, addLink, addFolder, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, setFolderVisibility, folderOptions]
   )
 
   return (
