@@ -36,6 +36,7 @@ import ProfilePage from '@/page/dashboard/profile/ProfilePage'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider, useDashboardFilter, type ContentFilterType } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
+import { toast } from 'sonner'
 
 const Dashboard = () => (
   <SidebarProvider className="!h-svh !max-h-svh overflow-hidden">
@@ -53,7 +54,8 @@ function DashboardLayout() {
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { contentFilter, setContentFilter } = useDashboardFilter()
   const navigate = useNavigate()
-  const { folderOptions, getFiles, getLinks } = useDocuments()
+  const { folderOptions, getFiles, getLinks, removeFolder } = useDocuments()
+  const canDeleteFolder = isAdmin || !!user?.permissions?.can_delete_folder
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({})
 
@@ -117,6 +119,21 @@ function DashboardLayout() {
     }
     return out
   }, [groupedFolders, searchLower])
+
+  const handleInstantDeleteFolder = async (e: React.MouseEvent, folderKey: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!canDeleteFolder) {
+      toast.error('Vous n’avez pas la permission de supprimer un dossier')
+      return
+    }
+    try {
+      await removeFolder(folderKey)
+      toast.success('Dossier supprimé')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression du dossier')
+    }
+  }
 
   return (
     <>
@@ -229,6 +246,7 @@ function DashboardLayout() {
                         <SidebarMenuItem key={folder.value}>
                           <SidebarMenuButton
                             isActive={isFolderActive(folder.value)}
+                            onContextMenu={(e) => handleInstantDeleteFolder(e, folder.value)}
                             onClick={() => {
                               if (rootHasContent) setOpenFolders((prev) => ({ ...prev, [folder.value]: !rootIsExpanded }))
                               navigate(`/dashboard/documents/${encodeURIComponent(folder.value)}`)
@@ -304,6 +322,7 @@ function DashboardLayout() {
                                   <SidebarMenuSubItem key={subfolder.value}>
                                     <SidebarMenuSubButton
                                       isActive={isFolderActive(subfolder.value)}
+                                      onContextMenu={(e) => handleInstantDeleteFolder(e, subfolder.value)}
                                       onClick={(e) => {
                                         e.preventDefault()
                                         if (subHasContent) setOpenFolders((prev) => ({ ...prev, [subfolder.value]: !subIsExpanded }))
