@@ -4516,18 +4516,15 @@ app.get('/api/folders', async (_req, res) => {
     if (role && role !== 'admin') {
       // Role-based folder visibility (existing feature)
       params.push(role)
+      // Default-allow model:
+      // only hide a folder when the current role has an explicit deny (can_view = false).
       conditions.push(`
-        (
-          NOT EXISTS (
-            SELECT 1 FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = f.name
-          )
-          OR EXISTS (
-            SELECT 1 FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = f.name AND r.name = $${params.length} AND v.can_view = true
-          )
+        NOT EXISTS (
+          SELECT 1 FROM folder_role_visibility v
+          JOIN roles r ON r.id = v.role_id
+          WHERE v.folder_name = f.name
+            AND r.name = $${params.length}
+            AND v.can_view = false
         )
       `)
 
@@ -4751,22 +4748,16 @@ app.get('/api/files', async (req, res) => {
 
     if (role && role !== 'admin') {
       params.push(role)
+      // Default-allow model:
+      // only hide a folder when the current role has an explicit deny (can_view = false).
       conditions.push(`
-        (
-          NOT EXISTS (
-            SELECT 1
-            FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = files.folder
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = files.folder
-              AND r.name = $${params.length}
-              AND v.can_view = true
-          )
+        NOT EXISTS (
+          SELECT 1
+          FROM folder_role_visibility v
+          JOIN roles r ON r.id = v.role_id
+          WHERE v.folder_name = files.folder
+            AND r.name = $${params.length}
+            AND v.can_view = false
         )
       `)
 
@@ -5211,20 +5202,15 @@ app.get('/api/links', async (req, res) => {
 
     if (role && role !== 'admin') {
       params.push(role)
+      // Default-allow model:
+      // only hide a folder when the current role has an explicit deny (can_view = false).
       conditions.push(`
-        (
-          NOT EXISTS (
-            SELECT 1 FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = l.folder
-          )
-          OR EXISTS (
-            SELECT 1 FROM folder_role_visibility v
-            JOIN roles r ON r.id = v.role_id
-            WHERE v.folder_name = l.folder
-              AND r.name = $${params.length}
-              AND v.can_view = true
-          )
+        NOT EXISTS (
+          SELECT 1 FROM folder_role_visibility v
+          JOIN roles r ON r.id = v.role_id
+          WHERE v.folder_name = l.folder
+            AND r.name = $${params.length}
+            AND v.can_view = false
         )
       `)
 
