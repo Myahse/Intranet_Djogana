@@ -97,7 +97,7 @@ function DashboardLayout() {
     sendWs({ type: 'presence', page: path, section })
   }, [location.pathname, isAdmin, sendWs])
 
-  // ── Directions for sidebar: admins see all; others see their direction + granted (including empty dirs) ──
+  // ── Full direction catalog (names); visibility for non-admins is computed below with folderOptions ──
   const [allDirections, setAllDirections] = useState<{ id: string; name: string }[]>([])
 
   const loadDirections = useCallback(async () => {
@@ -106,20 +106,31 @@ function DashboardLayout() {
       const res = await fetch(`${API_BASE_URL}/api/directions`)
       if (!res.ok) return
       const data = (await res.json()) as Array<{ id: string; name: string }>
-      if (isAdmin) {
-        setAllDirections(data)
-      } else {
-        const allowed = new Set<string>()
-        if (user.direction_id) allowed.add(user.direction_id)
-        for (const id of user.granted_direction_ids ?? []) {
-          if (id) allowed.add(id)
-        }
-        setAllDirections(data.filter((d) => allowed.has(d.id)))
-      }
+      setAllDirections(data)
     } catch {
       // silent
     }
-  }, [user, isAdmin])
+  }, [user])
+
+  // Directions the user should see in the sidebar: own + cross-direction grants + any direction that already
+  // appears in folderOptions (e.g. dossiers publics dans une autre direction, sans grant d’accès direction).
+  const accessibleDirectionIds = useMemo(() => {
+    const s = new Set<string>()
+    if (user?.direction_id) s.add(user.direction_id)
+    for (const id of user?.granted_direction_ids ?? []) {
+      if (id) s.add(id)
+    }
+    for (const f of folderOptions) {
+      const did = f.direction_id || parseFolderKey(f.value).direction_id
+      if (did) s.add(did)
+    }
+    return s
+  }, [user, folderOptions])
+
+  const directionsToSeed = useMemo(() => {
+    if (isAdmin) return allDirections
+    return allDirections.filter((d) => accessibleDirectionIds.has(d.id))
+  }, [isAdmin, allDirections, accessibleDirectionIds])
 
   useEffect(() => { loadDirections() }, [loadDirections])
 
@@ -154,8 +165,8 @@ function DashboardLayout() {
   const directionMap = useMemo(() => {
     const map: Record<string, DirectionEntry> = {}
 
-    // Seed with directions the user is meant to see (admins: all; others: own + granted) so empty directions still appear
-    allDirections.forEach((d) => {
+    // Seed with directions the user is meant to see (including public-only visibility via folderOptions)
+    directionsToSeed.forEach((d) => {
       if (!map[d.id]) {
         map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
       }
@@ -197,7 +208,7 @@ function DashboardLayout() {
     }
 
     return map
-  }, [folderOptions, allDirections])
+  }, [folderOptions, directionsToSeed])
 
   // Sort directions alphabetically
   const sortedDirections = useMemo(
