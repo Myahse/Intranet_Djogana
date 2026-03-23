@@ -175,16 +175,24 @@ export default function SidebarActions() {
     if (!name) { toast.error('Veuillez saisir un nom de dossier'); return }
     if (!selectedDirectionFolder) { toast.error('Veuillez sélectionner une direction'); return }
     const file = addFolderFileRef.current?.files?.[0]
-    if (!file) { toast.error('Veuillez choisir un fichier à ajouter au dossier'); return }
     setFolderOpen(false)
     setLoading({ open: true, message: 'Création du dossier en cours…' })
     try {
-      await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
+      if (file) {
+        await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
+      } else {
+        await addFolderMeta(name, selectedDirectionFolder, newFolderVisibility)
+      }
       setNewFolderName('')
       setNewFolderVisibility('public')
       if (addFolderFileRef.current) addFolderFileRef.current.value = ''
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier créé et fichier ajouté' }))
-      toast.success('Dossier créé et fichier ajouté')
+      const withFile = Boolean(file)
+      setLoading((s) => ({
+        ...s,
+        result: 'success',
+        resultMessage: withFile ? 'Dossier créé et fichier ajouté' : 'Dossier créé',
+      }))
+      toast.success(withFile ? 'Dossier créé et fichier ajouté' : 'Dossier créé (sans fichier)')
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du dossier' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du dossier')
@@ -325,7 +333,7 @@ export default function SidebarActions() {
               Nouveau dossier
             </DialogTitle>
             <DialogDescription>
-              Créez un dossier avec un premier fichier.
+              Créez un dossier, avec ou sans premier fichier.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -352,7 +360,7 @@ export default function SidebarActions() {
               />
             </div>
             <div className="grid gap-2">
-              <Label>Fichier à envoyer</Label>
+              <Label>Fichier (optionnel)</Label>
               <input ref={addFolderFileRef} type="file" className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
             </div>
             {canSetFolderVisibility && (
