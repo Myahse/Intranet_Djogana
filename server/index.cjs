@@ -5763,6 +5763,33 @@ if (fs.existsSync(FRONTEND_DIST_DIR) && fs.existsSync(FRONTEND_INDEX_FILE)) {
     })
   )
 
+  // Missing files under /assets (e.g. stale hashed chunk after redeploy): respond with a
+  // non-HTML 404 so the browser does not report "module script ... MIME type text/html"
+  // (Express default 404 is HTML).
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    const isUnderAssets = req.path === '/assets' || req.path.startsWith('/assets/')
+    if (!isUnderAssets) return next()
+    const ext = path.extname(req.path.replace(/\/$/, ''))
+    let body = 'Not found'
+    let contentType = 'text/plain; charset=utf-8'
+    if (ext === '.css') {
+      contentType = 'text/css; charset=utf-8'
+      body = '/* asset missing — run `npm run build` and redeploy full dist, or hard refresh */'
+    } else if (ext === '.map') {
+      contentType = 'application/json; charset=utf-8'
+      body = '{}'
+    } else if (ext === '.js' || ext === '.mjs' || ext === '') {
+      contentType = 'application/javascript; charset=utf-8'
+      body =
+        '// 404: asset missing — redeploy the full `dist` after `npm run build`, or hard refresh (Ctrl+Shift+R).'
+    }
+    res.status(404)
+    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Content-Type', contentType)
+    return res.send(body)
+  })
+
   // SPA fallback: serve index.html only for browser navigation routes.
   // Important: do NOT return index.html for asset URLs (.js/.css/...), otherwise
   // browsers fail with "Expected JavaScript module but got text/html".
@@ -5771,6 +5798,8 @@ if (fs.existsSync(FRONTEND_DIST_DIR) && fs.existsSync(FRONTEND_INDEX_FILE)) {
       req.path.startsWith('/api/') ||
       req.path.startsWith('/files/') ||
       req.path.startsWith('/ws') ||
+      req.path === '/assets' ||
+      req.path.startsWith('/assets/') ||
       path.extname(req.path)
     ) {
       return next()
