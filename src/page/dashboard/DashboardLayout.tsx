@@ -97,20 +97,29 @@ function DashboardLayout() {
     sendWs({ type: 'presence', page: path, section })
   }, [location.pathname, isAdmin, sendWs])
 
-  // ── Fetch ALL directions from the API (admin sees all, including empty ones) ──
+  // ── Directions for sidebar: admins see all; others see their direction + granted (including empty dirs) ──
   const [allDirections, setAllDirections] = useState<{ id: string; name: string }[]>([])
 
   const loadDirections = useCallback(async () => {
-    if (!isAdmin) return
+    if (!user) return
     try {
       const res = await fetch(`${API_BASE_URL}/api/directions`)
       if (!res.ok) return
       const data = (await res.json()) as Array<{ id: string; name: string }>
-      setAllDirections(data)
+      if (isAdmin) {
+        setAllDirections(data)
+      } else {
+        const allowed = new Set<string>()
+        if (user.direction_id) allowed.add(user.direction_id)
+        for (const id of user.granted_direction_ids ?? []) {
+          if (id) allowed.add(id)
+        }
+        setAllDirections(data.filter((d) => allowed.has(d.id)))
+      }
     } catch {
       // silent
     }
-  }, [isAdmin])
+  }, [user, isAdmin])
 
   useEffect(() => { loadDirections() }, [loadDirections])
 
@@ -145,14 +154,12 @@ function DashboardLayout() {
   const directionMap = useMemo(() => {
     const map: Record<string, DirectionEntry> = {}
 
-    // For admin: seed the map with ALL directions so empty ones still appear
-    if (isAdmin) {
-      allDirections.forEach((d) => {
-        if (!map[d.id]) {
-          map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
-        }
-      })
-    }
+    // Seed with directions the user is meant to see (admins: all; others: own + granted) so empty directions still appear
+    allDirections.forEach((d) => {
+      if (!map[d.id]) {
+        map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
+      }
+    })
 
     folderOptions.forEach((folder) => {
       const dirId = folder.direction_id ?? 'unknown'
@@ -190,7 +197,7 @@ function DashboardLayout() {
     }
 
     return map
-  }, [folderOptions, isAdmin, allDirections])
+  }, [folderOptions, allDirections])
 
   // Sort directions alphabetically
   const sortedDirections = useMemo(
@@ -220,7 +227,7 @@ function DashboardLayout() {
           if (subfolders.length > 0) groupedFolders[key] = { groupLabel: group.groupLabel, subfolders }
         }
 
-        // For admin: always show the direction even if empty (when searching, hide if no match)
+        // Always show the direction when it matches search or has matching content (empty dirs when no search)
         const hasContent = rootFolders.length > 0 || Object.keys(groupedFolders).length > 0
         if (!matchDir && !hasContent) return null
 
