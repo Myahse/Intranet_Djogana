@@ -5759,6 +5759,7 @@ if (fs.existsSync(FRONTEND_DIST_DIR) && fs.existsSync(FRONTEND_INDEX_FILE)) {
     ) {
       return next()
     }
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
     return res.sendFile(FRONTEND_INDEX_FILE)
   })
 } else {
