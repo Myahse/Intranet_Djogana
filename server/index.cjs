@@ -1712,6 +1712,66 @@ app.post('/api/deleted-users/:id/restore', requireAuth, async (req, res) => {
   }
 })
 
+// Reset a user's password (admin only).
+// Sets password_hash = hash(identifiant) and must_change_password = true,
+// so the user must change it at next login.
+app.post('/api/users/:id/reset-password', requireAuth, async (req, res) => {
+  try {
+    const callerIdentifiant = req.authIdentifiant
+    const callerRes = await pool.query('SELECT role FROM users WHERE identifiant = $1', [callerIdentifiant])
+    if (callerRes.rows.length === 0 || callerRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: 'Accès réservé aux administrateurs.' })
+    }
+
+    const { id } = req.params
+    const userRow = await pool.query(
+      'SELECT id, identifiant, role, direction_id FROM users WHERE id = $1',
+      [id]
+    )
+    if (userRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' })
+    }
+    const targetUser = userRow.rows[0]
+
+    // Sécurité: ne pas réinitialiser les comptes admin via ce bouton
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Impossible de réinitialiser le mot de passe d’un administrateur via cette action.' })
+    }
+
+    const ident = String(targetUser.identifiant || '').trim()
+    if (!ident) {
+      return res.status(400).json({ error: 'Identifiant utilisateur invalide pour la réinitialisation.' })
+    }
+
+    const hashed = await bcrypt.hash(ident, 10)
+    await pool.query(
+      'UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2',
+      [hashed, id]
+    )
+
+    // Activity log
+    let actorId = null
+    const actorRes = await pool.query('SELECT id FROM users WHERE identifiant = $1', [callerIdentifiant])
+    if (actorRes.rows.length > 0) actorId = actorRes.rows[0].id
+    await insertActivityLog(pool, {
+      action: 'reset_user_password',
+      actorIdentifiant: callerIdentifiant,
+      actorId,
+      directionId: targetUser.direction_id,
+      entityType: 'user',
+      entityId: id,
+      details: { identifiant: targetUser.identifiant, role: targetUser.role },
+    })
+
+    broadcastDataChange('users', 'updated', { id })
+
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('reset-password error', err)
+    return res.status(500).json({ error: 'Erreur lors de la réinitialisation du mot de passe.' })
+  }
+})
+
 // Update user role and/or direction
 app.patch('/api/users/:id', async (req, res) => {
   try {
