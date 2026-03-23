@@ -1352,6 +1352,117 @@ app.get('/api/directions', async (_req, res) => {
   }
 })
 
+// Directions visibles pour l’utilisateur connecté (aligné sur GET /api/folders + direction d’affectation + grants direction).
+// Query: identifiant (requis), role, direction_id — mêmes paramètres que /api/folders pour cohérence.
+app.get('/api/directions/for-me', async (req, res) => {
+  try {
+    const { role: roleQuery, direction_id: userDirectionIdRaw, identifiant } = req.query
+    if (!identifiant || String(identifiant).trim() === '') {
+      return res.status(400).json({ error: 'identifiant requis.' })
+    }
+
+    const userRes = await pool.query(
+      'SELECT id, role, direction_id FROM users WHERE identifiant = $1',
+      [String(identifiant).trim()]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    }
+    const u = userRes.rows[0]
+    if (u.role === 'admin') {
+      const result = await pool.query(
+        'SELECT id, name, code, created_at FROM directions ORDER BY name'
+      )
+      return res.json(result.rows)
+    }
+
+    let userDirectionId = userDirectionIdRaw || u.direction_id
+    const role = roleQuery || u.role
+    const userIdForGrants = u.id
+
+    const idSet = new Set()
+    if (u.direction_id) idSet.add(u.direction_id)
+
+    const grantsRes = await pool.query(
+      'SELECT granted_direction_id FROM direction_access_grants WHERE user_id = $1',
+      [u.id]
+    )
+    grantsRes.rows.forEach((row) => {
+      if (row.granted_direction_id) idSet.add(row.granted_direction_id)
+    })
+
+    // Même logique de visibilité que GET /api/folders → directions des dossiers visibles
+    let sql = `
+      SELECT DISTINCT f.direction_id
+      FROM folders f
+      JOIN directions d ON d.id = f.direction_id
+    `
+    const params = []
+    const conditions = ['f.deleted_at IS NULL']
+
+    if (identifiant) {
+      if (!userDirectionId && u.direction_id) {
+        userDirectionId = u.direction_id
+      }
+    }
+
+    if (role && role !== 'admin') {
+      params.push(role)
+      conditions.push(`
+        NOT EXISTS (
+          SELECT 1 FROM folder_role_visibility v
+          JOIN roles r ON r.id = v.role_id
+          WHERE v.folder_name = f.name
+            AND r.name = $${params.length}
+            AND v.can_view = false
+        )
+      `)
+
+      if (userDirectionId) {
+        params.push(userDirectionId)
+        if (userIdForGrants) {
+          params.push(userIdForGrants)
+          conditions.push(`(
+            f.visibility = 'public'
+            OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length - 1})
+            OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length})
+          )`)
+        } else {
+          conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
+        }
+      } else if (userIdForGrants) {
+        params.push(userIdForGrants)
+        conditions.push(`(f.visibility = 'public' OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length}))`)
+      } else {
+        conditions.push(`f.visibility = 'public'`)
+      }
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ')
+    }
+
+    const folderDirs = await pool.query(sql, params)
+    folderDirs.rows.forEach((row) => {
+      if (row.direction_id) idSet.add(row.direction_id)
+    })
+
+    const ids = Array.from(idSet).filter(Boolean)
+    if (ids.length === 0) {
+      return res.json([])
+    }
+
+    const result = await pool.query(
+      'SELECT id, name, code, created_at FROM directions WHERE id = ANY($1::uuid[]) ORDER BY name',
+      [ids]
+    )
+    return res.json(result.rows)
+  } catch (err) {
+    console.error('directions for-me error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération des directions.' })
+  }
+})
+
 app.post('/api/directions', async (req, res) => {
   try {
     const { name, code: rawCode, identifiant } = req.body || {}
