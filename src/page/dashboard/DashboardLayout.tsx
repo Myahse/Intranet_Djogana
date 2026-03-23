@@ -41,6 +41,12 @@ const API_BASE_URL =
       ? ''
       : 'http://localhost:3000'
 
+/** Normalise l’id direction (UUID) pour éviter doublons si la casse diffère entre API et dossiers. */
+function normDirId(id: string | undefined | null): string {
+  if (!id || id === 'unknown') return ''
+  return id.trim().toLowerCase()
+}
+
 const Dashboard = () => {
   const { user } = useAuth()
   return (
@@ -97,25 +103,51 @@ function DashboardLayout() {
     sendWs({ type: 'presence', page: path, section })
   }, [location.pathname, isAdmin, sendWs])
 
-  // Liste des directions côté serveur (GET /api/directions/for-me) — même règles que les dossiers visibles + affectation + grants.
+  // Réponse brute GET /api/directions (complétée ci‑dessous avec les dossiers pour ne rien manquer)
   const [allDirections, setAllDirections] = useState<{ id: string; name: string }[]>([])
 
   const loadDirections = useCallback(async () => {
-    if (!user?.identifiant) return
-    try {
-      const params = new URLSearchParams({ identifiant: user.identifiant })
-      if (user.role) params.set('role', user.role)
-      if (user.direction_id) params.set('direction_id', user.direction_id)
-      const res = await fetch(`${API_BASE_URL}/api/directions/for-me?${params.toString()}`)
-      if (!res.ok) return
+    if (!user) return
+    const fetchOnce = async (): Promise<boolean> => {
+      const res = await fetch(`${API_BASE_URL}/api/directions`)
+      if (!res.ok) return false
       const data = (await res.json()) as Array<{ id: string; name: string }>
-      setAllDirections(data)
+      const rows = Array.isArray(data) ? data.filter((d) => d && typeof d.id === 'string') : []
+      setAllDirections(rows)
+      return true
+    }
+    try {
+      if (await fetchOnce()) return
+      await new Promise((r) => setTimeout(r, 600))
+      await fetchOnce()
     } catch {
-      // silent
+      try {
+        await new Promise((r) => setTimeout(r, 600))
+        await fetchOnce()
+      } catch {
+        /* ignore */
+      }
     }
   }, [user])
 
   useEffect(() => { loadDirections() }, [loadDirections])
+
+  // Si le premier chargement a échoué alors que des dossiers sont déjà là, réessayer une fois
+  const directionsRetryRef = useRef(false)
+  useEffect(() => {
+    if (!user) {
+      directionsRetryRef.current = false
+      return
+    }
+    if (allDirections.length > 0) {
+      directionsRetryRef.current = false
+      return
+    }
+    if (folderOptions.length === 0) return
+    if (directionsRetryRef.current) return
+    directionsRetryRef.current = true
+    loadDirections()
+  }, [user, allDirections.length, folderOptions.length, loadDirections])
 
   // Reload directions on WebSocket events (directions created/deleted)
   useEffect(() => {
@@ -145,18 +177,38 @@ function DashboardLayout() {
     groupedFolders: Record<string, { groupLabel: string; subfolders: { value: string; label: string }[] }>
   }
 
+  // Catalogue + toute direction déjà présente dans les dossiers (évite trous si l’API a raté ou est en retard)
+  const mergedDirectionsList = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>()
+    for (const d of allDirections) {
+      const id = normDirId(d.id)
+      if (!id) continue
+      byId.set(id, { id, name: (d.name && d.name.trim()) || id })
+    }
+    for (const f of folderOptions) {
+      const id = normDirId(f.direction_id || parseFolderKey(f.value).direction_id)
+      if (!id) continue
+      if (!byId.has(id)) {
+        const label = (f.direction_name && f.direction_name.trim()) || id
+        byId.set(id, { id, name: label })
+      }
+    }
+    return Array.from(byId.values())
+  }, [allDirections, folderOptions])
+
   const directionMap = useMemo(() => {
     const map: Record<string, DirectionEntry> = {}
 
-    allDirections.forEach((d) => {
+    mergedDirectionsList.forEach((d) => {
       if (!map[d.id]) {
         map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
       }
     })
 
     folderOptions.forEach((folder) => {
-      const dirId = folder.direction_id ?? 'unknown'
-      const dirName = folder.direction_name || dirId
+      const dirId = normDirId(folder.direction_id || parseFolderKey(folder.value).direction_id)
+      if (!dirId) return
+      const dirName = (folder.direction_name && folder.direction_name.trim()) || dirId
 
       if (!map[dirId]) {
         map[dirId] = { directionId: dirId, directionName: dirName, rootFolders: [], groupedFolders: {} }
@@ -190,7 +242,7 @@ function DashboardLayout() {
     }
 
     return map
-  }, [folderOptions, allDirections])
+  }, [folderOptions, mergedDirectionsList])
 
   // Sort directions alphabetically
   const sortedDirections = useMemo(

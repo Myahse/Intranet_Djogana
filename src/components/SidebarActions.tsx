@@ -134,17 +134,11 @@ export default function SidebarActions() {
     [folderOptions]
   )
 
-  // Directions the user may create content in: own direction + cross-direction grants (same as backend).
+  // Toutes les directions visibles dans les sélecteurs (les droits réels sont appliqués par l’API à l’enregistrement).
   const availableDirections = useMemo(() => {
     if (!user) return []
-    if (isAdmin) return directions
-    const allowed = new Set<string>()
-    if (user.direction_id) allowed.add(user.direction_id)
-    for (const id of user.granted_direction_ids ?? []) {
-      if (id) allowed.add(id)
-    }
-    return directions.filter((d) => allowed.has(d.id))
-  }, [directions, user, isAdmin])
+    return directions
+  }, [directions, user])
 
   // Set default direction when directions load
   useEffect(() => {
