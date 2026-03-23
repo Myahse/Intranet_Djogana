@@ -4496,7 +4496,8 @@ app.post('/api/files/register', async (req, res) => {
 // Query params: role, direction_id (user's direction), identifiant (pour inclure dossiers avec accès accordé)
 app.get('/api/folders', async (_req, res) => {
   try {
-    const { role, direction_id: userDirectionId, identifiant } = _req.query
+    const { role, direction_id: userDirectionIdRaw, identifiant } = _req.query
+    let userDirectionId = userDirectionIdRaw
 
     let sql = `
       SELECT DISTINCT f.id, f.name, f.direction_id, f.created_at, f.visibility, d.name AS direction_name
@@ -4509,8 +4510,14 @@ app.get('/api/folders', async (_req, res) => {
     // Si identifiant fourni, inclure aussi les dossiers pour lesquels l'utilisateur a un accès explicite (folder_access_grants)
     let userIdForGrants = null
     if (identifiant) {
-      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
-      if (u.rows.length > 0) userIdForGrants = u.rows[0].id
+      const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) {
+        userIdForGrants = u.rows[0].id
+        // Fallback: if direction_id is missing from query, use the user's DB direction.
+        if (!userDirectionId && u.rows[0].direction_id) {
+          userDirectionId = u.rows[0].direction_id
+        }
+      }
     }
 
     if (role && role !== 'admin') {
@@ -4728,12 +4735,19 @@ app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
 
 app.get('/api/files', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionId, identifiant } = req.query
+    const { folder, role, direction_id: userDirectionIdRaw, identifiant } = req.query
+    let userDirectionId = userDirectionIdRaw
 
     let userIdForFolderGrants = null
     if (identifiant) {
-      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
-      if (u.rows.length > 0) userIdForFolderGrants = u.rows[0].id
+      const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) {
+        userIdForFolderGrants = u.rows[0].id
+        // Fallback: if direction_id is missing from query, use the user's DB direction.
+        if (!userDirectionId && u.rows[0].direction_id) {
+          userDirectionId = u.rows[0].direction_id
+        }
+      }
     }
 
     const params = []
@@ -5180,12 +5194,19 @@ app.post('/api/links', async (req, res) => {
 
 app.get('/api/links', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionId, identifiant } = req.query
+    const { folder, role, direction_id: userDirectionIdRaw, identifiant } = req.query
+    let userDirectionId = userDirectionIdRaw
 
     let userIdForFolderGrants = null
     if (identifiant) {
-      const u = await pool.query('SELECT id FROM users WHERE identifiant = $1', [identifiant])
-      if (u.rows.length > 0) userIdForFolderGrants = u.rows[0].id
+      const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
+      if (u.rows.length > 0) {
+        userIdForFolderGrants = u.rows[0].id
+        // Fallback: if direction_id is missing from query, use the user's DB direction.
+        if (!userDirectionId && u.rows[0].direction_id) {
+          userDirectionId = u.rows[0].direction_id
+        }
+      }
     }
 
     const params = []
