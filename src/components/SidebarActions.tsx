@@ -134,12 +134,17 @@ export default function SidebarActions() {
     [folderOptions]
   )
 
-  // Direction list: all users can see/select all directions by default.
-  // Folder visibility rules (public / direction_only) are enforced by the backend.
+  // Directions the user may create content in: own direction + cross-direction grants (same as backend).
   const availableDirections = useMemo(() => {
     if (!user) return []
-    return directions
-  }, [directions, user])
+    if (isAdmin) return directions
+    const allowed = new Set<string>()
+    if (user.direction_id) allowed.add(user.direction_id)
+    for (const id of user.granted_direction_ids ?? []) {
+      if (id) allowed.add(id)
+    }
+    return directions.filter((d) => allowed.has(d.id))
+  }, [directions, user, isAdmin])
 
   // Set default direction when directions load
   useEffect(() => {
