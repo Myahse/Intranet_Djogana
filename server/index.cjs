@@ -13,6 +13,8 @@ const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
 const AdmZip = require('adm-zip')
+const path = require('path')
+const fs = require('fs')
 
 // ---------- Cloudinary ----------
 cloudinary.config({
@@ -5737,6 +5739,32 @@ const defaultPort = 3000
 const port = parseInt(process.env.PORT, 10) || defaultPort
 
 // Create HTTP server from the Express app so we can attach WebSocket
+// ---------- Frontend static serving (production) ----------
+// Serve Vite build from ../dist when available.
+const FRONTEND_DIST_DIR = path.resolve(__dirname, '..', 'dist')
+const FRONTEND_INDEX_FILE = path.join(FRONTEND_DIST_DIR, 'index.html')
+
+if (fs.existsSync(FRONTEND_DIST_DIR) && fs.existsSync(FRONTEND_INDEX_FILE)) {
+  app.use(express.static(FRONTEND_DIST_DIR))
+
+  // SPA fallback: serve index.html only for browser navigation routes.
+  // Important: do NOT return index.html for asset URLs (.js/.css/...), otherwise
+  // browsers fail with "Expected JavaScript module but got text/html".
+  app.get('*', (req, res, next) => {
+    if (
+      req.path.startsWith('/api/') ||
+      req.path.startsWith('/files/') ||
+      req.path.startsWith('/ws') ||
+      path.extname(req.path)
+    ) {
+      return next()
+    }
+    return res.sendFile(FRONTEND_INDEX_FILE)
+  })
+} else {
+  console.warn('[frontend] dist/index.html not found. Run `npm run build` to serve frontend from this server.')
+}
+
 const server = http.createServer(app)
 
 // WebSocket server mounted on the same HTTP server (path: /ws)
