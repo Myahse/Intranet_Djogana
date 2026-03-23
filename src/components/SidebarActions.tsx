@@ -134,32 +134,12 @@ export default function SidebarActions() {
     [folderOptions]
   )
 
-  // Filter directions: user can only select their own direction or granted directions
+  // Direction list: all users can see/select all directions by default.
+  // Folder visibility rules (public / direction_only) are enforced by the backend.
   const availableDirections = useMemo(() => {
-    if (isAdmin) return directions
     if (!user) return []
-    const accessibleIds = new Set<string>()
-    if (user.direction_id) {
-      accessibleIds.add(user.direction_id)
-    }
-    if (user.granted_direction_ids && user.granted_direction_ids.length > 0) {
-      user.granted_direction_ids.forEach((id) => {
-        if (id) accessibleIds.add(id)
-      })
-    }
-    const filtered = directions.filter((d) => accessibleIds.has(d.id))
-    // Debug log
-    if (import.meta.env.DEV) {
-      console.log('[SidebarActions] Available directions:', {
-        userDirectionId: user.direction_id,
-        grantedIds: user.granted_direction_ids,
-        accessibleIds: Array.from(accessibleIds),
-        filteredCount: filtered.length,
-        allDirectionsCount: directions.length,
-      })
-    }
-    return filtered
-  }, [directions, user, isAdmin])
+    return directions
+  }, [directions, user])
 
   // Set default direction when directions load
   useEffect(() => {
