@@ -5745,7 +5745,23 @@ const FRONTEND_DIST_DIR = path.resolve(__dirname, '..', 'dist')
 const FRONTEND_INDEX_FILE = path.join(FRONTEND_DIST_DIR, 'index.html')
 
 if (fs.existsSync(FRONTEND_DIST_DIR) && fs.existsSync(FRONTEND_INDEX_FILE)) {
-  app.use(express.static(FRONTEND_DIST_DIR))
+  // Never cache HTML at the edge/browser — stale index.html causes "module script is text/html"
+  // when old hashes (e.g. index-XXX.js) 404 and a proxy returns HTML instead of JS.
+  app.use(
+    express.static(FRONTEND_DIST_DIR, {
+      index: 'index.html',
+      setHeaders(res, filePath) {
+        const base = path.basename(filePath)
+        if (base === 'index.html' || filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+          res.setHeader('Pragma', 'no-cache')
+          res.setHeader('Expires', '0')
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        }
+      },
+    })
+  )
 
   // SPA fallback: serve index.html only for browser navigation routes.
   // Important: do NOT return index.html for asset URLs (.js/.css/...), otherwise
