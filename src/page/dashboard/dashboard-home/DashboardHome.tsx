@@ -879,6 +879,42 @@ const DashboardHome = (): ReactNode => {
     }
   }
 
+  const handleResetPassword = async (targetUser: { id: string; identifiant: string; role: string }) => {
+    const ok = await confirm({
+      title: `Réinitialiser le mot de passe de "${targetUser.identifiant}" ?`,
+      description: 'Le mot de passe sera réinitialisé à son identifiant et devra être changé à la prochaine connexion.',
+      confirmLabel: 'Réinitialiser',
+      variant: 'destructive',
+    })
+    if (!ok) return
+    setLoading({ open: true, message: `Réinitialisation du mot de passe de "${targetUser.identifiant}"…` })
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(targetUser.id)}/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error ?? 'Impossible de réinitialiser le mot de passe')
+      }
+      // Recharger la liste des utilisateurs pour refléter must_change_password si besoin
+      await loadUsersRolesDirections()
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Mot de passe réinitialisé' }))
+      toast.success('Mot de passe réinitialisé. L’utilisateur devra le changer à sa prochaine connexion.')
+    } catch (err) {
+      setLoading((s) => ({
+        ...s,
+        result: 'error',
+        resultMessage: err instanceof Error ? err.message : 'Erreur lors de la réinitialisation',
+      }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la réinitialisation')
+      console.error(err)
+    }
+  }
+
   const handleToggleChief = async (targetUser: { id: string; identifiant: string; is_direction_chief?: boolean }) => {
     const newValue = !targetUser.is_direction_chief
     try {
@@ -1177,7 +1213,7 @@ const DashboardHome = (): ReactNode => {
                       </td>
                     )}
                     <td className="px-3 py-2 text-right">
-                      {user?.identifiant !== u.identifiant ? (
+                          {user?.identifiant !== u.identifiant ? (
                         <div className="flex items-center justify-end gap-1">
                           {(isAdmin || user?.is_direction_chief) && u.role !== 'admin' && (
                             <Button
@@ -1204,6 +1240,18 @@ const DashboardHome = (): ReactNode => {
                           )}
                           {canDeleteUser && (
                             <>
+                              {isAdmin && u.role !== 'admin' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8 text-blue-600 hover:bg-blue-100"
+                                  onClick={() => handleResetPassword(u)}
+                                  aria-label={`Réinitialiser le mot de passe de ${u.identifiant}`}
+                                  title="Réinitialiser le mot de passe (revient à l'identifiant)"
+                                >
+                                  <RotateCcw className="size-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
