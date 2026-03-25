@@ -61,10 +61,10 @@ function formatFolderLabel(label: string): string {
   return label.replace(/::/g, ' / ')
 }
 
-/** Plusieurs noms : lignes, virgules, point-virgules ou barres verticales. */
+/** Plusieurs noms : lignes, tabulations, virgules, point-virgules ou barres verticales. */
 function splitFolderNames(raw: string): string[] {
   return raw
-    .split(/\r?\n|[,;|]+/)
+    .split(/\r?\n|[,;|\t]+/)
     .map((s) => s.trim())
     .filter(Boolean)
 }
