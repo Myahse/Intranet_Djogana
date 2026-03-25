@@ -179,6 +179,7 @@ export default function NotificationHandler() {
       // Notifications document / accès / compte : pas de demande de connexion, on ouvre juste l'app
       if (
         data?.type === "document_uploaded" ||
+        data?.type === "folder_created" ||
         data?.type === "direction_access_granted" ||
         data?.type === "folder_access_granted" ||
         data?.type === "user_suspended" ||
@@ -186,7 +187,7 @@ export default function NotificationHandler() {
         data?.type === "password_changed" ||
         data?.type === "profile_updated"
       ) {
-        router.push("/approve-requests");
+        router.push("/fil-actualite");
         return;
       }
 

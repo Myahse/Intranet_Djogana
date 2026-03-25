@@ -77,6 +77,9 @@ type DocumentsContextValue = {
   removeLink: (id: string) => Promise<void>
   renameFile: (id: string, name: string) => Promise<string>
   removeFolder: (folderKey: string) => Promise<void>
+  renameFolderPath: (folderKey: string, newName: string) => Promise<void>
+  deleteFolderTree: (folderKeyOrGroupKey: string) => Promise<void>
+  moveFolderInto: (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null) => Promise<void>
   setFolderVisibility: (folderId: string, visibility: 'public' | 'direction_only') => Promise<void>
   folderOptions: FolderOption[]
 }
@@ -735,6 +738,86 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     [items, user?.identifiant, sendWs]
   )
 
+  const renameFolderPath = useCallback(
+    async (folderKey: string, newName: string) => {
+      const { direction_id, name } = parseFolderKey(folderKey)
+      const identifiant = user?.identifiant ?? ''
+      const trimmed = (newName || '').trim()
+      if (!direction_id) throw new Error('Direction manquante pour renommer le dossier.')
+      if (!name) throw new Error('Dossier introuvable.')
+      if (!trimmed) throw new Error('Nouveau nom requis.')
+
+      const res = await fetch(`${API_BASE_URL}/api/folders/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          direction_id,
+          old_name: name,
+          new_name: trimmed,
+          identifiant,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec du renommage du dossier')
+      }
+      sendWs({ type: 'action', action: 'rename_folder', detail: `${name} → ${trimmed}` })
+    },
+    [user?.identifiant, sendWs]
+  )
+
+  const deleteFolderTree = useCallback(
+    async (folderKeyOrGroupKey: string) => {
+      const parsed = parseFolderKey(folderKeyOrGroupKey)
+      const direction_id = parsed.direction_id
+      const name = parsed.name || folderKeyOrGroupKey
+      const identifiant = user?.identifiant ?? ''
+      if (!direction_id) throw new Error('Direction manquante pour supprimer le dossier.')
+      if (!name) throw new Error('Dossier introuvable.')
+
+      const res = await fetch(`${API_BASE_URL}/api/folders-tree`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction_id, name, identifiant }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de la suppression du dossier')
+      }
+      sendWs({ type: 'action', action: 'delete_folder', detail: name })
+    },
+    [user?.identifiant, sendWs]
+  )
+
+  const moveFolderInto = useCallback(
+    async (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null) => {
+      const srcParsed = parseFolderKey(sourceKeyOrGroupKey)
+      const direction_id = srcParsed.direction_id
+      const source_name = srcParsed.name || sourceKeyOrGroupKey
+      const identifiant = user?.identifiant ?? ''
+      if (!direction_id) throw new Error('Direction manquante pour déplacer le dossier.')
+      if (!source_name) throw new Error('Dossier source introuvable.')
+
+      let target_name: string | null = null
+      if (targetFolderKeyOrGroupKey) {
+        const tgtParsed = parseFolderKey(targetFolderKeyOrGroupKey)
+        target_name = tgtParsed.name || targetFolderKeyOrGroupKey
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/folders/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction_id, source_name, target_name, identifiant }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec du déplacement du dossier')
+      }
+      sendWs({ type: 'action', action: 'move_folder', detail: `${source_name} → ${target_name ?? 'Racine'}` })
+    },
+    [user?.identifiant, sendWs]
+  )
+
   const setFolderVisibility = useCallback(
     async (folderId: string, visibility: 'public' | 'direction_only') => {
       const identifiant = user?.identifiant ?? ''
@@ -768,10 +851,13 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       removeLink,
       renameFile,
       removeFolder,
+      renameFolderPath,
+      deleteFolderTree,
+      moveFolderInto,
       setFolderVisibility,
       folderOptions,
     }),
-    [getFiles, getLinks, addFile, addLink, addFolder, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, setFolderVisibility, folderOptions]
+    [getFiles, getLinks, addFile, addLink, addFolder, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, setFolderVisibility, folderOptions]
   )
 
   return (

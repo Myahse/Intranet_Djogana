@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import folderSvg from '@/assets/svgs/Group 54.svg'
 import folderFilledSvg from '@/assets/svgs/Group 55.svg'
@@ -29,6 +29,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -981,6 +988,9 @@ function FolderGrid({
   onSortChange,
   setViewMode: setVm,
   buildLink,
+  onRenameFolder,
+  onDeleteFolder,
+  onMoveFolderInto,
 }: {
   folders: FolderEntry[]
   viewMode: ViewMode
@@ -990,12 +1000,71 @@ function FolderGrid({
   setViewMode: (mode: ViewMode) => void
   folderHasFiles?: Record<string, boolean>
   buildLink: (key: string) => string
+  onRenameFolder?: (folderKeyOrGroupKey: string) => void
+  onDeleteFolder?: (folderKeyOrGroupKey: string) => void
+  onMoveFolderInto?: (sourceKeyOrGroupKey: string, targetKeyOrGroupKey: string) => void
 }) {
   const sorted = sortFolders(folders, sortField, sortDir)
   const folderGridRef = useRef<HTMLDivElement>(null)
   useStaggerChildren(folderGridRef, '> *', [viewMode, sortField, sortDir, folders.length])
 
   if (folders.length === 0) return null
+
+  const renderFolderLink = (f: FolderEntry, className: string, children: ReactNode) => {
+    const parsedKey = parseFolderKey(f.key)
+    const isManagedKey = Boolean(parsedKey.direction_id)
+    const link = (
+      <Link
+        key={f.key}
+        to={buildLink(f.key)}
+        className={className}
+        draggable={!!onMoveFolderInto && isManagedKey}
+        onDragStart={(e) => {
+          if (!onMoveFolderInto || !isManagedKey) return
+          e.dataTransfer.setData('text/plain', f.key)
+          e.dataTransfer.effectAllowed = 'move'
+        }}
+        onDragOver={(e) => {
+          if (!onMoveFolderInto || !isManagedKey) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+        }}
+        onDrop={(e) => {
+          if (!onMoveFolderInto || !isManagedKey) return
+          e.preventDefault()
+          const src = e.dataTransfer.getData('text/plain')
+          if (src && src !== f.key) onMoveFolderInto(src, f.key)
+        }}
+      >
+        {children}
+      </Link>
+    )
+
+    if (!isManagedKey || (!onRenameFolder && !onDeleteFolder)) return link
+
+    return (
+      <ContextMenu key={f.key}>
+        <ContextMenuTrigger asChild>{link}</ContextMenuTrigger>
+        <ContextMenuContent>
+          {onRenameFolder && (
+            <ContextMenuItem onSelect={() => onRenameFolder(f.key)}>
+              <Pencil className="size-4" />
+              Renommer
+            </ContextMenuItem>
+          )}
+          {onDeleteFolder && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem variant="destructive" onSelect={() => onDeleteFolder(f.key)}>
+                <Trash2 className="size-4" />
+                Supprimer
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+    )
+  }
 
   return (
     <>
@@ -1011,43 +1080,43 @@ function FolderGrid({
 
       {viewMode === 'tiles' && (
         <div ref={folderGridRef} className="grid grid-cols-2 gap-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {sorted.map((f) => (
-            <Link
-              key={f.key}
-              to={buildLink(f.key)}
-              className="flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0"
-            >
-              <img
-                src={f.hasFiles ? folderFilledSvg : folderSvg}
-                alt=""
-                className="h-24 w-auto max-w-full sm:h-28"
-              />
-              <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={f.label}>
-                {f.label}
-              </span>
-            </Link>
-          ))}
+          {sorted.map((f) =>
+            renderFolderLink(
+              f,
+              "flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 overflow-hidden min-w-0",
+              <>
+                <img
+                  src={f.hasFiles ? folderFilledSvg : folderSvg}
+                  alt=""
+                  className="h-24 w-auto max-w-full sm:h-28"
+                />
+                <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={f.label}>
+                  {f.label}
+                </span>
+              </>
+            )
+          )}
         </div>
       )}
 
       {viewMode === 'list' && (
         <div className="flex flex-col divide-y">
-          {sorted.map((f) => (
-            <Link
-              key={f.key}
-              to={buildLink(f.key)}
-              className="flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50"
-            >
-              <img
-                src={f.hasFiles ? folderFilledSvg : folderSvg}
-                alt=""
-                className="w-8 h-auto object-contain shrink-0"
-              />
-              <span className="flex-1 min-w-0 truncate text-sm font-medium" title={f.label}>
-                {f.label}
-              </span>
-            </Link>
-          ))}
+          {sorted.map((f) =>
+            renderFolderLink(
+              f,
+              "flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50",
+              <>
+                <img
+                  src={f.hasFiles ? folderFilledSvg : folderSvg}
+                  alt=""
+                  className="w-8 h-auto object-contain shrink-0"
+                />
+                <span className="flex-1 min-w-0 truncate text-sm font-medium" title={f.label}>
+                  {f.label}
+                </span>
+              </>
+            )
+          )}
         </div>
       )}
 
@@ -1060,24 +1129,24 @@ function FolderGrid({
             <span className="hidden lg:block w-16 text-center shrink-0">Type</span>
           </div>
           <div className="flex flex-col divide-y">
-            {sorted.map((f) => (
-              <Link
-                key={f.key}
-                to={buildLink(f.key)}
-                className="flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50"
-              >
-                <img
-                  src={f.hasFiles ? folderFilledSvg : folderSvg}
-                  alt=""
-                  className="w-8 h-auto object-contain shrink-0"
-                />
-                <span className="flex-1 min-w-0 truncate text-sm font-medium" title={f.label}>
-                  {f.label}
-                </span>
-                <span className="hidden md:block w-20 text-right text-xs text-muted-foreground shrink-0">—</span>
-                <span className="hidden lg:block w-16 text-center text-xs text-muted-foreground shrink-0 uppercase">Dossier</span>
-              </Link>
-            ))}
+            {sorted.map((f) =>
+              renderFolderLink(
+                f,
+                "flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50",
+                <>
+                  <img
+                    src={f.hasFiles ? folderFilledSvg : folderSvg}
+                    alt=""
+                    className="w-8 h-auto object-contain shrink-0"
+                  />
+                  <span className="flex-1 min-w-0 truncate text-sm font-medium" title={f.label}>
+                    {f.label}
+                  </span>
+                  <span className="hidden md:block w-20 text-right text-xs text-muted-foreground shrink-0">—</span>
+                  <span className="hidden lg:block w-16 text-center text-xs text-muted-foreground shrink-0 uppercase">Dossier</span>
+                </>
+              )
+            )}
           </div>
         </div>
       )}
@@ -1096,17 +1165,81 @@ const DocumentSection = () => {
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
-  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, folderOptions } = useDocuments()
+  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, folderOptions } = useDocuments()
   const { user, isAdmin, sendWs } = useAuth()
   const { contentFilter } = useDashboardFilter()
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
+  const [renameFolderOpen, setRenameFolderOpen] = useState(false)
+  const [renameFolderKey, setRenameFolderKey] = useState<string | null>(null)
+  const [renameFolderValue, setRenameFolderValue] = useState('')
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadFileName, setUploadFileName] = useState('')
   const uploadFileRef = useRef<HTMLInputElement>(null)
   const filesGridRef = useRef<HTMLDivElement>(null)
   useStaggerChildren(filesGridRef, '> *', [folderKey, directionId, pathname])
+
+  const openRenameFolder = useCallback((key: string) => {
+    setRenameFolderKey(key)
+    setRenameFolderValue(formatName(parseFolderKey(key).name || key))
+    setRenameFolderOpen(true)
+  }, [])
+
+  const submitRenameFolder = useCallback(async () => {
+    if (!renameFolderKey) return
+    const trimmed = renameFolderValue.replace(/\s*\/\s*/g, '::').trim()
+    if (!trimmed) return
+    setLoading({ open: true, message: 'Renommage du dossier…' })
+    try {
+      await renameFolderPath(renameFolderKey, trimmed)
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier renommé' }))
+      toast.success('Dossier renommé')
+      setRenameFolderOpen(false)
+    } catch (err) {
+      console.error(err)
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors du renommage' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du renommage')
+    }
+  }, [renameFolderKey, renameFolderValue, renameFolderPath])
+
+  const handleDeleteFolderTree = useCallback(async (key: string) => {
+    const parsed = parseFolderKey(key)
+    const display = formatName(parsed.name || key)
+    const ok = await confirm({
+      title: 'Supprimer ce dossier ?',
+      description: `« ${display} » et ses sous-dossiers seront supprimés.`,
+      confirmLabel: 'Supprimer',
+      variant: 'destructive',
+    })
+    if (!ok) return
+    setLoading({ open: true, message: 'Suppression du dossier…' })
+    try {
+      await deleteFolderTree(key)
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
+      toast.success('Dossier supprimé')
+      // If user is currently inside this subtree, go back.
+      if (folderKey && (folderKey === key || folderKey.startsWith(`${key}::`))) navigate('/dashboard/documents')
+    } catch (err) {
+      console.error(err)
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression')
+    }
+  }, [confirm, deleteFolderTree, folderKey, navigate])
+
+  const handleMoveFolderInto = useCallback(async (src: string, target: string) => {
+    if (!src || !target || src === target) return
+    setLoading({ open: true, message: 'Déplacement du dossier…' })
+    try {
+      await moveFolderInto(src, target)
+      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier déplacé' }))
+      toast.success('Dossier déplacé')
+    } catch (err) {
+      console.error(err)
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors du déplacement' }))
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du déplacement')
+    }
+  }, [moveFolderInto])
 
   // View & sort state — persisted per user in localStorage
   const storageKey = user?.identifiant ? `doc_prefs_${user.identifiant}` : null
@@ -1268,6 +1401,8 @@ const DocumentSection = () => {
 
     return (
       <div className="p-6">
+        <ConfirmDialog />
+        <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
         <div className="mb-8 flex items-center gap-2">
           <button
             type="button"
@@ -1289,12 +1424,39 @@ const DocumentSection = () => {
             setViewMode={setViewMode}
             folderHasFiles={dirFolderHasFiles}
             buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+            onRenameFolder={openRenameFolder}
+            onDeleteFolder={handleDeleteFolderTree}
+            onMoveFolderInto={handleMoveFolderInto}
           />
         ) : (
           <p className="text-muted-foreground">
             Aucun dossier dans cette direction pour le moment.
           </p>
         )}
+        {/* Rename folder dialog (context menu) */}
+        <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Renommer le dossier</DialogTitle>
+              <DialogDescription>
+                Utilisez “ / ” pour les niveaux (ex. `Module 1 / Cours`).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="rename-folder-input-direction">Nom</Label>
+              <Input
+                id="rename-folder-input-direction"
+                value={renameFolderValue}
+                onChange={(e) => setRenameFolderValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && renameFolderValue.trim()) submitRenameFolder() }}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRenameFolderOpen(false)}>Annuler</Button>
+              <Button onClick={submitRenameFolder} disabled={!renameFolderValue.trim()}>Enregistrer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     )
   }
@@ -1736,6 +1898,30 @@ const DocumentSection = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Rename folder dialog (context menu) */}
+      <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Renommer le dossier</DialogTitle>
+            <DialogDescription>
+              Utilisez “ / ” pour les niveaux (ex. `Module 1 / Cours`).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="rename-folder-input">Nom</Label>
+            <Input
+              id="rename-folder-input"
+              value={renameFolderValue}
+              onChange={(e) => setRenameFolderValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && renameFolderValue.trim()) submitRenameFolder() }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameFolderOpen(false)}>Annuler</Button>
+            <Button onClick={submitRenameFolder} disabled={!renameFolderValue.trim()}>Enregistrer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     )
   }
@@ -1797,6 +1983,8 @@ const DocumentSection = () => {
 
     return (
       <div className="p-6">
+        <ConfirmDialog />
+        <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
         <div className="mb-8 flex items-center gap-2">
           <button
             type="button"
@@ -1818,12 +2006,39 @@ const DocumentSection = () => {
             setViewMode={setViewMode}
             folderHasFiles={folderHasFiles}
             buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+            onRenameFolder={openRenameFolder}
+            onDeleteFolder={handleDeleteFolderTree}
+            onMoveFolderInto={handleMoveFolderInto}
           />
         ) : (
           <p className="text-muted-foreground">
             Aucun sous-dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
           </p>
         )}
+        {/* Rename folder dialog (context menu) */}
+        <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Renommer le dossier</DialogTitle>
+              <DialogDescription>
+                Utilisez “ / ” pour les niveaux (ex. `Module 1 / Cours`).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="rename-folder-input-group">Nom</Label>
+              <Input
+                id="rename-folder-input-group"
+                value={renameFolderValue}
+                onChange={(e) => setRenameFolderValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && renameFolderValue.trim()) submitRenameFolder() }}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRenameFolderOpen(false)}>Annuler</Button>
+              <Button onClick={submitRenameFolder} disabled={!renameFolderValue.trim()}>Enregistrer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     )
   }
@@ -1844,6 +2059,8 @@ const DocumentSection = () => {
 
   return (
     <div className="p-6">
+      <ConfirmDialog />
+      <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
       <h1 className="mb-8 text-2xl font-semibold">{title}</h1>
       {allFolderEntries.length > 0 ? (
         <FolderGrid
@@ -1855,12 +2072,39 @@ const DocumentSection = () => {
           setViewMode={setViewMode}
           folderHasFiles={folderHasFiles}
           buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+          onRenameFolder={openRenameFolder}
+          onDeleteFolder={handleDeleteFolderTree}
+          onMoveFolderInto={handleMoveFolderInto}
         />
       ) : (
         <p className="text-muted-foreground">
           Aucun dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
         </p>
       )}
+      {/* Rename folder dialog (context menu) */}
+      <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Renommer le dossier</DialogTitle>
+            <DialogDescription>
+              Utilisez “ / ” pour les niveaux (ex. `Module 1 / Cours`).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="rename-folder-input-root">Nom</Label>
+            <Input
+              id="rename-folder-input-root"
+              value={renameFolderValue}
+              onChange={(e) => setRenameFolderValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && renameFolderValue.trim()) submitRenameFolder() }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameFolderOpen(false)}>Annuler</Button>
+            <Button onClick={submitRenameFolder} disabled={!renameFolderValue.trim()}>Enregistrer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

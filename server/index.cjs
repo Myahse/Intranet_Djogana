@@ -3276,6 +3276,84 @@ app.get('/api/activity-log', requireAuth, async (req, res) => {
   }
 })
 
+// ---------- Mobile "Fil d'actualité" ----------
+// A lightweight feed for the mobile app (all authenticated users can access it).
+// Returns recent platform events (folders/files/users/directions) without requiring can_view_activity_log.
+app.get('/api/feed', requireAuth, async (req, res) => {
+  try {
+    const identifiant = req.authIdentifiant
+    const { limit = 50, offset = 0 } = req.query || {}
+    const limitNum = Math.min(parseInt(limit, 10) || 50, 200)
+    const offsetNum = Math.max(0, parseInt(offset, 10) || 0)
+
+    const userRes = await pool.query(
+      'SELECT role, direction_id FROM users WHERE identifiant = $1',
+      [identifiant]
+    )
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'Utilisateur introuvable.' })
+    }
+    const user = userRes.rows[0]
+
+    // Show a curated subset of actions (most relevant for notifications)
+    const actions = [
+      'create_folder',
+      'rename_folder',
+      'move_folder',
+      'delete_folder',
+      'delete_folder_tree',
+      'upload_file',
+      'delete_file',
+      'create_link',
+      'delete_link',
+      'direction_access_granted',
+      'folder_access_granted',
+      'profile_updated',
+      'user_suspended',
+      'user_restored',
+    ]
+
+    const params = [actions]
+    let sql = `
+      SELECT a.id, a.action, a.actor_identifiant, a.direction_id, a.entity_type, a.entity_id, a.details, a.created_at,
+             d.name AS direction_name,
+             u.name AS actor_name, u.prenoms AS actor_prenoms
+      FROM activity_log a
+      LEFT JOIN directions d ON d.id = a.direction_id
+      LEFT JOIN users u ON a.actor_identifiant = u.identifiant
+      WHERE a.action = ANY($1)
+    `
+
+    // By default, non-admin sees only their direction events *plus* global events (direction_id NULL)
+    if (user.role !== 'admin') {
+      params.push(user.direction_id)
+      sql += ` AND (a.direction_id IS NULL OR a.direction_id = $2)`
+    }
+
+    sql += ` ORDER BY a.created_at DESC LIMIT ${limitNum} OFFSET ${offsetNum}`
+
+    const result = await pool.query(sql, params)
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        action: row.action,
+        actor_identifiant: row.actor_identifiant,
+        actor_name: row.actor_name || '',
+        actor_prenoms: row.actor_prenoms || '',
+        direction_id: row.direction_id,
+        direction_name: row.direction_name,
+        entity_type: row.entity_type,
+        entity_id: row.entity_id,
+        details: row.details,
+        created_at: row.created_at,
+      }))
+    )
+  } catch (err) {
+    console.error('feed list error', err)
+    return res.status(500).json({ error: 'Erreur lors de la récupération du fil d’actualité.' })
+  }
+})
+
 // Helper: build activity log query and params (shared between list and export)
 function buildActivityLogQuery(user, filters, limit = 10000, offset = 0) {
   const {
@@ -3631,6 +3709,17 @@ async function getIdentifiantsToNotifyForFolder(folderId, excludeIdentifiant = n
     [folderId]
   )
   const set = new Set([...directionIdentifiants, ...folderGrants.rows.map((r) => r.identifiant)])
+  if (excludeIdentifiant) set.delete(excludeIdentifiant)
+  return [...set]
+}
+
+/**
+ * Get list of ALL active user identifiants (optionally excluding one).
+ * Used when we want to notify the whole platform (not direction-scoped).
+ */
+async function getIdentifiantsToNotifyAll(excludeIdentifiant = null) {
+  const all = await pool.query('SELECT identifiant FROM users WHERE is_suspended = false')
+  const set = new Set(all.rows.map((r) => r.identifiant).filter(Boolean))
   if (excludeIdentifiant) set.delete(excludeIdentifiant)
   return [...set]
 }
@@ -4661,6 +4750,17 @@ app.post('/api/folders', async (req, res) => {
     })
 
     broadcastDataChange('folders', 'created', { id, directionId })
+    // Notify all users on the platform (mobile app)
+    getIdentifiantsToNotifyAll(identifiant || null)
+      .then((idents) =>
+        sendPushToIdentifiants(
+          idents,
+          'Nouveau dossier',
+          `Un nouveau dossier a été créé : ${name}`,
+          { type: 'folder_created', folder_name: name, direction_id: directionId }
+        )
+      )
+      .catch((err) => console.error('[push] folder_created', err))
     return res.status(201).json({ id, name, direction_id: directionId, visibility })
   } catch (err) {
     if (err && err.code === '23505') {
@@ -4669,6 +4769,217 @@ app.post('/api/folders', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('folder create error', err)
     return res.status(500).json({ error: 'Erreur lors de la création du dossier.' })
+  }
+})
+
+// Rename a folder "path" (also renames subfolders + updates files/links folder fields)
+// Body: { direction_id, old_name, new_name, identifiant }
+app.patch('/api/folders/rename', async (req, res) => {
+  try {
+    const { direction_id: directionId, old_name: oldNameRaw, new_name: newNameRaw, identifiant } = req.body || {}
+    const oldName = (oldNameRaw || '').trim()
+    const newName = (newNameRaw || '').trim()
+    if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
+    if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
+    if (!oldName || !newName) return res.status(400).json({ error: 'Ancien et nouveau nom requis.' })
+
+    const userRes = await pool.query('SELECT id, role, direction_id FROM users WHERE identifiant = $1', [identifiant])
+    if (userRes.rows.length === 0) return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    const user = userRes.rows[0]
+    if (user.role !== 'admin' && user.direction_id !== directionId) {
+      return res.status(403).json({ error: 'Vous ne pouvez renommer que les dossiers de votre direction.' })
+    }
+
+    // Prevent conflicts
+    const conflict = await pool.query(
+      'SELECT 1 FROM folders WHERE direction_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1',
+      [directionId, newName]
+    )
+    if (conflict.rows.length > 0) return res.status(409).json({ error: 'Un dossier avec ce nom existe déjà.' })
+
+    // Rename subtree: folders + files + links (soft-deleted are ignored)
+    const folderRows = await pool.query(
+      `SELECT id, name FROM folders
+       WHERE direction_id = $1 AND deleted_at IS NULL
+         AND (name = $2 OR name LIKE $3)`,
+      [directionId, oldName, `${oldName}::%`]
+    )
+    if (folderRows.rows.length === 0) return res.status(404).json({ error: 'Dossier introuvable.' })
+
+    // Apply updates deterministically
+    for (const row of folderRows.rows) {
+      const current = row.name
+      const next = current === oldName ? newName : newName + current.slice(oldName.length)
+      await pool.query('UPDATE folders SET name = $1 WHERE id = $2', [next, row.id])
+    }
+    await pool.query(
+      `UPDATE files SET folder = $1 || substring(folder from $2)
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [newName, oldName.length + 1, directionId, oldName, `${oldName}::%`]
+    )
+    await pool.query(
+      `UPDATE links SET folder = $1 || substring(folder from $2)
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [newName, oldName.length + 1, directionId, oldName, `${oldName}::%`]
+    )
+
+    await insertActivityLog(pool, {
+      action: 'rename_folder',
+      actorIdentifiant: identifiant || null,
+      actorId: user.id,
+      directionId,
+      entityType: 'folder',
+      entityId: null,
+      details: { oldName, newName },
+    })
+    broadcastDataChange('folders', 'updated', { directionId })
+    broadcastDataChange('files', 'updated', { directionId })
+    broadcastDataChange('links', 'updated', { directionId })
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('folder rename error', err)
+    return res.status(500).json({ error: 'Erreur lors du renommage du dossier.' })
+  }
+})
+
+// Move a folder into another folder (same direction) by rewriting the path prefix.
+// Body: { direction_id, source_name, target_name|null, identifiant }
+app.post('/api/folders/move', async (req, res) => {
+  try {
+    const { direction_id: directionId, source_name: sourceRaw, target_name: targetRaw, identifiant } = req.body || {}
+    const source = (sourceRaw || '').trim()
+    const target = targetRaw === null || targetRaw === undefined ? null : String(targetRaw).trim()
+    if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
+    if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
+    if (!source) return res.status(400).json({ error: 'Dossier source requis.' })
+
+    const userRes = await pool.query('SELECT id, role, direction_id FROM users WHERE identifiant = $1', [identifiant])
+    if (userRes.rows.length === 0) return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    const user = userRes.rows[0]
+    if (user.role !== 'admin' && user.direction_id !== directionId) {
+      return res.status(403).json({ error: 'Vous ne pouvez déplacer que les dossiers de votre direction.' })
+    }
+
+    const baseName = source.includes('::') ? source.split('::').pop() : source
+    const nextName = target ? `${target}::${baseName}` : baseName
+
+    if (target && (target === source || target.startsWith(`${source}::`))) {
+      return res.status(400).json({ error: 'Impossible de déplacer un dossier dans lui-même.' })
+    }
+
+    // If target is provided, ensure target exists (as a folder or as a group root)
+    if (target) {
+      const targetExists = await pool.query(
+        `SELECT 1 FROM folders WHERE direction_id = $1 AND deleted_at IS NULL
+          AND (name = $2 OR name LIKE $3) LIMIT 1`,
+        [directionId, target, `${target}::%`]
+      )
+      if (targetExists.rows.length === 0) return res.status(404).json({ error: 'Dossier cible introuvable.' })
+    }
+
+    // Prevent conflicts at destination
+    const conflict = await pool.query(
+      'SELECT 1 FROM folders WHERE direction_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1',
+      [directionId, nextName]
+    )
+    if (conflict.rows.length > 0) return res.status(409).json({ error: 'Un dossier avec ce nom existe déjà à cet emplacement.' })
+
+    // Reuse rename logic by renaming prefix source -> nextName
+    req.body = { direction_id: directionId, old_name: source, new_name: nextName, identifiant }
+    // Call handler inline by duplicating minimal behavior (avoid refactor in this patch)
+    const folderRows = await pool.query(
+      `SELECT id, name FROM folders
+       WHERE direction_id = $1 AND deleted_at IS NULL
+         AND (name = $2 OR name LIKE $3)`,
+      [directionId, source, `${source}::%`]
+    )
+    if (folderRows.rows.length === 0) return res.status(404).json({ error: 'Dossier source introuvable.' })
+    for (const row of folderRows.rows) {
+      const current = row.name
+      const next = current === source ? nextName : nextName + current.slice(source.length)
+      await pool.query('UPDATE folders SET name = $1 WHERE id = $2', [next, row.id])
+    }
+    await pool.query(
+      `UPDATE files SET folder = $1 || substring(folder from $2)
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [nextName, source.length + 1, directionId, source, `${source}::%`]
+    )
+    await pool.query(
+      `UPDATE links SET folder = $1 || substring(folder from $2)
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [nextName, source.length + 1, directionId, source, `${source}::%`]
+    )
+
+    await insertActivityLog(pool, {
+      action: 'move_folder',
+      actorIdentifiant: identifiant || null,
+      actorId: user.id,
+      directionId,
+      entityType: 'folder',
+      entityId: null,
+      details: { source, target: target || null, newName: nextName },
+    })
+    broadcastDataChange('folders', 'updated', { directionId })
+    broadcastDataChange('files', 'updated', { directionId })
+    broadcastDataChange('links', 'updated', { directionId })
+    return res.json({ ok: true, name: nextName })
+  } catch (err) {
+    console.error('folder move error', err)
+    return res.status(500).json({ error: 'Erreur lors du déplacement du dossier.' })
+  }
+})
+
+// Delete a folder tree: deletes a folder and any subfolders (name prefix match)
+// Body: { direction_id, name, identifiant }
+app.delete('/api/folders-tree', async (req, res) => {
+  try {
+    const { direction_id: directionId, name: nameRaw, identifiant } = req.body || {}
+    const name = (nameRaw || '').trim()
+    if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
+    if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
+    if (!name) return res.status(400).json({ error: 'Nom du dossier requis.' })
+
+    const userRes = await pool.query('SELECT id, role, direction_id FROM users WHERE identifiant = $1', [identifiant])
+    if (userRes.rows.length === 0) return res.status(401).json({ error: 'Utilisateur non trouvé.' })
+    const user = userRes.rows[0]
+    if (user.role !== 'admin' && user.direction_id !== directionId) {
+      return res.status(403).json({ error: 'Vous ne pouvez supprimer que les dossiers de votre direction.' })
+    }
+
+    const now = new Date().toISOString()
+    // Soft-delete: all matching folders + their content
+    await pool.query(
+      `UPDATE folders SET deleted_at = $1, deleted_by = $2
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (name = $4 OR name LIKE $5)`,
+      [now, identifiant || null, directionId, name, `${name}::%`]
+    )
+    await pool.query(
+      `UPDATE files SET deleted_at = $1, deleted_by = $2
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [now, identifiant || null, directionId, name, `${name}::%`]
+    )
+    await pool.query(
+      `UPDATE links SET deleted_at = $1, deleted_by = $2
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+      [now, identifiant || null, directionId, name, `${name}::%`]
+    )
+
+    await insertActivityLog(pool, {
+      action: 'delete_folder_tree',
+      actorIdentifiant: identifiant || null,
+      actorId: user.id,
+      directionId,
+      entityType: 'folder',
+      entityId: null,
+      details: { name },
+    })
+    broadcastDataChange('folders', 'deleted', { directionId })
+    broadcastDataChange('files', 'deleted', { directionId })
+    broadcastDataChange('links', 'deleted', { directionId })
+    return res.status(204).send()
+  } catch (err) {
+    console.error('folder tree delete error', err)
+    return res.status(500).json({ error: 'Erreur lors de la suppression du dossier.' })
   }
 })
 

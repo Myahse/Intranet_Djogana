@@ -225,6 +225,47 @@ export async function denyDeviceRequest(
   }
 }
 
+// ── Fil d'actualité (mobile) ──
+export type FeedItem = {
+  id: string;
+  action: string;
+  actor_identifiant?: string | null;
+  actor_name?: string;
+  actor_prenoms?: string;
+  direction_id?: string | null;
+  direction_name?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  details?: unknown;
+  created_at?: string;
+};
+
+export type ListFeedResult =
+  | { ok: true; items: FeedItem[] }
+  | { ok: false; networkError: boolean; forbidden?: boolean };
+
+export async function listFeed(
+  token: string,
+  opts?: { limit?: number; offset?: number }
+): Promise<ListFeedResult> {
+  try {
+    const base = await getApiBaseUrl();
+    const qs = new URLSearchParams();
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    if (opts?.offset) qs.set("offset", String(opts.offset));
+    const url = `${base}/api/feed${qs.toString() ? `?${qs.toString()}` : ""}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 403) return { ok: false, networkError: false, forbidden: true };
+    if (!res.ok) return { ok: false, networkError: false };
+    const data = (await res.json()) as FeedItem[];
+    return { ok: true, items: data };
+  } catch {
+    return { ok: false, networkError: true };
+  }
+}
+
 export async function getPushTokenStatus(
   token: string
 ): Promise<{ registered: boolean }> {
