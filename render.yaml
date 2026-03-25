@@ -1,11 +1,15 @@
 # Render.com Web Service — https://render.com/docs/blueprint-spec
-# Set DATABASE_URL, JWT_SECRET, PUBLIC_BASE_URL, etc. in the Render dashboard (Environment).
+# Set DATABASE_URL, JWT_SECRET, PUBLIC_BASE_URL, VITE_ANDROID_APK_URL, etc. in the dashboard.
+#
+# IMPORTANT: Do NOT use `npm install --omit=dev` as the build command. Vite + TypeScript live in
+# devDependencies — you need a full install to run `npm run build`, then `npm prune` removes dev
+# deps after `dist/` is produced (smaller runtime image).
 
 services:
   - type: web
     name: intranet-djogana
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm run render:build
     startCommand: npm run start
     envVars:
       - key: NODE_VERSION
