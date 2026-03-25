@@ -26,7 +26,8 @@ export async function setupNotificationCategories(): Promise<void> {
         Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
       enableLights: true,
-      sound: "default",
+      // Nom sans extension = fichier mixkit_correct_answer_tone_2870.wav (règles Android : pas de tirets)
+      sound: "mixkit_correct_answer_tone_2870",
     });
   }
 

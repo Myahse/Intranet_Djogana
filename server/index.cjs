@@ -2924,7 +2924,8 @@ app.post('/api/auth/device/request', async (req, res) => {
                   payload: {
                     aps: {
                       category: 'approval_request',  // iOS notification category
-                      sound: 'default',
+                      // Fichier dans le bundle iOS (assets/sounds/mixkit_correct_answer_tone_2870.wav)
+                      sound: 'mixkit_correct_answer_tone_2870.wav',
                       'content-available': 1,
                       alert: {
                         title: 'Nouvelle demande de connexion',

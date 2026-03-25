@@ -54,6 +54,8 @@ module.exports = {
           color: "#000000",
           defaultChannel: "default",
           enableBackgroundRemoteNotifications: true,
+          // Copié dans le bundle natif (Android res/raw + iOS). Nom sans tirets (règles Android).
+          sounds: ["./assets/sounds/mixkit_correct_answer_tone_2870.wav"],
         },
       ],
     ],
