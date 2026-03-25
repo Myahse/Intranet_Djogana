@@ -8,7 +8,6 @@ const { Pool } = require('pg')
 const { v4: uuidv4 } = require('uuid')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
-const admin = require('firebase-admin')
 const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
@@ -138,35 +137,54 @@ function downloadFileBuffer(url) {
   })
 }
 
-// ---------- Firebase Admin SDK ----------
-// Initialize using a service account JSON key.
-// Set GOOGLE_APPLICATION_CREDENTIALS env var to the path of the JSON file,
-// or set FIREBASE_SERVICE_ACCOUNT_JSON env var to the JSON content as a string.
-;(() => {
+// ---------- Firebase Admin SDK (lazy-loaded) ----------
+// Loading `firebase-admin` at startup uses a lot of RAM on small hosts (e.g. Render free tier).
+// We require it only when sending a push notification.
+let firebaseAdminSingleton = null
+let firebaseAdminLoadFailed = false
+function getFirebaseAdmin() {
+  if (firebaseAdminLoadFailed) return null
+  if (firebaseAdminSingleton) return firebaseAdminSingleton
   try {
+    const admin = require('firebase-admin')
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
     if (raw) {
       const serviceAccount = JSON.parse(raw)
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       })
-      console.log('[firebase] initialized from FIREBASE_SERVICE_ACCOUNT_JSON')
+      console.log('[firebase] initialized from FIREBASE_SERVICE_ACCOUNT_JSON (lazy)')
     } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       admin.initializeApp({
         credential: admin.credential.applicationDefault(),
       })
-      console.log('[firebase] initialized from GOOGLE_APPLICATION_CREDENTIALS')
+      console.log('[firebase] initialized from GOOGLE_APPLICATION_CREDENTIALS (lazy)')
     } else {
       console.warn(
         '[firebase] WARNING: No Firebase credentials found. Push notifications will NOT work.\n' +
         '  Set FIREBASE_SERVICE_ACCOUNT_JSON (JSON string) or GOOGLE_APPLICATION_CREDENTIALS (file path).'
       )
-      admin.initializeApp() // no-op init so admin.messaging() doesn't crash
+      admin.initializeApp()
     }
+    firebaseAdminSingleton = admin
+    return admin
   } catch (err) {
+    firebaseAdminLoadFailed = true
     console.error('[firebase] initialization error:', err.message)
+    return null
   }
-})()
+}
+
+function getMessaging() {
+  const admin = getFirebaseAdmin()
+  if (!admin) return null
+  try {
+    return admin.messaging()
+  } catch (err) {
+    console.error('[firebase] messaging() error:', err?.message || err)
+    return null
+  }
+}
 
 const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
@@ -197,8 +215,10 @@ app.use(
       // Allow requests with no origin (mobile apps, curl, server-to-server)
       if (!origin) return cb(null, true)
       if (CORS_ORIGINS.includes(origin)) return cb(null, origin)
-      // Fallback: allow any *.intranet-djogana.ci subdomain
-      if (/^https?:\/\/([a-z0-9-]+\.)?intranet-djogana\.ci$/.test(origin)) return cb(null, origin)
+      // Any subdomain of intranet-djogana.ci (www, app, etc.)
+      if (/^https:\/\/([a-z0-9-]+\.)*intranet-djogana\.ci$/i.test(origin)) return cb(null, origin)
+      // Render preview / API host (e.g. *.onrender.com)
+      if (/^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin)) return cb(null, origin)
       // In development, allow any localhost
       if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, origin)
       console.warn(`[cors] blocked origin: ${origin}`)
@@ -233,6 +253,16 @@ const connectionString =
 
 const pool = new Pool({
   connectionString,
+  // Fewer idle connections on small PaaS instances (Neon pooler + low RAM).
+  max: Math.max(
+    2,
+    Math.min(
+      parseInt(process.env.PG_POOL_MAX || (process.env.NODE_ENV === 'production' ? '5' : '10'), 10) || 5,
+      20
+    )
+  ),
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 15_000,
 })
 
 /**
@@ -2863,7 +2893,8 @@ app.post('/api/auth/device/request', async (req, res) => {
     if (tokenRows.rows.length > 0) {
       ;(async () => {
         try {
-          const messaging = admin.messaging()
+          const messaging = getMessaging()
+          if (!messaging) return
           for (const row of tokenRows.rows) {
             // Prefer fcm_token (direct Firebase), fall back to expo_push_token
             const deviceToken = row.fcm_token || row.expo_push_token
@@ -3739,7 +3770,8 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
   )
   if (tokenRows.rows.length === 0) return
   try {
-    const messaging = admin.messaging()
+    const messaging = getMessaging()
+    if (!messaging) return
     for (const row of tokenRows.rows) {
       const deviceToken = row.fcm_token || row.expo_push_token
       if (!deviceToken) continue
