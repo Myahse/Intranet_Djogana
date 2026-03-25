@@ -394,6 +394,28 @@ export default function ApproveRequestsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* ── Shortcut: Fil d’actualité ── */}
+      <View style={{ paddingHorizontal: ms(16), paddingTop: ms(10), paddingBottom: ms(4) }}>
+        <TouchableOpacity
+          onPress={() => router.push("/fil-actualite")}
+          style={{
+            alignSelf: "flex-start",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: ms(8),
+            paddingVertical: ms(8),
+            paddingHorizontal: ms(10),
+            borderRadius: ms(12),
+            borderWidth: 1,
+            borderColor: "#eee",
+            backgroundColor: "#fff",
+          }}
+        >
+          <Ionicons name="newspaper-outline" size={ms(18)} color="#0a0a0a" />
+          <Text style={{ fontWeight: "700", color: "#0a0a0a" }}>Fil d’actualité</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* ── Live connection indicator ── */}
       <View style={styles.connectionRow}>
         <View

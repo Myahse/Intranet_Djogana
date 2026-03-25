@@ -98,6 +98,7 @@ export default function SidebarActions() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderVisibility, setNewFolderVisibility] = useState<'public' | 'direction_only'>('public')
   const [selectedDirectionFolder, setSelectedDirectionFolder] = useState('')
+  const [selectedParentFolder, setSelectedParentFolder] = useState<string>('') // folderOptions.value or '' for root
   const addFolderFileRef = useRef<HTMLInputElement>(null)
 
   // --- Subfolder state ---
@@ -105,6 +106,7 @@ export default function SidebarActions() {
   const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
   const [formationSubfolderName, setFormationSubfolderName] = useState('')
   const [selectedDirectionFormation, setSelectedDirectionFormation] = useState('')
+  const [selectedParentFormation, setSelectedParentFormation] = useState<string>('') // folderOptions.value or '' for root
   const [formationSubfolderVisibility, setFormationSubfolderVisibility] = useState<'public' | 'direction_only'>('public')
   const formationFileRef = useRef<HTMLInputElement>(null)
 
@@ -150,28 +152,41 @@ export default function SidebarActions() {
 
   // Handlers
   const handleAddFolder = async () => {
-    const name = newFolderName.trim()
-    if (!name) { toast.error('Veuillez saisir un nom de dossier'); return }
+    const raw = newFolderName.trim()
+    if (!raw) { toast.error('Veuillez saisir un nom de dossier'); return }
     if (!selectedDirectionFolder) { toast.error('Veuillez sélectionner une direction'); return }
     const file = addFolderFileRef.current?.files?.[0]
+    const names = raw
+      .split(/\r?\n|,/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (names.length > 1 && file) {
+      toast.error('Veuillez créer un seul dossier quand un fichier est sélectionné.')
+      return
+    }
+    const parentName = selectedParentFolder ? parseFolderKey(selectedParentFolder).name : ''
     setFolderOpen(false)
     setLoading({ open: true, message: 'Création du dossier en cours…' })
     try {
-      if (file) {
-        await addFolder(name, file, selectedDirectionFolder, newFolderVisibility)
-      } else {
-        await addFolderMeta(name, selectedDirectionFolder, newFolderVisibility)
+      for (const n of names) {
+        const fullName = parentName ? `${parentName}::${n}` : n
+        if (file) {
+          await addFolder(fullName, file, selectedDirectionFolder, newFolderVisibility)
+        } else {
+          await addFolderMeta(fullName, selectedDirectionFolder, newFolderVisibility)
+        }
       }
       setNewFolderName('')
       setNewFolderVisibility('public')
+      setSelectedParentFolder('')
       if (addFolderFileRef.current) addFolderFileRef.current.value = ''
       const withFile = Boolean(file)
       setLoading((s) => ({
         ...s,
         result: 'success',
-        resultMessage: withFile ? 'Dossier créé et fichier ajouté' : 'Dossier créé',
+        resultMessage: withFile ? 'Dossier créé et fichier ajouté' : (names.length > 1 ? 'Dossiers créés' : 'Dossier créé'),
       }))
-      toast.success(withFile ? 'Dossier créé et fichier ajouté' : 'Dossier créé (sans fichier)')
+      toast.success(withFile ? 'Dossier créé et fichier ajouté' : (names.length > 1 ? 'Dossiers créés' : 'Dossier créé (sans fichier)'))
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du dossier' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du dossier')
@@ -185,7 +200,8 @@ export default function SidebarActions() {
     if (!group || !sub) { toast.error('Veuillez saisir le nom du groupe et du sous-dossier'); return }
     if (!selectedDirectionFormation) { toast.error('Veuillez sélectionner une direction'); return }
     const file = formationFileRef.current?.files?.[0]
-    const folderKey = `${group}::${sub}`
+    const parentName = selectedParentFormation ? parseFolderKey(selectedParentFormation).name : ''
+    const folderKey = parentName ? `${parentName}::${group}::${sub}` : `${group}::${sub}`
     setSubfolderOpen(false)
     setLoading({ open: true, message: 'Création du sous-dossier en cours…' })
     try {
@@ -202,6 +218,7 @@ export default function SidebarActions() {
       setSelectedFormationGroup('')
       setFormationSubfolderName('')
       setFormationSubfolderVisibility('public')
+      setSelectedParentFormation('')
       if (formationFileRef.current) formationFileRef.current.value = ''
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
@@ -330,12 +347,28 @@ export default function SidebarActions() {
               </Select>
             </div>
             <div className="grid gap-2">
+              <Label>Créer dans</Label>
+              <Select value={selectedParentFolder} onValueChange={setSelectedParentFolder}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Racine" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Racine</SelectItem>
+                  {folderOptions
+                    .filter((f) => f.direction_id === selectedDirectionFolder)
+                    .map((f) => (
+                      <SelectItem key={f.value} value={f.value}>{formatFolderLabel(parseFolderKey(f.value).name)}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
               <Label htmlFor="sb-folder-name">Nom du dossier</Label>
               <Input
                 id="sb-folder-name"
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Ex. Procédures 2024"
+                placeholder="Ex. Procédures 2024 (ou plusieurs noms séparés par virgules / lignes)"
               />
             </div>
             <div className="grid gap-2">
@@ -388,6 +421,22 @@ export default function SidebarActions() {
                   {availableDirections.map((d) => (
                     <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Créer dans</Label>
+              <Select value={selectedParentFormation} onValueChange={setSelectedParentFormation}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Racine" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Racine</SelectItem>
+                  {folderOptions
+                    .filter((f) => f.direction_id === selectedDirectionFormation)
+                    .map((f) => (
+                      <SelectItem key={f.value} value={f.value}>{formatFolderLabel(parseFolderKey(f.value).name)}</SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

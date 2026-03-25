@@ -85,6 +85,13 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="fil-actualite"
+            options={{
+              title: "Fil d’actualité",
+              headerLargeTitle: false,
+            }}
+          />
+          <Stack.Screen
             name="create-passkey"
             options={{
               title: "Créer un passkey",
