@@ -6274,6 +6274,9 @@ wss.on('connection', async (ws, req) => {
   ws.send(JSON.stringify({ type: 'connected', identifiant }))
 })
 
+// eslint-disable-next-line no-console
+console.log(`[boot] PORT=${port} NODE_ENV=${process.env.NODE_ENV || ''} dist=${fs.existsSync(FRONTEND_INDEX_FILE) ? 'yes' : 'no'}`)
+
 initDb()
   .then(() => {
     server.listen(port, '0.0.0.0', () => {

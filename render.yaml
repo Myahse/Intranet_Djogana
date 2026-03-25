@@ -1,0 +1,12 @@
+# Render.com Web Service — https://render.com/docs/blueprint-spec
+# Set DATABASE_URL, JWT_SECRET, PUBLIC_BASE_URL, etc. in the Render dashboard (Environment).
+
+services:
+  - type: web
+    name: intranet-djogana
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
