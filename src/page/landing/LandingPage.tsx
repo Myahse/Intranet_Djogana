@@ -2,6 +2,7 @@ import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
+import androidApk from "@/assets/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
 import { useAuth } from "@/contexts/AuthContext"
 import { User } from "lucide-react"
 import { useStaggerChildren, useScrollReveal } from "@/hooks/useAnimations"
@@ -81,6 +82,20 @@ const Landing = () => {
           </div>
         </div>
       </main>
+      <footer className="border-t bg-background/80 backdrop-blur px-4 py-4">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">
+            © {new Date().getFullYear()} Djogana
+          </span>
+          <a
+            href={androidApk}
+            download
+            className="inline-flex items-center gap-2 rounded-md border bg-muted px-3 py-1.5 text-foreground hover:bg-muted/80 transition-colors"
+          >
+            Télécharger l’application Android (APK)
+          </a>
+        </div>
+      </footer>
     </div>
   )
 }
