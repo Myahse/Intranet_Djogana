@@ -2915,7 +2915,10 @@ app.post('/api/auth/device/request', async (req, res) => {
                   requestId: String(requestId),
                   code: String(code),
                   categoryId: 'approval_request',   // matches setNotificationCategoryAsync
-                  channelId: 'approval',             // high-priority Android channel
+                  // Must match APPROVAL_CHANNEL_ID (mobile) — new id resets cached default sound on Android
+                  channelId: 'approval_mixkit_v1',
+                  // expo-notifications: without this, data-only pushes use default system sound (see NotificationData.kt)
+                  sound: 'mixkit_correct_answer_tone_2870',
                 },
                 android: {
                   priority: 'high',
