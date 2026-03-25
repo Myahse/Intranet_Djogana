@@ -69,6 +69,8 @@ const FILE_UPLOAD_ACCEPT =
   'application/octet-stream'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
+import { Checkbox } from '@/components/ui/checkbox'
+import { cn } from '@/lib/utils'
 
 // ── View & Sort types ──
 type ViewMode = 'tiles' | 'list' | 'details'
@@ -362,6 +364,9 @@ function FileCard({
   onDelete,
   onRename,
   onSelect,
+  selectionEnabled,
+  selected,
+  onToggleSelect,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
@@ -369,6 +374,9 @@ function FileCard({
   onDelete?: (id: string) => void
   onRename?: (id: string, newName: string) => Promise<void>
   onSelect?: (file: DocumentItem) => void
+  selectionEnabled?: boolean
+  selected?: boolean
+  onToggleSelect?: (id: string) => void
 }) {
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -414,6 +422,19 @@ function FileCard({
             className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer overflow-hidden min-w-0"
             onClick={handleClick}
           >
+            {selectionEnabled && onToggleSelect && (
+              <div
+                className="absolute top-2 left-2 z-10 flex items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <Checkbox
+                  checked={!!selected}
+                  onCheckedChange={() => onToggleSelect(file.id)}
+                  aria-label={`Sélectionner ${file.name}`}
+                />
+              </div>
+            )}
             {file.url && (
               <a
                 href={file.url}
@@ -426,7 +447,7 @@ function FileCard({
               </a>
             )}
             {canEdit && (onDelete || onRename) && (
-              <div className="absolute top-2 left-2 flex gap-0.5">
+              <div className={cn('absolute top-2 flex gap-0.5', selectionEnabled ? 'left-10' : 'left-2')}>
                 {onRename && (
                   <button
                     type="button"
@@ -723,6 +744,9 @@ function FileListRow({
   onDelete,
   onRename,
   onSelect,
+  selectionEnabled,
+  selected,
+  onToggleSelect,
 }: {
   file: DocumentItem
   formatSize: (bytes: number) => string
@@ -731,6 +755,9 @@ function FileListRow({
   onDelete?: (id: string) => void
   onRename?: (id: string, newName: string) => Promise<void>
   onSelect?: (file: DocumentItem) => void
+  selectionEnabled?: boolean
+  selected?: boolean
+  onToggleSelect?: (id: string) => void
 }) {
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
@@ -777,6 +804,19 @@ function FileListRow({
             className="group flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50 cursor-pointer"
             onClick={handleClick}
           >
+            {selectionEnabled && onToggleSelect && (
+              <div
+                className="flex h-8 w-8 shrink-0 items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <Checkbox
+                  checked={!!selected}
+                  onCheckedChange={() => onToggleSelect(file.id)}
+                  aria-label={`Sélectionner ${file.name}`}
+                />
+              </div>
+            )}
             {/* Icon */}
             <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
               {file.icon_url ? (
@@ -914,11 +954,14 @@ function LinkListRow({
   canEdit,
   showDetails,
   onDelete,
+  selectColumnSpacer,
 }: {
   link: LinkItem
   canEdit: boolean
   showDetails: boolean
   onDelete?: (id: string) => void
+  /** Align with file rows that show a selection checkbox in details view */
+  selectColumnSpacer?: boolean
 }) {
   const displayLabel = link.label && link.label !== link.url ? link.label : (() => {
     try {
@@ -931,6 +974,7 @@ function LinkListRow({
 
   return (
     <div className="group flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50">
+      {selectColumnSpacer && <div className="h-8 w-8 shrink-0" aria-hidden />}
       {/* Icon */}
       <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
         <ExternalLink className="size-5 text-primary" />
@@ -1170,6 +1214,8 @@ const DocumentSection = () => {
   const { contentFilter } = useDashboardFilter()
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
+  /** Multi-select for bulk delete (leaf folder file list) */
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState<LoadingState>(initialLoadingState)
   const [renameFolderOpen, setRenameFolderOpen] = useState(false)
   const [renameFolderKey, setRenameFolderKey] = useState<string | null>(null)
@@ -1317,6 +1363,7 @@ const DocumentSection = () => {
 
   useEffect(() => {
     setSelectedFile(null)
+    setSelectedFileIds(new Set())
   }, [folderKey, directionId])
 
   // ── Fetch direction name when on direction route ──
@@ -1461,12 +1508,7 @@ const DocumentSection = () => {
     )
   }
 
-  // ── Navigation detection ──
-  // folderKey can be:
-  //   - an exact folder value like "3::Procédures" (direction_id::name)
-  //   - a group name like "Module 1" (just the name part, no direction_id)
 
-  // Find subfolders matching by value prefix OR by name prefix
   const subfolderEntries = folderKey
     ? folderOptions.filter((f) => {
         // By value prefix: "3::Procédures" → matches "3::Procédures::Sub"
@@ -1499,6 +1541,28 @@ const DocumentSection = () => {
     const canEdit = canEditFolder(folderKey)
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
+
+    const fileIdsSelectable = files.filter((f) => canEditFile(f)).map((f) => f.id)
+    const showMultiSelect = canEdit && fileIdsSelectable.length > 0
+    const allSelectableSelected =
+      fileIdsSelectable.length > 0 && fileIdsSelectable.every((id) => selectedFileIds.has(id))
+    const selectedEditableCount = fileIdsSelectable.filter((id) => selectedFileIds.has(id)).length
+
+    const toggleFileSelect = (id: string) => {
+      setSelectedFileIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+    }
+
+    const toggleSelectAllFiles = () => {
+      if (allSelectableSelected) setSelectedFileIds(new Set())
+      else setSelectedFileIds(new Set(fileIdsSelectable))
+    }
+
+    const clearFileSelection = () => setSelectedFileIds(new Set())
 
     const handleUploadFile = async () => {
       if (!folderKey) { toast.error('Dossier non trouvé'); return }
@@ -1535,12 +1599,46 @@ const DocumentSection = () => {
       try {
         await removeFile(id)
         if (selectedFile?.id === id) setSelectedFile(null)
+        setSelectedFileIds((prev) => {
+          if (!prev.has(id)) return prev
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
         setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier supprimé' }))
         toast.success('Fichier supprimé')
       } catch (err) {
         console.error(err)
         setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du fichier' }))
         toast.error('Erreur lors de la suppression du fichier')
+      }
+    }
+
+    const handleBulkDeleteFiles = async () => {
+      const ids = fileIdsSelectable.filter((id) => selectedFileIds.has(id))
+      if (ids.length === 0) return
+      const ok = await confirm({
+        title: ids.length === 1 ? 'Supprimer ce fichier ?' : `Supprimer ${ids.length} fichiers ?`,
+        description: isAdmin
+          ? 'Les fichiers sélectionnés seront déplacés vers la corbeille.'
+          : 'Les fichiers sélectionnés seront supprimés définitivement.',
+        confirmLabel: 'Supprimer',
+        variant: 'destructive',
+      })
+      if (!ok) return
+      setLoading({ open: true, message: 'Suppression des fichiers…' })
+      try {
+        for (const id of ids) {
+          await removeFile(id)
+        }
+        if (selectedFile && ids.includes(selectedFile.id)) setSelectedFile(null)
+        setSelectedFileIds(new Set())
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichiers supprimés' }))
+        toast.success(ids.length === 1 ? 'Fichier supprimé' : 'Fichiers supprimés')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression' }))
+        toast.error('Erreur lors de la suppression des fichiers')
       }
     }
 
@@ -1649,7 +1747,7 @@ const DocumentSection = () => {
 
             {/* View toolbar */}
             {(files.length > 0 || links.length > 0) && (
-              <div className="mb-4">
+              <div className="mb-4 flex flex-col gap-3">
                 <ViewToolbar
                   viewMode={viewMode}
                   onViewModeChange={setViewMode}
@@ -1657,6 +1755,34 @@ const DocumentSection = () => {
                   sortDir={sortDir}
                   onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
                 />
+                {showMultiSelect && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">
+                      {selectedEditableCount > 0
+                        ? `${selectedEditableCount} fichier${selectedEditableCount > 1 ? 's' : ''} sélectionné${selectedEditableCount > 1 ? 's' : ''}`
+                        : 'Sélectionnez des fichiers pour une action groupée'}
+                    </span>
+                    <span className="hidden sm:inline text-muted-foreground">·</span>
+                    <Button type="button" variant="outline" size="sm" onClick={toggleSelectAllFiles}>
+                      {allSelectableSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+                    </Button>
+                    {selectedEditableCount > 0 && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" onClick={clearFileSelection}>
+                          Annuler la sélection
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleBulkDeleteFiles}
+                        >
+                          Supprimer la sélection
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1679,6 +1805,9 @@ const DocumentSection = () => {
                           file={item.data}
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
+                          selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                          selected={selectedFileIds.has(item.data.id)}
+                          onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
@@ -1713,6 +1842,7 @@ const DocumentSection = () => {
                           link={item.data}
                           canEdit={canEditLink(item.data)}
                           showDetails={false}
+                          selectColumnSpacer={showMultiSelect}
                           onDelete={handleDeleteLink}
                         />
                       ) : (
@@ -1722,6 +1852,9 @@ const DocumentSection = () => {
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
                           showDetails={false}
+                          selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                          selected={selectedFileIds.has(item.data.id)}
+                          onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
@@ -1751,7 +1884,27 @@ const DocumentSection = () => {
                   <div className="flex flex-col">
                     {/* Column headers */}
                     <div className="flex items-center gap-3 px-3 py-2 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      <div className="w-8 shrink-0" />
+                      {showMultiSelect ? (
+                        <div
+                          className="flex shrink-0 items-center justify-center w-8"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          <Checkbox
+                            checked={
+                              allSelectableSelected
+                                ? true
+                                : selectedEditableCount > 0
+                                  ? 'indeterminate'
+                                  : false
+                            }
+                            onCheckedChange={toggleSelectAllFiles}
+                            aria-label="Tout sélectionner les fichiers"
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-8 shrink-0" />
+                      )}
                       <span className="flex-1 min-w-0">Nom</span>
                       <span className="hidden md:block w-20 text-right shrink-0">Taille</span>
                       <span className="hidden lg:block w-16 text-center shrink-0">Type</span>
@@ -1766,6 +1919,7 @@ const DocumentSection = () => {
                             link={item.data}
                             canEdit={canEditLink(item.data)}
                             showDetails
+                            selectColumnSpacer={showMultiSelect}
                             onDelete={handleDeleteLink}
                           />
                         ) : (
@@ -1775,6 +1929,9 @@ const DocumentSection = () => {
                             formatSize={formatSize}
                             canEdit={canEditFile(item.data)}
                             showDetails
+                            selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                            selected={selectedFileIds.has(item.data.id)}
+                            onToggleSelect={toggleFileSelect}
                             onSelect={(f) => {
                               setSelectedFile(f)
                               sendWs({ type: 'action', action: 'view_file', detail: f.name })
