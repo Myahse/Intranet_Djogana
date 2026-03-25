@@ -38,6 +38,9 @@ import LoadingModal, { initialLoadingState, type LoadingState } from '@/componen
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
+/** Radix Select forbids empty string as item value — use a sentinel for "racine". */
+const SELECT_FOLDER_ROOT = '__folder_root__'
+
 const fileInputClass =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
 
@@ -98,7 +101,7 @@ export default function SidebarActions() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderVisibility, setNewFolderVisibility] = useState<'public' | 'direction_only'>('public')
   const [selectedDirectionFolder, setSelectedDirectionFolder] = useState('')
-  const [selectedParentFolder, setSelectedParentFolder] = useState<string>('') // folderOptions.value or '' for root
+  const [selectedParentFolder, setSelectedParentFolder] = useState<string>(SELECT_FOLDER_ROOT) // folderOptions.value or sentinel for root
   const addFolderFileRef = useRef<HTMLInputElement>(null)
 
   // --- Subfolder state ---
@@ -106,7 +109,7 @@ export default function SidebarActions() {
   const [selectedFormationGroup, setSelectedFormationGroup] = useState('')
   const [formationSubfolderName, setFormationSubfolderName] = useState('')
   const [selectedDirectionFormation, setSelectedDirectionFormation] = useState('')
-  const [selectedParentFormation, setSelectedParentFormation] = useState<string>('') // folderOptions.value or '' for root
+  const [selectedParentFormation, setSelectedParentFormation] = useState<string>(SELECT_FOLDER_ROOT) // folderOptions.value or sentinel for root
   const [formationSubfolderVisibility, setFormationSubfolderVisibility] = useState<'public' | 'direction_only'>('public')
   const formationFileRef = useRef<HTMLInputElement>(null)
 
@@ -164,7 +167,10 @@ export default function SidebarActions() {
       toast.error('Veuillez créer un seul dossier quand un fichier est sélectionné.')
       return
     }
-    const parentName = selectedParentFolder ? parseFolderKey(selectedParentFolder).name : ''
+    const parentName =
+      selectedParentFolder && selectedParentFolder !== SELECT_FOLDER_ROOT
+        ? parseFolderKey(selectedParentFolder).name
+        : ''
     setFolderOpen(false)
     setLoading({ open: true, message: 'Création du dossier en cours…' })
     try {
@@ -178,7 +184,7 @@ export default function SidebarActions() {
       }
       setNewFolderName('')
       setNewFolderVisibility('public')
-      setSelectedParentFolder('')
+      setSelectedParentFolder(SELECT_FOLDER_ROOT)
       if (addFolderFileRef.current) addFolderFileRef.current.value = ''
       const withFile = Boolean(file)
       setLoading((s) => ({
@@ -200,7 +206,10 @@ export default function SidebarActions() {
     if (!group || !sub) { toast.error('Veuillez saisir le nom du groupe et du sous-dossier'); return }
     if (!selectedDirectionFormation) { toast.error('Veuillez sélectionner une direction'); return }
     const file = formationFileRef.current?.files?.[0]
-    const parentName = selectedParentFormation ? parseFolderKey(selectedParentFormation).name : ''
+    const parentName =
+      selectedParentFormation && selectedParentFormation !== SELECT_FOLDER_ROOT
+        ? parseFolderKey(selectedParentFormation).name
+        : ''
     const folderKey = parentName ? `${parentName}::${group}::${sub}` : `${group}::${sub}`
     setSubfolderOpen(false)
     setLoading({ open: true, message: 'Création du sous-dossier en cours…' })
@@ -218,7 +227,7 @@ export default function SidebarActions() {
       setSelectedFormationGroup('')
       setFormationSubfolderName('')
       setFormationSubfolderVisibility('public')
-      setSelectedParentFormation('')
+      setSelectedParentFormation(SELECT_FOLDER_ROOT)
       if (formationFileRef.current) formationFileRef.current.value = ''
     } catch (err) {
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
@@ -353,7 +362,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Racine" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Racine</SelectItem>
+                  <SelectItem value={SELECT_FOLDER_ROOT}>Racine</SelectItem>
                   {folderOptions
                     .filter((f) => f.direction_id === selectedDirectionFolder)
                     .map((f) => (
@@ -431,7 +440,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Racine" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Racine</SelectItem>
+                  <SelectItem value={SELECT_FOLDER_ROOT}>Racine</SelectItem>
                   {folderOptions
                     .filter((f) => f.direction_id === selectedDirectionFormation)
                     .map((f) => (
