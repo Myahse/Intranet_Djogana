@@ -17,4 +17,5 @@ Pour changer de son plus tard :
 ## Rappels
 
 - Durée courte recommandée pour une notification.
-- Après changement de son sur Android, une **réinstallation** ou vidage des données peut être nécessaire si le canal était déjà créé.
+- **Android** : le son du **canal** est mis en cache par l’OS. Si vous changez le fichier `.wav`, incrémentez `APPROVAL_CHANNEL_ID` dans `mobile/src/notifications/constants.ts` **et** le même `channelId` dans `server/index.cjs` (payload FCM).
+- Les pushes **data-only** doivent inclure `sound: '…_sans_extension'` dans le **data** FCM, sinon Expo utilise le son système par défaut.

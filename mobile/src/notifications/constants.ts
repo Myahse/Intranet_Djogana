@@ -12,8 +12,8 @@ export const APPROVAL_CATEGORY = "approval_request";
 export const ACTION_APPROVE = "APPROVE_ACTION";
 export const ACTION_DENY = "DENY_ACTION";
 
-/** Android notification channel dedicated to approval requests */
-export const APPROVAL_CHANNEL_ID = "approval";
+/** Android channel id — bump when changing bundled sound (Android caches channel settings). */
+export const APPROVAL_CHANNEL_ID = "approval_mixkit_v1";
 
 /** Task name registered with expo-task-manager */
 export const BACKGROUND_NOTIFICATION_TASK = "BACKGROUND-NOTIFICATION-TASK";
