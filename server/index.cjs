@@ -211,6 +211,11 @@ app.use(
 )
 app.use(express.json())
 
+// Render / load balancers: must respond before DB migrations finish (see server.listen below).
+app.get('/health', (_req, res) => {
+  res.status(200).type('text/plain').send('ok')
+})
+
 const BASE_URL = process.env.PUBLIC_BASE_URL
 if (!BASE_URL) {
   throw new Error('PUBLIC_BASE_URL is not set')
@@ -6277,27 +6282,26 @@ wss.on('connection', async (ws, req) => {
 // eslint-disable-next-line no-console
 console.log(`[boot] PORT=${port} NODE_ENV=${process.env.NODE_ENV || ''} dist=${fs.existsSync(FRONTEND_INDEX_FILE) ? 'yes' : 'no'}`)
 
-initDb()
-  .then(() => {
-    server.listen(port, '0.0.0.0', () => {
-      // eslint-disable-next-line no-console
-      console.log(`Server running at ${BASE_URL.replace(/:(\d+)$/, ':' + port)} (port ${port}) — accessible on LAN`)
-      console.log(`[ws] WebSocket server ready at ws://0.0.0.0:${port}/ws`)
-      
-      // Run initial trash cleanup
+
+server.listen(port, '0.0.0.0', () => {
+
+  console.log(`Server listening on 0.0.0.0:${port} (waiting for DB init…)`)
+
+  console.log(`[ws] WebSocket server path: /ws`)
+  initDb()
+    .then(() => {
+ 
+      console.log(`Server ready at ${BASE_URL.replace(/:(\d+)$/, ':' + port)} (port ${port})`)
       cleanupOldTrash()
-      
-      // Schedule automatic trash cleanup every 6 hours
       setInterval(() => {
         cleanupOldTrash()
-      }, 6 * 60 * 60 * 1000) // 6 hours in milliseconds
-      
+      }, 6 * 60 * 60 * 1000)
       console.log('[trash-cleanup] Automatic trash cleanup scheduled (runs every 6 hours, deletes items older than 7 days)')
     })
-  })
-  .catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error('Failed to initialize database', err)
-    process.exit(1)
-  })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('Failed to initialize database', err)
+      process.exit(1)
+    })
+})
 

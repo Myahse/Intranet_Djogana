@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "render:build": "npm install && npm run build && npm prune --omit=dev",
+    "build:ci": "vite build",
+    "render:build": "npm install --omit=dev && npm run build:ci",
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server/index.cjs",
@@ -52,7 +53,9 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
     "uuid": "^13.0.0",
+    "@vitejs/plugin-react": "^5.1.1",
     "vaul": "^1.1.2",
+    "vite": "^7.2.4",
     "ws": "^8.19.0",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"
@@ -66,14 +69,12 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "tw-animate-css": "^1.4.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "typescript-eslint": "^8.46.4"
   }
 }
