@@ -161,6 +161,44 @@ function DashboardLayout() {
     }
   }
 
+  const handleSetGroupSubfoldersPublic = async (
+    e: React.MouseEvent,
+    group: { subfolders: { value: string; label: string }[] },
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!canSetFolderVisibility) {
+      toast.error('Vous n’avez pas la permission de modifier la visibilité')
+      return
+    }
+    const privates = group.subfolders
+      .map((sf) => folderByValue.get(sf.value))
+      .filter(
+        (f): f is NonNullable<ReturnType<typeof folderByValue.get>> & { id: string } =>
+          Boolean(f?.id && f.visibility === 'direction_only'),
+      )
+    if (privates.length === 0) return
+    if (
+      !window.confirm(
+        `Rendre public ${privates.length} sous-dossier${privates.length > 1 ? 's' : ''} limité${privates.length > 1 ? 's' : ''} à la direction ?`,
+      )
+    ) {
+      return
+    }
+    try {
+      for (const f of privates) {
+        await setFolderVisibility(f.id, 'public')
+      }
+      toast.success(
+        privates.length === 1
+          ? 'Sous-dossier rendu public'
+          : `${privates.length} sous-dossiers rendus publics`,
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la mise à jour de la visibilité')
+    }
+  }
+
   return (
     <>
       <div className="dashboard-with-top-nav flex flex-1 flex-col min-h-0 w-full">
@@ -327,6 +365,10 @@ function DashboardLayout() {
                       )
                       const isGroupActive = location.pathname === `/dashboard/documents/${encodeURIComponent(groupKey)}`
                       const isOpen = openGroups[groupKey] ?? groupHasActive
+                      const groupPrivateCount = group.subfolders.filter((sf) => {
+                        const f = folderByValue.get(sf.value)
+                        return f?.id && f.visibility === 'direction_only'
+                      }).length
 
                       return (
                         <SidebarMenuItem key={groupKey}>
@@ -346,6 +388,17 @@ function DashboardLayout() {
                               <ChevronRight className="size-4" />
                             )}
                             <span>{group.groupLabel}</span>
+                            {canSetFolderVisibility && groupPrivateCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleSetGroupSubfoldersPublic(e, group)}
+                                className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
+                                title="Rendre public tous les sous-dossiers de ce groupe"
+                              >
+                                <Globe className="size-3" />
+                                Public ({groupPrivateCount})
+                              </button>
+                            )}
                           </SidebarMenuButton>
                           {isOpen && (
                             <SidebarMenuSub>

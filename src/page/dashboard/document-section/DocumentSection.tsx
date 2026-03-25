@@ -15,7 +15,7 @@ import {
   FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft,
   LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ,
   Calendar, HardDrive, FileType,
-  Check, Upload,
+  Check, Upload, Globe,
 } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
@@ -48,6 +48,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -416,25 +417,22 @@ function FileCard({
 
   return (
     <>
-      <HoverCard openDelay={300} closeDelay={100}>
-        <HoverCardTrigger asChild>
-          <div
-            className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer overflow-hidden min-w-0"
-            onClick={handleClick}
-          >
-            {selectionEnabled && onToggleSelect && (
-              <div
-                className="absolute top-2 left-2 z-10 flex items-center justify-center"
-                onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <Checkbox
-                  checked={!!selected}
-                  onCheckedChange={() => onToggleSelect(file.id)}
-                  aria-label={`Sélectionner ${file.name}`}
-                />
-              </div>
-            )}
+      <div className="relative flex min-w-0 flex-col">
+        {selectionEnabled && onToggleSelect && (
+          <div className="absolute left-2 top-2 z-[35]">
+            <Checkbox
+              checked={!!selected}
+              onCheckedChange={() => onToggleSelect(file.id)}
+              aria-label={`Sélectionner ${file.name}`}
+            />
+          </div>
+        )}
+        <HoverCard openDelay={300} closeDelay={100}>
+          <HoverCardTrigger asChild>
+            <div
+              className="group relative flex flex-col items-center gap-3 rounded-lg p-4 transition-colors hover:bg-muted/50 cursor-pointer overflow-hidden min-w-0"
+              onClick={handleClick}
+            >
             {file.url && (
               <a
                 href={file.url}
@@ -500,8 +498,8 @@ function FileCard({
             <span className="text-center text-sm font-medium line-clamp-2 w-full break-words" title={file.name}>
               {file.name}
             </span>
-          </div>
-        </HoverCardTrigger>
+            </div>
+          </HoverCardTrigger>
         <HoverCardContent
           side="right"
           align="start"
@@ -518,6 +516,7 @@ function FileCard({
           />
         </HoverCardContent>
       </HoverCard>
+      </div>
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader>
@@ -798,25 +797,22 @@ function FileListRow({
 
   return (
     <>
-      <HoverCard openDelay={400} closeDelay={100}>
-        <HoverCardTrigger asChild>
-          <div
-            className="group flex items-center gap-3 rounded-md px-3 py-2 transition-colors hover:bg-muted/50 cursor-pointer"
-            onClick={handleClick}
-          >
-            {selectionEnabled && onToggleSelect && (
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center"
-                onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <Checkbox
-                  checked={!!selected}
-                  onCheckedChange={() => onToggleSelect(file.id)}
-                  aria-label={`Sélectionner ${file.name}`}
-                />
-              </div>
-            )}
+      <div className="flex w-full min-w-0 items-center rounded-md px-3 py-2 transition-colors hover:bg-muted/50">
+        {selectionEnabled && onToggleSelect && (
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+            <Checkbox
+              checked={!!selected}
+              onCheckedChange={() => onToggleSelect(file.id)}
+              aria-label={`Sélectionner ${file.name}`}
+            />
+          </div>
+        )}
+        <HoverCard openDelay={400} closeDelay={100}>
+          <HoverCardTrigger asChild>
+            <div
+              className="group flex min-w-0 flex-1 cursor-pointer items-center gap-3"
+              onClick={handleClick}
+            >
             {/* Icon */}
             <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
               {file.icon_url ? (
@@ -890,8 +886,8 @@ function FileListRow({
                 </button>
               )}
             </div>
-          </div>
-        </HoverCardTrigger>
+            </div>
+          </HoverCardTrigger>
         <HoverCardContent
           side="top"
           align="center"
@@ -909,6 +905,7 @@ function FileListRow({
           />
         </HoverCardContent>
       </HoverCard>
+      </div>
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1209,8 +1206,9 @@ const DocumentSection = () => {
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
-  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, folderOptions } = useDocuments()
+  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, setFolderVisibility, folderOptions } = useDocuments()
   const { user, isAdmin, sendWs } = useAuth()
+  const canSetFolderVisibility = isAdmin || !!user?.permissions?.can_set_folder_visibility
   const { contentFilter } = useDashboardFilter()
   const { confirm, ConfirmDialog } = useConfirmDialog()
   const [selectedFile, setSelectedFile] = useState<DocumentItem | null>(null)
@@ -1345,19 +1343,19 @@ const DocumentSection = () => {
   }
   const canEditFile = (file: DocumentItem) => {
     if (isAdmin) return true
-    if (!file.direction_id || !user) return false
-    // Check if it's user's own direction
-    if (user.direction_id === file.direction_id) return true
-    // Check if user has been granted access to this direction
-    return user.granted_direction_ids?.includes(file.direction_id) ?? false
+    if (!user) return false
+    const fid = file.direction_id ?? parseFolderKey(file.folderKey).direction_id
+    if (!fid) return false
+    if (user.direction_id === fid) return true
+    return user.granted_direction_ids?.includes(fid) ?? false
   }
   const canEditLink = (link: LinkItem) => {
     if (isAdmin) return true
-    if (!link.direction_id || !user) return false
-    // Check if it's user's own direction
-    if (user.direction_id === link.direction_id) return true
-    // Check if user has been granted access to this direction
-    return user.granted_direction_ids?.includes(link.direction_id) ?? false
+    if (!user) return false
+    const lid = link.direction_id ?? parseFolderKey(link.folderKey).direction_id
+    if (!lid) return false
+    if (user.direction_id === lid) return true
+    return user.granted_direction_ids?.includes(lid) ?? false
   }
   const currentFolderLabel = folderKey ? formatName(parseFolderKey(folderKey).name) : ''
 
@@ -1542,8 +1540,10 @@ const DocumentSection = () => {
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
 
-    const fileIdsSelectable = files.filter((f) => canEditFile(f)).map((f) => f.id)
-    const showMultiSelect = canEdit && fileIdsSelectable.length > 0
+    const fileIdsSelectable = canEdit
+      ? files.map((f) => f.id)
+      : files.filter((f) => canEditFile(f)).map((f) => f.id)
+    const showMultiSelect = fileIdsSelectable.length > 0
     const allSelectableSelected =
       fileIdsSelectable.length > 0 && fileIdsSelectable.every((id) => selectedFileIds.has(id))
     const selectedEditableCount = fileIdsSelectable.filter((id) => selectedFileIds.has(id)).length
@@ -1695,6 +1695,30 @@ const DocumentSection = () => {
                     {directionLabel}
                   </span>
                 )}
+                {canSetFolderVisibility && folderOpt?.id && (
+                  <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-1.5">
+                    <Globe className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    <Switch
+                      id="doc-folder-visibility"
+                      checked={folderOpt.visibility !== 'direction_only'}
+                      onCheckedChange={async (pub) => {
+                        try {
+                          await setFolderVisibility(folderOpt.id!, pub ? 'public' : 'direction_only')
+                          toast.success(
+                            pub
+                              ? 'Dossier visible par toutes les directions'
+                              : 'Dossier limité à votre direction',
+                          )
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Impossible de modifier la visibilité')
+                        }
+                      }}
+                    />
+                    <Label htmlFor="doc-folder-visibility" className="cursor-pointer text-xs font-normal text-muted-foreground">
+                      {folderOpt.visibility === 'direction_only' ? 'Privé direction' : 'Public'}
+                    </Label>
+                  </div>
+                )}
                 {!canEdit && (
                   <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
                     Lecture seule
@@ -1805,7 +1829,7 @@ const DocumentSection = () => {
                           file={item.data}
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
-                          selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                          selectionEnabled={showMultiSelect && canEdit}
                           selected={selectedFileIds.has(item.data.id)}
                           onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
@@ -1852,7 +1876,7 @@ const DocumentSection = () => {
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
                           showDetails={false}
-                          selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                          selectionEnabled={showMultiSelect && canEdit}
                           selected={selectedFileIds.has(item.data.id)}
                           onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
@@ -1929,7 +1953,7 @@ const DocumentSection = () => {
                             formatSize={formatSize}
                             canEdit={canEditFile(item.data)}
                             showDetails
-                            selectionEnabled={showMultiSelect && canEditFile(item.data)}
+                            selectionEnabled={showMultiSelect && canEdit}
                             selected={selectedFileIds.has(item.data.id)}
                             onToggleSelect={toggleFileSelect}
                             onSelect={(f) => {
@@ -2138,11 +2162,45 @@ const DocumentSection = () => {
       hasFiles: folderHasFiles[value],
     }))
 
+    const subfoldersDirectionOnly = subfolderKeys
+      .map((v) => folderOptions.find((f) => f.value === v))
+      .filter(
+        (f): f is (typeof folderOptions)[number] & { id: string } =>
+          Boolean(f?.id && f.visibility === 'direction_only'),
+      )
+
+    const handleSetGroupSubfoldersPublic = async () => {
+      if (subfoldersDirectionOnly.length === 0) return
+      const ok = await confirm({
+        title: 'Rendre publics les sous-dossiers ?',
+        description: `${subfoldersDirectionOnly.length} sous-dossier(s) limité(s) à la direction seront visibles par toutes les directions.`,
+        confirmLabel: 'Rendre public',
+        variant: 'default',
+      })
+      if (!ok) return
+      setLoading({ open: true, message: 'Mise à jour de la visibilité…' })
+      try {
+        for (const f of subfoldersDirectionOnly) {
+          await setFolderVisibility(f.id, 'public')
+        }
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Visibilité mise à jour' }))
+        toast.success(
+          subfoldersDirectionOnly.length === 1
+            ? 'Sous-dossier rendu public'
+            : `${subfoldersDirectionOnly.length} sous-dossiers rendus publics`,
+        )
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur visibilité' }))
+        toast.error(err instanceof Error ? err.message : 'Erreur lors de la mise à jour')
+      }
+    }
+
     return (
       <div className="p-6">
         <ConfirmDialog />
         <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
-        <div className="mb-8 flex items-center gap-2">
+        <div className="mb-8 flex flex-wrap items-center gap-2 gap-y-3">
           <button
             type="button"
             onClick={() => navigate(-1)}
@@ -2152,6 +2210,18 @@ const DocumentSection = () => {
             <ChevronLeft className="size-5" />
           </button>
           <h1 className="text-2xl font-semibold">{groupDisplayName}</h1>
+          {canSetFolderVisibility && subfoldersDirectionOnly.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ml-auto sm:ml-0"
+              onClick={handleSetGroupSubfoldersPublic}
+            >
+              <Globe className="size-4" />
+              Rendre public ({subfoldersDirectionOnly.length})
+            </Button>
+          )}
         </div>
         {subFolderEntries.length > 0 ? (
           <FolderGrid
