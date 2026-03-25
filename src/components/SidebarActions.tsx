@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -58,6 +59,14 @@ type Direction = { id: string; name: string; code?: string }
 
 function formatFolderLabel(label: string): string {
   return label.replace(/::/g, ' / ')
+}
+
+/** Plusieurs noms : lignes, virgules, point-virgules ou barres verticales. */
+function splitFolderNames(raw: string): string[] {
+  return raw
+    .split(/\r?\n|[,;|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 
@@ -159,10 +168,7 @@ export default function SidebarActions() {
     if (!raw) { toast.error('Veuillez saisir un nom de dossier'); return }
     if (!selectedDirectionFolder) { toast.error('Veuillez sélectionner une direction'); return }
     const file = addFolderFileRef.current?.files?.[0]
-    const names = raw
-      .split(/\r?\n|,/)
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const names = splitFolderNames(raw)
     if (names.length > 1 && file) {
       toast.error('Veuillez créer un seul dossier quand un fichier est sélectionné.')
       return
@@ -202,27 +208,48 @@ export default function SidebarActions() {
 
   const handleAddSubfolder = async () => {
     const group = (selectedFormationGroup || formationGroupName).trim()
-    const sub = formationSubfolderName.trim()
-    if (!group || !sub) { toast.error('Veuillez saisir le nom du groupe et du sous-dossier'); return }
+    const subs = splitFolderNames(formationSubfolderName)
+    if (!group) { toast.error('Veuillez saisir ou sélectionner un nom de groupe'); return }
+    if (subs.length === 0) { toast.error('Veuillez saisir au moins un nom de sous-dossier'); return }
     if (!selectedDirectionFormation) { toast.error('Veuillez sélectionner une direction'); return }
     const file = formationFileRef.current?.files?.[0]
+    if (subs.length > 1 && file) {
+      toast.error('Un seul sous-dossier à la fois lorsqu’un fichier est joint.')
+      return
+    }
     const parentName =
       selectedParentFormation && selectedParentFormation !== SELECT_FOLDER_ROOT
         ? parseFolderKey(selectedParentFormation).name
         : ''
-    const folderKey = parentName ? `${parentName}::${group}::${sub}` : `${group}::${sub}`
     setSubfolderOpen(false)
-    setLoading({ open: true, message: 'Création du sous-dossier en cours…' })
+    setLoading({ open: true, message: subs.length > 1 ? 'Création des sous-dossiers…' : 'Création du sous-dossier en cours…' })
     try {
-      if (file) {
-        await addFolder(folderKey, file, selectedDirectionFormation, formationSubfolderVisibility)
-        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé et fichier ajouté' }))
-        toast.success('Sous-dossier créé et fichier ajouté')
-      } else {
-        await addFolderMeta(folderKey, selectedDirectionFormation, formationSubfolderVisibility)
-        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé' }))
-        toast.success('Sous-dossier créé (sans fichier)')
+      for (const sub of subs) {
+        const folderKey = parentName ? `${parentName}::${group}::${sub}` : `${group}::${sub}`
+        if (file) {
+          await addFolder(folderKey, file, selectedDirectionFormation, formationSubfolderVisibility)
+        } else {
+          await addFolderMeta(folderKey, selectedDirectionFormation, formationSubfolderVisibility)
+        }
       }
+      const withFile = Boolean(file)
+      setLoading((s) => ({
+        ...s,
+        result: 'success',
+        resultMessage:
+          withFile
+            ? 'Sous-dossier créé et fichier ajouté'
+            : subs.length > 1
+              ? 'Sous-dossiers créés'
+              : 'Sous-dossier créé',
+      }))
+      toast.success(
+        withFile
+          ? 'Sous-dossier créé et fichier ajouté'
+          : subs.length > 1
+            ? 'Sous-dossiers créés'
+            : 'Sous-dossier créé (sans fichier)',
+      )
       setFormationGroupName('')
       setSelectedFormationGroup('')
       setFormationSubfolderName('')
@@ -338,7 +365,7 @@ export default function SidebarActions() {
               Nouveau dossier
             </DialogTitle>
             <DialogDescription>
-              Créez un dossier, avec ou sans premier fichier.
+              Un ou plusieurs dossiers (une ligne, une virgule ou un point-virgule par nom), avec ou sans premier fichier.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -372,12 +399,14 @@ export default function SidebarActions() {
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="sb-folder-name">Nom du dossier</Label>
-              <Input
+              <Label htmlFor="sb-folder-name">Nom du ou des dossiers</Label>
+              <Textarea
                 id="sb-folder-name"
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Ex. Procédures 2024 (ou plusieurs noms séparés par virgules / lignes)"
+                placeholder={'Ex. Procédures 2024\nArchives\nOu : A, B, C'}
+                rows={3}
+                className="min-h-[4.5rem]"
               />
             </div>
             <div className="grid gap-2">
@@ -416,7 +445,7 @@ export default function SidebarActions() {
               Nouveau sous-dossier
             </DialogTitle>
             <DialogDescription>
-              Créez un groupe + sous-dossier pour organiser vos documents.
+              Un groupe et un ou plusieurs sous-dossiers (lignes, virgules ou point-virgules). Un fichier joint ne s’applique qu’à un seul sous-dossier.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -473,12 +502,14 @@ export default function SidebarActions() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="sb-subfolder-name">Nom du sous-dossier</Label>
-              <Input
+              <Label htmlFor="sb-subfolder-name">Nom du ou des sous-dossiers</Label>
+              <Textarea
                 id="sb-subfolder-name"
                 value={formationSubfolderName}
                 onChange={(e) => setFormationSubfolderName(e.target.value)}
-                placeholder='Ex. "Cours", "Supports"'
+                placeholder={'Ex. Cours\nSupports\nOu : TD1, TD2, TD3'}
+                rows={3}
+                className="min-h-[4.5rem]"
               />
             </div>
             <div className="grid gap-2">
