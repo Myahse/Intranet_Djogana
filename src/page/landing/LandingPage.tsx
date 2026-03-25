@@ -2,7 +2,9 @@ import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
-import androidApk from "@/assets/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
+
+/** Served from `public/app/` (not bundled by Vite — keeps builds fast and avoids OOM on small hosts). */
+const ANDROID_APK_HREF = "/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
 import { useAuth } from "@/contexts/AuthContext"
 import { User } from "lucide-react"
 import { useStaggerChildren, useScrollReveal } from "@/hooks/useAnimations"
@@ -88,7 +90,7 @@ const Landing = () => {
             © {new Date().getFullYear()} Djogana
           </span>
           <a
-            href={androidApk}
+            href={ANDROID_APK_HREF}
             download
             className="inline-flex items-center gap-2 rounded-md border bg-muted px-3 py-1.5 text-foreground hover:bg-muted/80 transition-colors"
           >
