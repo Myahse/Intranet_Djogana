@@ -2,12 +2,20 @@ import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
-
-/** Served from `public/app/` (not bundled by Vite — keeps builds fast and avoids OOM on small hosts). */
-const ANDROID_APK_HREF = "/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
 import { useAuth } from "@/contexts/AuthContext"
 import { User } from "lucide-react"
 import { useStaggerChildren, useScrollReveal } from "@/hooks/useAnimations"
+
+/**
+ * APK download link.
+ * Prefer `VITE_ANDROID_APK_URL` (e.g. Google Drive direct link) to avoid hosting a large file on the app server.
+ * Fallback: static file in `public/app/` if present.
+ */
+const ANDROID_APK_HREF =
+  (import.meta.env.VITE_ANDROID_APK_URL as string | undefined)?.trim() ||
+  "/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
+
+const isExternalApkUrl = /^https?:\/\//i.test(ANDROID_APK_HREF)
 
 const Landing = () => {
   const { user } = useAuth()
@@ -91,7 +99,9 @@ const Landing = () => {
           </span>
           <a
             href={ANDROID_APK_HREF}
-            download
+            {...(isExternalApkUrl
+              ? { target: "_blank", rel: "noopener noreferrer" }
+              : { download: true })}
             className="inline-flex items-center gap-2 rounded-md border bg-muted px-3 py-1.5 text-foreground hover:bg-muted/80 transition-colors"
           >
             Télécharger l’application Android (APK)
