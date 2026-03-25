@@ -3293,7 +3293,9 @@ app.get('/api/feed', requireAuth, async (req, res) => {
     if (userRes.rows.length === 0) {
       return res.status(401).json({ error: 'Utilisateur introuvable.' })
     }
-    const user = userRes.rows[0]
+    // We only need to confirm the user exists; the feed is global.
+    // (Direction-only folder visibility is enforced on folder/file endpoints, not on the activity feed.)
+    // const user = userRes.rows[0]
 
     // Show a curated subset of actions (most relevant for notifications)
     const actions = [
@@ -3324,11 +3326,7 @@ app.get('/api/feed', requireAuth, async (req, res) => {
       WHERE a.action = ANY($1)
     `
 
-    // By default, non-admin sees only their direction events *plus* global events (direction_id NULL)
-    if (user.role !== 'admin') {
-      params.push(user.direction_id)
-      sql += ` AND (a.direction_id IS NULL OR a.direction_id = $2)`
-    }
+    // Feed is global: any authenticated user can see all recent platform events across directions.
 
     sql += ` ORDER BY a.created_at DESC LIMIT ${limitNum} OFFSET ${offsetNum}`
 
