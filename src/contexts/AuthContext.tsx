@@ -404,6 +404,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await fetch(
           `${getApiBaseUrl()}/api/auth/device/poll/${encodeURIComponent(requestId)}`
         )
+        // Bad gateway / service unavailable: keep polling (Render cold start, OOM restart, proxy timeout).
+        if (res.status === 502 || res.status === 503 || res.status === 504) {
+          return { status: 'pending' }
+        }
         const data = (await res.json()) as {
           status: string
           user?: User
