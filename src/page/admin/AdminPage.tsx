@@ -416,12 +416,13 @@ export default function AdminPage() {
   useStaggerChildren(statsGridRef, '> *', [stats])
   useScrollReveal(chartsRef)
 
-  /* ── 10s cooldown between API requests ── */
-  const COOLDOWN_SEC = 10
+  /* Short cooldown after a successful load to avoid hammering the server (stats are heavy). */
+  const COOLDOWN_SEC = 3
   const [cooldown, setCooldown] = useState(0)
   const cooldownEndRef = useRef(0)
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
   const pendingFetchRef = useRef<{ p: Period; range?: DateRange } | null>(null)
+  const lastWsStatsRefreshRef = useRef(0)
 
   const startCooldown = useCallback(() => {
     cooldownEndRef.current = Date.now() + COOLDOWN_SEC * 1000
@@ -471,12 +472,12 @@ export default function AdminPage() {
       const data = await res.json()
       setStats(data)
       if (data.scope) setStatsScope(data.scope)
+      startCooldown()
     } catch (e) {
       setError('Impossible de charger les statistiques.')
       console.error(e)
     } finally {
       setLoading(false)
-      startCooldown()
     }
   }, [getAuthHeaders, period, dateRange, startCooldown, isAdmin, isDirectionChief, statsScope])
 
@@ -497,9 +498,14 @@ export default function AdminPage() {
 
   useEffect(() => { fetchStats() }, [fetchStats])
 
-  // Real-time: auto-refresh stats when any data changes via WebSocket
+  // Real-time: refresh stats sparingly (endpoint is heavy; avoid refetch on every folder/file event)
   useEffect(() => {
-    const handler = () => { fetchStats() }
+    const handler = () => {
+      const now = Date.now()
+      if (now - lastWsStatsRefreshRef.current < 45_000) return
+      lastWsStatsRefreshRef.current = now
+      fetchStats()
+    }
     window.addEventListener('ws:data_changed', handler)
     return () => { window.removeEventListener('ws:data_changed', handler) }
   }, [fetchStats])
