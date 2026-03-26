@@ -384,7 +384,7 @@ export default function SidebarActions() {
             <div className="grid gap-2">
               <Label htmlFor="sb-folder-direction">Direction</Label>
               <Select value={selectedDirectionFolder} onValueChange={setSelectedDirectionFolder}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="sb-folder-direction" className="w-full">
                   <SelectValue placeholder="Sélectionner une direction" />
                 </SelectTrigger>
                 <SelectContent>
@@ -464,7 +464,7 @@ export default function SidebarActions() {
             <div className="grid gap-2">
               <Label htmlFor="sb-sub-direction">Direction</Label>
               <Select value={selectedDirectionFormation} onValueChange={setSelectedDirectionFormation}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="sb-sub-direction" className="w-full">
                   <SelectValue placeholder="Sélectionner une direction" />
                 </SelectTrigger>
                 <SelectContent>
