@@ -97,15 +97,32 @@ const Landing = () => {
           <span className="text-muted-foreground">
             © {new Date().getFullYear()} Djogana
           </span>
-          <a
-            href={ANDROID_APK_HREF}
-            {...(isExternalApkUrl
-              ? { target: "_blank", rel: "noopener noreferrer" }
-              : { download: true })}
-            className="inline-flex items-center gap-2 rounded-md border bg-muted px-3 py-1.5 text-foreground hover:bg-muted/80 transition-colors"
-          >
-            Télécharger l’application Android (APK)
-          </a>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex items-center justify-center rounded-xl border bg-background p-1.5 shadow-sm">
+              <img
+                src={logoDjogana}
+                alt=""
+                className="size-12 rounded-lg object-contain"
+              />
+            </div>
+            <a
+              href={ANDROID_APK_HREF}
+              {...(isExternalApkUrl
+                ? { target: "_blank", rel: "noopener noreferrer" }
+                : { download: true })}
+              className="group inline-flex items-center rounded-xl border bg-card px-3 py-2 text-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-muted/60"
+              aria-label="Télécharger l'application Android"
+            >
+              <span className="flex flex-col leading-tight">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Disponible sur
+                </span>
+                <span className="text-sm font-semibold group-hover:text-primary">
+                  Télécharger l&apos;application Android
+                </span>
+              </span>
+            </a>
+          </div>
         </div>
       </footer>
     </div>
