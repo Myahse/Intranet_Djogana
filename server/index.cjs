@@ -5240,14 +5240,22 @@ app.patch('/api/folders/:id/visibility', async (req, res) => {
 
 app.get('/api/files', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionIdRaw, identifiant } = req.query
-    let userDirectionId = userDirectionIdRaw
+    const { folder, identifiant } = req.query
+
+    // Pagination (prevents huge payloads/timeouts through proxies)
+    const limit = Math.max(1, Math.min(1000, parseInt((req.query.limit || '200').toString(), 10) || 200))
+    const offset = Math.max(0, Math.min(50_000, parseInt((req.query.offset || '0').toString(), 10) || 0))
+
+    let role = req.query.role
+    let userDirectionId = req.query.direction_id
 
     let userIdForFolderGrants = null
     if (identifiant) {
-      const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
+      // Trust DB for role/direction (avoid spoofing via query params)
+      const u = await pool.query('SELECT id, direction_id, role FROM users WHERE identifiant = $1', [identifiant])
       if (u.rows.length > 0) {
         userIdForFolderGrants = u.rows[0].id
+        role = u.rows[0].role || role
         // Fallback: if direction_id is missing from query, use the user's DB direction.
         if (!userDirectionId && u.rows[0].direction_id) {
           userDirectionId = u.rows[0].direction_id
@@ -5343,6 +5351,9 @@ app.get('/api/files', async (req, res) => {
     }
 
     sql += ' ORDER BY files.created_at DESC'
+    params.push(limit)
+    params.push(offset)
+    sql += ` LIMIT $${params.length - 1} OFFSET $${params.length}`
 
     const result = await pool.query(sql, params)
 
@@ -5699,14 +5710,22 @@ app.post('/api/links', async (req, res) => {
 
 app.get('/api/links', async (req, res) => {
   try {
-    const { folder, role, direction_id: userDirectionIdRaw, identifiant } = req.query
-    let userDirectionId = userDirectionIdRaw
+    const { folder, identifiant } = req.query
+
+    // Pagination (prevents huge payloads/timeouts through proxies)
+    const limit = Math.max(1, Math.min(1000, parseInt((req.query.limit || '200').toString(), 10) || 200))
+    const offset = Math.max(0, Math.min(50_000, parseInt((req.query.offset || '0').toString(), 10) || 0))
+
+    let role = req.query.role
+    let userDirectionId = req.query.direction_id
 
     let userIdForFolderGrants = null
     if (identifiant) {
-      const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
+      // Trust DB for role/direction (avoid spoofing via query params)
+      const u = await pool.query('SELECT id, direction_id, role FROM users WHERE identifiant = $1', [identifiant])
       if (u.rows.length > 0) {
         userIdForFolderGrants = u.rows[0].id
+        role = u.rows[0].role || role
         // Fallback: if direction_id is missing from query, use the user's DB direction.
         if (!userDirectionId && u.rows[0].direction_id) {
           userDirectionId = u.rows[0].direction_id
@@ -5802,6 +5821,9 @@ app.get('/api/links', async (req, res) => {
       sql += ' WHERE ' + conditions.join(' AND ')
     }
     sql += ' ORDER BY l.created_at DESC'
+    params.push(limit)
+    params.push(offset)
+    sql += ` LIMIT $${params.length - 1} OFFSET $${params.length}`
 
     const result = await pool.query(sql, params)
     return res.json(
