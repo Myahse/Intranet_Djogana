@@ -299,6 +299,11 @@ app.get('/health', (_req, res) => {
   res.status(200).type('text/plain').send('ok')
 })
 
+// Same as /health but under /api (Vercel rewrites /api/* → Render; use for probes & monitoring without DB).
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ ok: true, uptime: process.uptime() })
+})
+
 const BASE_URL = process.env.PUBLIC_BASE_URL
 if (!BASE_URL) {
   throw new Error('PUBLIC_BASE_URL is not set')
