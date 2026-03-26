@@ -18,6 +18,7 @@ import { History, Trash2, UserPlus, Building2, Pencil, Check, X, Circle, User, U
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
+import { getApiBaseUrl } from '@/utils/apiBase'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 const DashboardHome = (): ReactNode => {
   const { user, isAdmin, registerUser, getAuthHeaders, logout } = useAuth()

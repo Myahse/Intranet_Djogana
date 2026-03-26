@@ -8,21 +8,10 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { getApiBaseUrl, getWsUrl } from '../utils/apiBase'
 
 const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY??'intranet_djogana_user'
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY??'intranet_djogana_token'
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
-
-// Get the API base URL, falling back to current origin if not set
-function getApiBaseUrl(): string {
-  return API_BASE_URL || window.location.origin
-}
-
-// Derive WebSocket URL from the API base (http→ws, https→wss)
-export function getWsUrl(): string {
-  const base = getApiBaseUrl()
-  return base.replace(/^http/, 'ws') + '/ws'
-}
 
 export type UserPermissions = {
   can_create_folder: boolean

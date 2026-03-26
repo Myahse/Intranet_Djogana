@@ -36,8 +36,9 @@ import {
 import { FolderPlus, Upload, Link2, Plus, GitBranchPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 /** Radix Select forbids empty string as item value — use a sentinel for "racine". */
 const SELECT_FOLDER_ROOT = '__folder_root__'
