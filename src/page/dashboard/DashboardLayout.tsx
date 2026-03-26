@@ -33,13 +33,9 @@ import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import { DashboardFilterProvider } from '@/contexts/DashboardFilterContext'
 import logoDjogana from '@/assets/logo_djogana.png'
 import { useConfirmDialog } from '@/components/ConfirmDialog'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
-    ? import.meta.env.VITE_API_BASE_URL
-    : import.meta.env.DEV
-      ? ''
-      : 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 /** Normalise l’id direction (UUID) pour éviter doublons si la casse diffère entre API et dossiers. */
 function normDirId(id: string | undefined | null): string {

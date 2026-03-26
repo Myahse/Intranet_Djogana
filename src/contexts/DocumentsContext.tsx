@@ -9,14 +9,9 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
-// In dev, use '' so Vite proxies /api and /files to the backend (see vite.config.ts). Backend should run on port 3000.
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
-    ? import.meta.env.VITE_API_BASE_URL
-    : import.meta.env.DEV
-      ? ''
-      : 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 export type FolderKey = string
 

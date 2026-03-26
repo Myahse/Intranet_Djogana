@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/resizable'
 import { toast } from 'sonner'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
 const fileInputClass =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium'
@@ -1376,12 +1377,7 @@ const DocumentSection = () => {
 
   // ── Fetch direction name when on direction route ──
   const [directionName, setDirectionName] = useState<string>('')
-  const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== ''
-      ? import.meta.env.VITE_API_BASE_URL
-      : import.meta.env.DEV
-        ? ''
-        : 'http://localhost:3000'
+  const API_BASE_URL = getApiBaseUrl()
 
   const loadDirectionName = useCallback(async () => {
     if (!directionId) return

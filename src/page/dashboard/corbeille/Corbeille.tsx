@@ -27,8 +27,9 @@ import { Trash2, RotateCcw, FileText, Link2, FolderOpen, Trash, Pencil } from 'l
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
 import { useStaggerChildren } from '@/hooks/useAnimations'
 import { gsap } from '@/lib/gsap'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 type TrashItem = {
   id: string

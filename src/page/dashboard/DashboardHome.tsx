@@ -16,8 +16,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { History, Trash2, UserPlus, Building2, UserX, UserCheck, Pencil, Check, X } from 'lucide-react'
 import LoadingModal, { initialLoadingState, type LoadingState } from '@/components/LoadingModal'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE_URL = getApiBaseUrl()
 
 const DashboardHome = (): ReactNode => {
   const { user, isAdmin, registerUser, getAuthHeaders, logout } = useAuth()

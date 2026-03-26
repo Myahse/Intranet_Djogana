@@ -16,6 +16,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuth } from '@/contexts/AuthContext'
 import type { DateRange } from 'react-day-picker'
+import { getApiBaseUrl } from '@/utils/apiBase'
 
 /* ─── period presets ─── */
 const PERIODS = [
@@ -28,7 +29,7 @@ const PERIODS = [
 ] as const
 type Period = (typeof PERIODS)[number]['value'] | 'custom'
 
-const API = import.meta.env.VITE_API_BASE_URL ?? ''
+const API = getApiBaseUrl()
 
 /* ─── palette ─── */
 const COLORS = [
