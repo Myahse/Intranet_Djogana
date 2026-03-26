@@ -2914,10 +2914,8 @@ app.post('/api/auth/device/request', async (req, res) => {
                   body: `Code: ${code} — Approuver ou refuser`,
                   requestId: String(requestId),
                   code: String(code),
-                  categoryId: 'approval_request',   // matches setNotificationCategoryAsync
-                  // Must match APPROVAL_CHANNEL_ID (mobile) — new id resets cached default sound on Android
+                  categoryId: 'approval_request',   
                   channelId: 'approval_mixkit_v1',
-                  // expo-notifications: without this, data-only pushes use default system sound (see NotificationData.kt)
                   sound: 'mixkit_correct_answer_tone_2870',
                 },
                 android: {
@@ -2926,8 +2924,7 @@ app.post('/api/auth/device/request', async (req, res) => {
                 apns: {
                   payload: {
                     aps: {
-                      category: 'approval_request',  // iOS notification category
-                      // Fichier dans le bundle iOS (assets/sounds/mixkit_correct_answer_tone_2870.wav)
+                      category: 'approval_request', 
                       sound: 'mixkit_correct_answer_tone_2870.wav',
                       'content-available': 1,
                       alert: {
@@ -2941,12 +2938,12 @@ app.post('/api/auth/device/request', async (req, res) => {
                   },
                 },
               })
-              // eslint-disable-next-line no-console
+             
               console.log('[push] FCM sent successfully, messageId:', result)
             } catch (sendErr) {
-              // eslint-disable-next-line no-console
+             
               console.error('[push] FCM send error for token', deviceToken.slice(0, 20) + '...', sendErr.message)
-              // If the token is invalid/unregistered, clean it up
+         
               if (
                 sendErr.code === 'messaging/invalid-registration-token' ||
                 sendErr.code === 'messaging/registration-token-not-registered'
@@ -2955,13 +2952,13 @@ app.post('/api/auth/device/request', async (req, res) => {
                   'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
                   [ident, deviceToken]
                 )
-                // eslint-disable-next-line no-console
+           
                 console.log('[push] removed stale token for', ident)
               }
             }
           }
         } catch (err) {
-          // eslint-disable-next-line no-console
+       
           console.error('[push] FCM batch error', err)
         }
       })()
@@ -2980,8 +2977,7 @@ app.post('/api/auth/device/request', async (req, res) => {
   }
 })
 
-// Register an FCM device push token for the authenticated user (persisted in DB)
-// Accepts { fcmToken } (new Firebase flow) or { expoPushToken } (legacy Expo flow)
+
 app.post('/api/auth/device/push-token', (req, _res, next) => {
   // eslint-disable-next-line no-console
   console.log('[push] POST /push-token hit (before auth)')
@@ -5023,12 +5019,19 @@ app.delete('/api/folders-tree', async (req, res) => {
 })
 
 // Toggle folder visibility (public <-> direction_only)
-app.patch('/api/folders/:id/visibility', requireAuth, async (req, res) => {
+app.patch('/api/folders/:id/visibility', async (req, res) => {
   try {
     const { id } = req.params
-    const { visibility: rawVisibility } = req.body || {}
+    const { visibility: rawVisibility, identifiant: bodyIdentifiant } = req.body || {}
     const visibility = rawVisibility === 'direction_only' ? 'direction_only' : 'public'
-    const identifiant = req.authIdentifiant
+    const identifiant =
+      bodyIdentifiant ||
+      (req.query && req.query.identifiant) ||
+      req.authIdentifiant ||
+      getOptionalAuthUser(req)
+    if (!identifiant) {
+      return res.status(401).json({ error: 'Authentification requise.' })
+    }
 
     const userRes = await pool.query(
       'SELECT role, direction_id FROM users WHERE identifiant = $1',

@@ -13,7 +13,7 @@ import { useDocuments, parseFolderKey } from '@/contexts/DocumentsContext'
 import type { DocumentItem, LinkItem } from '@/contexts/DocumentsContext'
 import {
   FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft,
-  LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ,
+  LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ, ArrowUp,
   Calendar, HardDrive, FileType,
   Check, Upload, Globe,
 } from 'lucide-react'
@@ -1043,7 +1043,7 @@ function FolderGrid({
   buildLink: (key: string) => string
   onRenameFolder?: (folderKeyOrGroupKey: string) => void
   onDeleteFolder?: (folderKeyOrGroupKey: string) => void
-  onMoveFolderInto?: (sourceKeyOrGroupKey: string, targetKeyOrGroupKey: string) => void
+  onMoveFolderInto?: (sourceKeyOrGroupKey: string, targetKeyOrGroupKey: string | null) => void
 }) {
   const sorted = sortFolders(folders, sortField, sortDir)
   const folderGridRef = useRef<HTMLDivElement>(null)
@@ -1087,6 +1087,15 @@ function FolderGrid({
       <ContextMenu key={f.key}>
         <ContextMenuTrigger asChild>{link}</ContextMenuTrigger>
         <ContextMenuContent>
+          {onMoveFolderInto && (
+            <>
+              <ContextMenuItem onSelect={() => onMoveFolderInto(f.key, null)}>
+                <ArrowUp className="size-4" />
+                Déplacer à la racine
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
           {onRenameFolder && (
             <ContextMenuItem onSelect={() => onRenameFolder(f.key)}>
               <Pencil className="size-4" />
@@ -1271,8 +1280,9 @@ const DocumentSection = () => {
     }
   }, [confirm, deleteFolderTree, folderKey, navigate])
 
-  const handleMoveFolderInto = useCallback(async (src: string, target: string) => {
-    if (!src || !target || src === target) return
+  const handleMoveFolderInto = useCallback(async (src: string, target: string | null) => {
+    if (!src) return
+    if (target && src === target) return
     setLoading({ open: true, message: 'Déplacement du dossier…' })
     try {
       await moveFolderInto(src, target)
@@ -1566,19 +1576,30 @@ const DocumentSection = () => {
 
     const handleUploadFile = async () => {
       if (!folderKey) { toast.error('Dossier non trouvé'); return }
-      const file = uploadFileRef.current?.files?.[0]
-      if (!file) { toast.error('Veuillez choisir un fichier'); return }
+      const files = Array.from(uploadFileRef.current?.files ?? [])
+      if (files.length === 0) { toast.error('Veuillez choisir au moins un fichier'); return }
+      const customName = uploadFileName.trim()
+      if (files.length > 1 && customName) {
+        toast.error('Le nom personnalisé est disponible uniquement pour un seul fichier.')
+        return
+      }
       setUploadOpen(false)
-      setLoading({ open: true, message: 'Envoi du fichier en cours…' })
+      setLoading({ open: true, message: files.length > 1 ? 'Envoi des fichiers en cours…' : 'Envoi du fichier en cours…' })
       try {
-        await addFile(folderKey, file, uploadFileName.trim() || undefined)
+        for (const file of files) {
+          await addFile(folderKey, file, customName || undefined)
+        }
         setUploadFileName('')
         if (uploadFileRef.current) uploadFileRef.current.value = ''
-        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier ajouté avec succès' }))
-        toast.success('Fichier ajouté')
+        setLoading((s) => ({
+          ...s,
+          result: 'success',
+          resultMessage: files.length > 1 ? 'Fichiers ajoutés avec succès' : 'Fichier ajouté avec succès',
+        }))
+        toast.success(files.length > 1 ? 'Fichiers ajoutés' : 'Fichier ajouté')
       } catch (err) {
-        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi du fichier" }))
-        toast.error(err instanceof Error ? err.message : "Erreur lors de l'upload du fichier")
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi des fichiers" }))
+        toast.error(err instanceof Error ? err.message : "Erreur lors de l'upload des fichiers")
         console.error(err)
       }
     }
@@ -2052,16 +2073,16 @@ const DocumentSection = () => {
               Ajouter un fichier
             </DialogTitle>
             <DialogDescription>
-              Ajoutez un fichier à ce dossier.
+              Ajoutez un ou plusieurs fichiers à ce dossier.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
-              <Label>Fichier</Label>
-              <input ref={uploadFileRef} type="file" className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
+              <Label>Fichier(s)</Label>
+              <input ref={uploadFileRef} type="file" multiple className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="upload-name">Nom du fichier (optionnel)</Label>
+              <Label htmlFor="upload-name">Nom du fichier (optionnel, fichier unique)</Label>
               <Input
                 id="upload-name"
                 value={uploadFileName}
