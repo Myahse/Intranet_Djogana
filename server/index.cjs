@@ -14,6 +14,9 @@ const http = require('http')
 const AdmZip = require('adm-zip')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
+const { Readable } = require('stream')
+const { pipeline } = require('stream/promises')
 
 // ---------- Cloudinary ----------
 cloudinary.config({
@@ -243,7 +246,17 @@ const app = express()
 
 // 30s cache for expensive admin stats endpoint
 const ADMIN_STATS_CACHE_TTL_MS = 30_000
+const ADMIN_STATS_CACHE_MAX_KEYS = 32
 const adminStatsCache = new Map() // key -> { ts: number, data: any }
+
+function adminStatsCacheSet(key, entry) {
+  while (adminStatsCache.size >= ADMIN_STATS_CACHE_MAX_KEYS) {
+    const first = adminStatsCache.keys().next().value
+    if (first === undefined) break
+    adminStatsCache.delete(first)
+  }
+  adminStatsCache.set(key, entry)
+}
 
 // ── CORS ──
 // Build an allowed-origins list from CORS_ORIGINS env (comma-separated) plus common defaults.
@@ -358,7 +371,7 @@ async function migrateLegacyFilesToCloudinary(pool) {
      FROM files f
      LEFT JOIN directions d ON d.id = f.direction_id
      WHERE f.data IS NOT NULL AND f.cloudinary_url IS NULL
-     LIMIT 50`
+     LIMIT 15`
   )
   if (legacy.rows.length === 0) {
     console.log('[cloudinary-migration] No legacy bytea files to migrate.')
@@ -795,9 +808,21 @@ async function initDb() {
   )
 }
 
+// Disk storage avoids holding the whole file in RAM (memoryStorage + large uploads = OOM on 2GB hosts).
+const UPLOAD_TMP_DIR = path.join(os.tmpdir(), 'intranet-djogana-uploads')
+try {
+  fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true })
+} catch (_) {
+  /* ignore */
+}
+
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB max upload
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
+    filename: (_req, file, cb) =>
+      cb(null, `${Date.now()}-${uuidv4()}${path.extname(file.originalname || '') || '.bin'}`),
+  }),
   limits: { fileSize: MAX_FILE_SIZE },
 })
 
@@ -1487,7 +1512,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       topUploaders: topUploaders.rows,
     }
 
-    adminStatsCache.set(cacheKey, { ts: Date.now(), data: payload })
+    adminStatsCacheSet(cacheKey, { ts: Date.now(), data: payload })
     return res.json(payload)
   } catch (err) {
     console.error('admin stats error', err)
@@ -4334,13 +4359,13 @@ app.post('/api/files', (req, res, next) => {
     next()
   })
 }, async (req, res) => {
+  const tmpPath = req.file?.path
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' })
     }
 
-    const fileBuffer = req.file.buffer
-    if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+    if (!tmpPath || !fs.existsSync(tmpPath)) {
       return res.status(400).json({ error: 'Fichier invalide ou trop volumineux.' })
     }
 
@@ -4413,35 +4438,42 @@ app.post('/api/files', (req, res, next) => {
 
     // Cloudinary plan limits: image/raw = 20 MB, video = 2 GB
     const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : 20 * 1024 * 1024
-    const useCloudinary = fileBuffer.length <= cloudinaryLimit
+    const fileSize = Number(req.file.size) || 0
+    const useCloudinary = fileSize <= cloudinaryLimit
 
     let cloudinaryUrl = null
     let cloudinaryPublicId = null
 
     if (useCloudinary) {
-      // Upload to Cloudinary
       const cloudinaryOpts = {
         folder: `intranet/${directionCode}/${folder}`,
         public_id: id,
         resource_type: resourceType,
       }
       const cloudinaryResult = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
+        const uploadStream = cloudinary.uploader.upload_stream(
           cloudinaryOpts,
           (error, result) => {
             if (error) reject(error)
             else resolve(result)
           }
-        ).end(fileBuffer)
+        )
+        fs.createReadStream(tmpPath).on('error', reject).pipe(uploadStream)
       })
       cloudinaryUrl = cloudinaryResult.secure_url
       cloudinaryPublicId = cloudinaryResult.public_id
     }
 
+    let dataForDb = null
+    if (!useCloudinary) {
+      dataForDb = fs.readFileSync(tmpPath)
+    }
+
     // Extract APK icon if this is an APK file
     let iconUrl = null
     if (storedFileName.toLowerCase().endsWith('.apk')) {
-      const iconBuffer = extractApkIcon(fileBuffer)
+      const apkBufForIcon = dataForDb || fs.readFileSync(tmpPath)
+      const iconBuffer = extractApkIcon(apkBufForIcon)
       if (iconBuffer) {
         const cloudinaryFolder = `intranet/${directionCode}/${folder}`
         iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
@@ -4456,13 +4488,13 @@ app.post('/api/files', (req, res, next) => {
         id,
         storedFileName,
         mimeType,
-        Number(req.file.size) || 0,
+        fileSize,
         folder,
         directionId,
         uploadedBy,
         cloudinaryUrl,
         cloudinaryPublicId,
-        useCloudinary ? null : fileBuffer, // store bytea only for large files
+        useCloudinary ? null : dataForDb,
         iconUrl,
       ]
     )
@@ -4477,7 +4509,7 @@ app.post('/api/files', (req, res, next) => {
       directionId,
       entityType: 'file',
       entityId: id,
-      details: { name: storedFileName, folder, size: Number(req.file.size) || 0 },
+      details: { name: storedFileName, folder, size: fileSize },
     })
 
     broadcastDataChange('files', 'created', { id, directionId, folder })
@@ -4521,7 +4553,7 @@ app.post('/api/files', (req, res, next) => {
     return res.json({
       id,
       name: storedFileName,
-      size: req.file.size,
+      size: fileSize,
       url: publicUrl,
       view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
@@ -4532,6 +4564,14 @@ app.post('/api/files', (req, res, next) => {
     console.error("file upload error", err?.message || err, err?.code, err?.stack)
     const detail = err?.message || "Unknown error"
     return res.status(500).json({ error: "Erreur lors de l'upload: " + detail })
+  } finally {
+    if (tmpPath) {
+      try {
+        fs.unlinkSync(tmpPath)
+      } catch (_) {
+        /* ignore */
+      }
+    }
   }
 })
 
@@ -5433,13 +5473,20 @@ app.get('/files/:id', async (req, res) => {
         if (!upstream.ok) {
           return res.status(502).send('Failed to fetch file from storage')
         }
-        const buf = Buffer.from(await upstream.arrayBuffer())
+        const len = upstream.headers.get('content-length')
+        if (len) res.setHeader('Content-Length', len)
         res.setHeader('Content-Type', file.mime_type || 'application/octet-stream')
-        res.setHeader('Content-Length', buf.length)
         res.setHeader(
           'Content-Disposition',
           `inline; filename="${encodeURIComponent(file.name)}"`
         )
+        // Stream through instead of buffering the whole file (avoids OOM on large videos/PDFs).
+        if (upstream.body && typeof Readable.fromWeb === 'function') {
+          await pipeline(Readable.fromWeb(upstream.body), res)
+          return
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer())
+        res.setHeader('Content-Length', buf.length)
         return res.send(buf)
       } catch (fetchErr) {
         console.error('cloudinary proxy error', fetchErr)
