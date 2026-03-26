@@ -186,6 +186,52 @@ function getMessaging() {
   }
 }
 
+function isExpoPushToken(token) {
+  return typeof token === 'string' && /^ExponentPushToken\[[^\]]+\]$/i.test(token.trim())
+}
+
+function isLikelyFcmToken(token) {
+  if (typeof token !== 'string') return false
+  const t = token.trim()
+  if (!t) return false
+  if (isExpoPushToken(t)) return false
+  // FCM tokens are long opaque strings; we just need to distinguish from Expo tokens.
+  return t.length >= 50
+}
+
+async function sendExpoPushNotifications(tokens, message) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return
+  const payloads = tokens.map((to) => ({
+    to,
+    title: message?.title,
+    body: message?.body,
+    data: message?.data || {},
+    sound: message?.sound || 'default',
+    channelId: message?.channelId,
+    priority: 'high',
+  }))
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+      },
+      body: JSON.stringify(payloads),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      console.error('[push] Expo push error', res.status, data)
+      return
+    }
+    // Best-effort logging; tickets are returned, receipts are async.
+    console.log('[push] Expo push sent:', Array.isArray(data?.data) ? data.data.length : 'unknown')
+  } catch (err) {
+    console.error('[push] Expo push send failed', err?.message || err)
+  }
+}
+
 const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET is not set')
@@ -2894,66 +2940,86 @@ app.post('/api/auth/device/request', async (req, res) => {
       ;(async () => {
         try {
           const messaging = getMessaging()
-          if (!messaging) return
+          const expoTokens = []
+          const fcmTokens = []
           for (const row of tokenRows.rows) {
-            // Prefer fcm_token (direct Firebase), fall back to expo_push_token
-            const deviceToken = row.fcm_token || row.expo_push_token
-            if (!deviceToken) continue
+            const keyToken = typeof row.expo_push_token === 'string' ? row.expo_push_token.trim() : ''
+            const fcmToken = typeof row.fcm_token === 'string' ? row.fcm_token.trim() : ''
 
-            try {
-              // ── Data-only message ──
-              // We intentionally omit the top-level `notification` field so that
-              // expo-notifications processes the message on Android (even in the
-              // background) and can attach the notification category with
-              // interactive Approve / Deny action buttons.
-              const result = await messaging.send({
-                token: deviceToken,
-                // Data-only → expo-notifications reads title, body, categoryId, channelId
-                data: {
-                  title: 'Nouvelle demande de connexion',
-                  body: `Code: ${code} — Approuver ou refuser`,
-                  requestId: String(requestId),
-                  code: String(code),
-                  categoryId: 'approval_request',   
-                  channelId: 'approval_mixkit_v1',
-                  sound: 'mixkit_correct_answer_tone_2870',
-                },
-                android: {
-                  priority: 'high',
-                },
-                apns: {
-                  payload: {
-                    aps: {
-                      category: 'approval_request', 
-                      sound: 'mixkit_correct_answer_tone_2870.wav',
-                      'content-available': 1,
-                      alert: {
-                        title: 'Nouvelle demande de connexion',
-                        body: `Code: ${code} — Approuver ou refuser`,
+            if (isExpoPushToken(keyToken)) expoTokens.push(keyToken)
+            else if (isLikelyFcmToken(fcmToken)) fcmTokens.push(fcmToken)
+            else if (isLikelyFcmToken(keyToken)) fcmTokens.push(keyToken)
+            else if (keyToken) {
+              console.warn('[push] unknown token format, skipping:', keyToken.slice(0, 20) + '...')
+            }
+          }
+
+          if (expoTokens.length > 0) {
+            await sendExpoPushNotifications(expoTokens, {
+              title: 'Nouvelle demande de connexion',
+              body: `Code: ${code} — Approuver ou refuser`,
+              channelId: 'approval_mixkit_v1',
+              sound: 'mixkit_correct_answer_tone_2870',
+              data: {
+                requestId: String(requestId),
+                code: String(code),
+                categoryId: 'approval_request',
+              },
+            })
+          }
+
+          if (fcmTokens.length > 0) {
+            if (!messaging) return
+            for (const deviceToken of fcmTokens) {
+              try {
+                // Data-only to let expo-notifications handle background behavior on Android.
+                const result = await messaging.send({
+                  token: deviceToken,
+                  data: {
+                    title: 'Nouvelle demande de connexion',
+                    body: `Code: ${code} — Approuver ou refuser`,
+                    requestId: String(requestId),
+                    code: String(code),
+                    categoryId: 'approval_request',
+                    channelId: 'approval_mixkit_v1',
+                    sound: 'mixkit_correct_answer_tone_2870',
+                  },
+                  android: { priority: 'high' },
+                  apns: {
+                    payload: {
+                      aps: {
+                        category: 'approval_request',
+                        sound: 'mixkit_correct_answer_tone_2870.wav',
+                        'content-available': 1,
+                        alert: {
+                          title: 'Nouvelle demande de connexion',
+                          body: `Code: ${code} — Approuver ou refuser`,
+                        },
                       },
                     },
+                    headers: { 'apns-priority': '10' },
                   },
-                  headers: {
-                    'apns-priority': '10',
-                  },
-                },
-              })
-             
-              console.log('[push] FCM sent successfully, messageId:', result)
-            } catch (sendErr) {
-             
-              console.error('[push] FCM send error for token', deviceToken.slice(0, 20) + '...', sendErr.message)
-         
-              if (
-                sendErr.code === 'messaging/invalid-registration-token' ||
-                sendErr.code === 'messaging/registration-token-not-registered'
-              ) {
-                await pool.query(
-                  'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
-                  [ident, deviceToken]
+                })
+                console.log('[push] FCM sent successfully, messageId:', result)
+              } catch (sendErr) {
+                console.error(
+                  '[push] FCM send error for token',
+                  deviceToken.slice(0, 20) + '...',
+                  sendErr?.message || sendErr
                 )
-           
-                console.log('[push] removed stale token for', ident)
+                if (
+                  sendErr?.code === 'messaging/invalid-registration-token' ||
+                  sendErr?.code === 'messaging/registration-token-not-registered' ||
+                  // Happens when token belongs to another Firebase project (SenderId mismatch)
+                  sendErr?.code === 'messaging/mismatched-credential' ||
+                  sendErr?.code === 'messaging/sender-id-mismatch'
+                ) {
+                  await pool.query(
+                    'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
+                    [ident, deviceToken]
+                  )
+                  console.log('[push] removed stale token for', ident)
+                }
               }
             }
           }
@@ -2988,8 +3054,11 @@ app.post('/api/auth/device/push-token', (req, _res, next) => {
   console.log('[push] push-token request received for', identifiant)
   try {
     const { fcmToken, expoPushToken } = req.body || {}
-    const token = fcmToken || expoPushToken
-    if (!token || typeof token !== 'string') {
+    const trimmedFcm = typeof fcmToken === 'string' ? fcmToken.trim() : ''
+    const trimmedExpo = typeof expoPushToken === 'string' ? expoPushToken.trim() : ''
+    const tokenKey = trimmedExpo || trimmedFcm
+    const fcmValue = trimmedFcm && !isExpoPushToken(trimmedFcm) ? trimmedFcm : null
+    if (!tokenKey) {
       // eslint-disable-next-line no-console
       console.log('[push] push-token rejected: missing or invalid token')
       return res.status(400).json({ error: 'fcmToken ou expoPushToken requis.' })
@@ -3000,10 +3069,16 @@ app.post('/api/auth/device/push-token', (req, _res, next) => {
       `INSERT INTO push_tokens (user_identifiant, expo_push_token, fcm_token)
        VALUES ($1, $2, $3)
        ON CONFLICT (user_identifiant, expo_push_token) DO UPDATE SET created_at = now(), fcm_token = COALESCE($3, push_tokens.fcm_token)`,
-      [identifiant, token, fcmToken || null]
+      [identifiant, tokenKey, fcmValue]
     )
     // eslint-disable-next-line no-console
-    console.log('[push] token registered for', identifiant, 'token:', token.slice(0, 30) + '...', fcmToken ? '(FCM)' : '(Expo)')
+    console.log(
+      '[push] token registered for',
+      identifiant,
+      'token:',
+      tokenKey.slice(0, 30) + '...',
+      isExpoPushToken(tokenKey) ? '(Expo)' : fcmValue ? '(FCM)' : '(Unknown)'
+    )
     return res.json({ success: true })
   } catch (err) {
     // eslint-disable-next-line no-console
