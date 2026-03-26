@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(result.user);
       // Get the FCM device token and register it on the server (non bloquant)
       registerForPushNotificationsAsync()
-        .then((fcmToken) => api.registerPushToken(result.token, fcmToken))
+        .then((deviceToken) => api.registerPushToken(result.token, deviceToken))
         .catch(() => {});
       return true;
     },

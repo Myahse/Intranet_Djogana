@@ -322,17 +322,19 @@ export async function listDeviceRequestHistory(
 
 export async function registerPushToken(
   token: string,
-  fcmToken: string
+  deviceToken: string
 ): Promise<void> {
   try {
     const base = await getApiBaseUrl();
+    const trimmed = (deviceToken || "").trim();
+    const isExpo = /^ExponentPushToken\[[^\]]+\]$/i.test(trimmed);
     const res = await fetch(`${base}/api/auth/device/push-token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ fcmToken }),
+      body: JSON.stringify(isExpo ? { expoPushToken: trimmed } : { fcmToken: trimmed }),
     });
     if (!res.ok) {
       const err = await res.text();
