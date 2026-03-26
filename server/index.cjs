@@ -296,10 +296,34 @@ if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is not set')
 }
 
+/** Neon + pg: strip channel_binding — it can break or slow pooled connections with some setups. */
+function normalizeDatabaseUrl(raw) {
+  try {
+    const u = new URL(raw)
+    u.searchParams.delete('channel_binding')
+    return u.toString()
+  } catch {
+    return raw
+  }
+}
+
 // Use verify-full to match current pg behavior and silence the sslmode deprecation warning
 const connectionString =
-  DATABASE_URL.replace(/sslmode=require(?=&|$)/i, 'sslmode=verify-full') ||
-  DATABASE_URL
+  normalizeDatabaseUrl(DATABASE_URL).replace(/sslmode=require(?=&|$)/i, 'sslmode=verify-full') ||
+  normalizeDatabaseUrl(DATABASE_URL)
+
+// Neon compute cold start / TLS can exceed 15s; default 60s in production (override with PG_CONNECTION_TIMEOUT_MS).
+const pgConnectionTimeoutMs = Math.max(
+  5_000,
+  Math.min(
+    120_000,
+    parseInt(
+      process.env.PG_CONNECTION_TIMEOUT_MS ||
+        (process.env.NODE_ENV === 'production' ? '60000' : '15000'),
+      10
+    ) || 15_000
+  )
+)
 
 const pool = new Pool({
   connectionString,
@@ -312,8 +336,16 @@ const pool = new Pool({
     )
   ),
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 15_000,
+  connectionTimeoutMillis: pgConnectionTimeoutMs,
+  keepAlive: true,
 })
+
+pool.on('error', (err) => {
+  console.error('[pg] pool error', err?.message || err)
+})
+console.log(
+  `[pg] pool max=${pool.options.max} connectionTimeoutMs=${pgConnectionTimeoutMs} (set PG_CONNECTION_TIMEOUT_MS to override)`
+)
 
 /**
  * Background migration: uploads all files that still have bytea data

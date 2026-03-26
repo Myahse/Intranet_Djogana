@@ -1116,7 +1116,7 @@ const DashboardHome = (): ReactNode => {
             <div className="grid gap-2 max-w-xs">
               <Label htmlFor="new-user-role">Profil</Label>
               <Select value={selectedRole} onValueChange={setSelectedRole}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="new-user-role" className="w-full">
                   <SelectValue placeholder="Sélectionner un profil" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1132,7 +1132,7 @@ const DashboardHome = (): ReactNode => {
               <div className="grid gap-2 max-w-xs">
                 <Label htmlFor="new-user-direction">Direction</Label>
                 <Select value={selectedDirection} onValueChange={setSelectedDirection}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id="new-user-direction" className="w-full">
                     <SelectValue placeholder="Sélectionner une direction" />
                   </SelectTrigger>
                   <SelectContent>
