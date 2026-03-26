@@ -265,19 +265,30 @@ export default function SidebarActions() {
 
   const handleUploadFile = async () => {
     if (!selectedFolder) { toast.error('Veuillez sélectionner un dossier'); return }
-    const file = uploadFileRef.current?.files?.[0]
-    if (!file) { toast.error('Veuillez choisir un fichier'); return }
+    const files = Array.from(uploadFileRef.current?.files ?? [])
+    if (files.length === 0) { toast.error('Veuillez choisir au moins un fichier'); return }
+    const customName = uploadFileName.trim()
+    if (files.length > 1 && customName) {
+      toast.error('Le nom personnalisé est disponible uniquement pour un seul fichier.')
+      return
+    }
     setUploadOpen(false)
-    setLoading({ open: true, message: 'Envoi du fichier en cours…' })
+    setLoading({ open: true, message: files.length > 1 ? 'Envoi des fichiers en cours…' : 'Envoi du fichier en cours…' })
     try {
-      await addFile(selectedFolder, file, uploadFileName.trim() || undefined)
+      for (const file of files) {
+        await addFile(selectedFolder, file, customName || undefined)
+      }
       setUploadFileName('')
       if (uploadFileRef.current) uploadFileRef.current.value = ''
-      setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Fichier ajouté avec succès' }))
-      toast.success('Fichier ajouté')
+      setLoading((s) => ({
+        ...s,
+        result: 'success',
+        resultMessage: files.length > 1 ? 'Fichiers ajoutés avec succès' : 'Fichier ajouté avec succès',
+      }))
+      toast.success(files.length > 1 ? 'Fichiers ajoutés' : 'Fichier ajouté')
     } catch (err) {
-      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi du fichier" }))
-      toast.error("Erreur lors de l'upload du fichier")
+      setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi des fichiers" }))
+      toast.error(err instanceof Error ? err.message : "Erreur lors de l'upload des fichiers")
       console.error(err)
     }
   }
@@ -548,7 +559,7 @@ export default function SidebarActions() {
               Uploader un fichier
             </DialogTitle>
             <DialogDescription>
-              Ajoutez un fichier à un dossier existant.
+              Ajoutez un ou plusieurs fichiers à un dossier existant.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -566,11 +577,11 @@ export default function SidebarActions() {
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label>Fichier</Label>
-              <input ref={uploadFileRef} type="file" className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
+              <Label>Fichier(s)</Label>
+              <input ref={uploadFileRef} type="file" multiple className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="sb-upload-name">Nom du fichier (optionnel)</Label>
+              <Label htmlFor="sb-upload-name">Nom du fichier (optionnel, fichier unique)</Label>
               <Input
                 id="sb-upload-name"
                 value={uploadFileName}
