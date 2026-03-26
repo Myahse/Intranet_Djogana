@@ -3764,6 +3764,12 @@ async function getIdentifiantsToNotifyAll(excludeIdentifiant = null) {
  */
 async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
   if (identifiants.length === 0) return
+  const normalizedData = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]))
+  const androidSound = typeof data?.sound === 'string' && data.sound.trim() ? data.sound.trim() : null
+  const apnsSound =
+    typeof data?.apnsSound === 'string' && data.apnsSound.trim()
+      ? data.apnsSound.trim()
+      : (androidSound ? `${androidSound}.wav` : 'default')
   const tokenRows = await pool.query(
     'SELECT user_identifiant, expo_push_token, fcm_token FROM push_tokens WHERE user_identifiant = ANY($1)',
     [identifiants]
@@ -3781,13 +3787,13 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
           data: {
             title: String(title),
             body: String(body),
-            ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
+            ...normalizedData,
           },
           android: { priority: 'high' },
           apns: {
             payload: {
               aps: {
-                sound: 'default',
+                sound: apnsSound,
                 'content-available': 1,
                 alert: { title: String(title), body: String(body) },
               },
@@ -4349,7 +4355,17 @@ app.post('/api/files', (req, res, next) => {
         toNotify,
         'Nouveau document',
         bodyText,
-        { type: 'document_uploaded', fileId: id, fileName: storedFileName, uploaderName, directionId, folder }
+        {
+          type: 'document_uploaded',
+          fileId: id,
+          fileName: storedFileName,
+          uploaderName,
+          directionId,
+          folder,
+          channelId: 'approval_mixkit_v1',
+          sound: 'mixkit_correct_answer_tone_2870',
+          apnsSound: 'mixkit_correct_answer_tone_2870.wav',
+        }
       ).catch((err) => console.error('[push] upload_file notify', err))
     }
 
@@ -4599,7 +4615,17 @@ app.post('/api/files/register', async (req, res) => {
         toNotify,
         'Nouveau document',
         bodyText,
-        { type: 'document_uploaded', fileId: id, fileName: storedFileName, uploaderName, directionId, folder: folderName }
+        {
+          type: 'document_uploaded',
+          fileId: id,
+          fileName: storedFileName,
+          uploaderName,
+          directionId,
+          folder: folderName,
+          channelId: 'approval_mixkit_v1',
+          sound: 'mixkit_correct_answer_tone_2870',
+          apnsSound: 'mixkit_correct_answer_tone_2870.wav',
+        }
       ).catch((err) => console.error('[push] file register notify', err))
     }
 
@@ -4792,7 +4818,14 @@ app.post('/api/folders', async (req, res) => {
           idents,
           'Nouveau dossier',
           `Un nouveau dossier a été créé : ${name}`,
-          { type: 'folder_created', folder_name: name, direction_id: directionId }
+          {
+            type: 'folder_created',
+            folder_name: name,
+            direction_id: directionId,
+            channelId: 'approval_mixkit_v1',
+            sound: 'mixkit_correct_answer_tone_2870',
+            apnsSound: 'mixkit_correct_answer_tone_2870.wav',
+          }
         )
       )
       .catch((err) => console.error('[push] folder_created', err))
