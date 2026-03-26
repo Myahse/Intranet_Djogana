@@ -333,11 +333,17 @@ async function migrateLegacyFilesToCloudinary(pool) {
   for (const row of legacy.rows) {
     try {
       const result = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
+        const size = row?.data?.length || 0
+        const useLarge = size > 20 * 1024 * 1024
+        const uploader = useLarge
+          ? cloudinary.uploader.upload_large_stream
+          : cloudinary.uploader.upload_stream
+        const stream = uploader(
           {
             folder: `intranet/${row.direction_code}/${row.folder}`,
             public_id: row.id,
             resource_type: 'auto',
+            ...(useLarge ? { chunk_size: 6_000_000 } : {}),
           },
           (err, res) => (err ? reject(err) : resolve(res))
         )
@@ -1236,139 +1242,145 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
         ELSE 'Autre'
       END`
 
-    // Run all queries in parallel
-    const [
-      usersCount, usersByRole, usersByDirection,
-      directionsCount, foldersCount, foldersByDirection,
-      filesCount, filesByType, filesByDirection, filesByDirectionAndType,
-      storageTotal, linksCount,
-      recentActivity, topUploaders, filesOverTime, filesOverTimeByType, filesDeletedOverTime,
-    ] = await Promise.all([
-      // ── Users (structural — not date-filtered, admin users hidden) ──
-      q('SELECT COUNT(*)::int AS count FROM users __WHERE__', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
-      q('SELECT role, COUNT(*)::int AS count FROM users __WHERE__ GROUP BY role ORDER BY count DESC', { dateCol: null, extraWhere: ["role <> 'admin'"] }),
-      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(u.id)::int AS count
+    // IMPORTANT: run sequentially to avoid exhausting the pg pool.
+    // This endpoint issues many queries; running them in parallel can exceed `PG_POOL_MAX`
+    // and trigger `timeout exceeded when trying to connect`.
+    const usersCount = await q('SELECT COUNT(*)::int AS count FROM users __WHERE__', { dateCol: null, extraWhere: ["role <> 'admin'"] })
+    const usersByRole = await q('SELECT role, COUNT(*)::int AS count FROM users __WHERE__ GROUP BY role ORDER BY count DESC', { dateCol: null, extraWhere: ["role <> 'admin'"] })
+    const usersByDirection = await q(
+      `SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(u.id)::int AS count
          FROM users u LEFT JOIN directions d ON u.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
-        { joinAlias: 'u', dateCol: null, extraWhere: ["u.role <> 'admin'"] }),
-      // ── Directions (structural) ──
+      { joinAlias: 'u', dateCol: null, extraWhere: ["u.role <> 'admin'"] }
+    )
+
+    const directionsCount = await (
       dirId
         ? pool.query('SELECT 1::int AS count')
-        : pool.query('SELECT COUNT(*)::int AS count FROM directions'),
-      // ── Folders (structural — not date-filtered, but direction-scoped) ──
-      q('SELECT COUNT(*)::int AS count FROM folders __WHERE__', { dateCol: null }),
-      q(`SELECT d.name AS direction, COUNT(fo.id)::int AS count
+        : pool.query('SELECT COUNT(*)::int AS count FROM directions')
+    )
+
+    const foldersCount = await q('SELECT COUNT(*)::int AS count FROM folders __WHERE__', { dateCol: null })
+    const foldersByDirection = await q(
+      `SELECT d.name AS direction, COUNT(fo.id)::int AS count
          FROM folders fo JOIN directions d ON fo.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
-        { joinAlias: 'fo', dateCol: null }),
-      // ── Files (date + direction filtered) ──
-      q('SELECT COUNT(*)::int AS count FROM files __WHERE__'),
-      q(`SELECT ${mimeCase} AS category, COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
-         FROM files __WHERE__ GROUP BY category ORDER BY count DESC`),
-      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
+      { joinAlias: 'fo', dateCol: null }
+    )
+
+    const filesCount = await q('SELECT COUNT(*)::int AS count FROM files __WHERE__')
+    const filesByType = await q(
+      `SELECT ${mimeCase} AS category, COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
+         FROM files __WHERE__ GROUP BY category ORDER BY count DESC`
+    )
+    const filesByDirection = await q(
+      `SELECT COALESCE(d.name, 'Sans direction') AS direction, COUNT(f.id)::int AS count,
                 COALESCE(SUM(f.size),0)::bigint AS total_size
          FROM files f LEFT JOIN directions d ON f.direction_id = d.id __WHERE__ GROUP BY d.name ORDER BY count DESC`,
-        { joinAlias: 'f' }),
-      // ── Files by direction AND type (cross-tabulation for filtering) ──
-      q(`SELECT COALESCE(d.name, 'Sans direction') AS direction,
+      { joinAlias: 'f' }
+    )
+    const filesByDirectionAndType = await q(
+      `SELECT COALESCE(d.name, 'Sans direction') AS direction,
                 ${mimeCase} AS category,
                 COUNT(f.id)::int AS count,
                 COALESCE(SUM(f.size),0)::bigint AS total_size
          FROM files f LEFT JOIN directions d ON f.direction_id = d.id __WHERE__
          GROUP BY d.name, category ORDER BY d.name, count DESC`,
-        { joinAlias: 'f' }),
-      // ── Storage (date + direction filtered) ──
-      q('SELECT COALESCE(SUM(size),0)::bigint AS total FROM files __WHERE__'),
-      // ── Links (date + direction filtered) ──
-      q('SELECT COUNT(*)::int AS count FROM links __WHERE__'),
-      // ── Activity (date + direction filtered) ──
-      // Admin viewers see all activity; non-admin viewers don't see admin actions
-      q(`SELECT a.action, a.actor_identifiant, COALESCE(u.role, 'Système') AS actor_role,
+      { joinAlias: 'f' }
+    )
+
+    const storageTotal = await q('SELECT COALESCE(SUM(size),0)::bigint AS total FROM files __WHERE__')
+    const linksCount = await q('SELECT COUNT(*)::int AS count FROM links __WHERE__')
+
+    const recentActivity = await q(
+      `SELECT a.action, a.actor_identifiant, COALESCE(u.role, 'Système') AS actor_role,
          u.name AS actor_name, u.prenoms AS actor_prenoms, a.entity_type, a.details, a.created_at
          FROM activity_log a
          LEFT JOIN users u ON a.actor_identifiant = u.identifiant
          __WHERE__ ORDER BY a.created_at DESC LIMIT 20`,
-        isAdmin ? { joinAlias: 'a' } : { joinAlias: 'a', extraWhere: ["(a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }),
-      // ── Top uploaders (date + direction filtered, admin hidden) ──
-      q(`SELECT u.identifiant, u.role, COUNT(f.id)::int AS uploads
+      isAdmin
+        ? { joinAlias: 'a' }
+        : { joinAlias: 'a', extraWhere: ["(a.actor_identifiant IS NULL OR a.actor_identifiant NOT IN (SELECT identifiant FROM users WHERE role = 'admin'))"] }
+    )
+
+    const topUploaders = await q(
+      `SELECT u.identifiant, u.role, COUNT(f.id)::int AS uploads
          FROM files f JOIN users u ON f.uploaded_by = u.id __WHERE__
          GROUP BY u.identifiant, u.role ORDER BY uploads DESC LIMIT 5`,
-        { joinAlias: 'f', extraWhere: ["u.role <> 'admin'"] }),
-      // ── Files over time (always use period or custom range, default to 12 months) ──
-      (() => {
-        const clauses = []
-        const params = []
-        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
-        if (fromDate) {
-          params.push(fromDate)
-          clauses.push(`created_at >= $${params.length}`)
-        } else {
-          // Default: show last 12 months for the timeline even when period is "all"
-          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
-          clauses.push(`created_at >= $${params.length}`)
-        }
-        if (toDate) {
-          params.push(toDate)
-          clauses.push(`created_at <= $${params.length}`)
-        }
-        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
-        return pool.query(`
+      { joinAlias: 'f', extraWhere: ["u.role <> 'admin'"] }
+    )
+
+    const filesOverTime = await (() => {
+      const clauses = []
+      const params = []
+      if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+      if (fromDate) {
+        params.push(fromDate)
+        clauses.push(`created_at >= $${params.length}`)
+      } else {
+        params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+        clauses.push(`created_at >= $${params.length}`)
+      }
+      if (toDate) {
+        params.push(toDate)
+        clauses.push(`created_at <= $${params.length}`)
+      }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+      return pool.query(`
           SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
                  COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
           FROM files ${where}
           GROUP BY month ORDER BY month ASC
         `, params)
-      })(),
-      // ── Files over time by type (for timeline type filtering) ──
-      (() => {
-        const clauses = []
-        const params = []
-        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
-        if (fromDate) {
-          params.push(fromDate)
-          clauses.push(`created_at >= $${params.length}`)
-        } else {
-          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
-          clauses.push(`created_at >= $${params.length}`)
-        }
-        if (toDate) {
-          params.push(toDate)
-          clauses.push(`created_at <= $${params.length}`)
-        }
-        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
-        return pool.query(`
+    })()
+
+    const filesOverTimeByType = await (() => {
+      const clauses = []
+      const params = []
+      if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+      if (fromDate) {
+        params.push(fromDate)
+        clauses.push(`created_at >= $${params.length}`)
+      } else {
+        params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+        clauses.push(`created_at >= $${params.length}`)
+      }
+      if (toDate) {
+        params.push(toDate)
+        clauses.push(`created_at <= $${params.length}`)
+      }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+      return pool.query(`
           SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
                  ${mimeCase} AS category,
                  COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
           FROM files ${where}
           GROUP BY month, category ORDER BY month ASC, count DESC
         `, params)
-      })(),
-      // ── Deleted files over time ──
-      (() => {
-        const clauses = []
-        const params = []
-        if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
-        if (fromDate) {
-          params.push(fromDate)
-          clauses.push(`deleted_at >= $${params.length}`)
-        } else {
-          // Default: show last 12 months for the timeline even when period is "all"
-          params.push(new Date(Date.now() - 365 * 86400000).toISOString())
-          clauses.push(`deleted_at >= $${params.length}`)
-        }
-        if (toDate) {
-          params.push(toDate)
-          clauses.push(`deleted_at <= $${params.length}`)
-        }
-        clauses.push('deleted_at IS NOT NULL') // Only include deleted files
-        const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
-        return pool.query(`
+    })()
+
+    const filesDeletedOverTime = await (() => {
+      const clauses = []
+      const params = []
+      if (dirId) { params.push(dirId); clauses.push(`direction_id = $${params.length}`) }
+      if (fromDate) {
+        params.push(fromDate)
+        clauses.push(`deleted_at >= $${params.length}`)
+      } else {
+        params.push(new Date(Date.now() - 365 * 86400000).toISOString())
+        clauses.push(`deleted_at >= $${params.length}`)
+      }
+      if (toDate) {
+        params.push(toDate)
+        clauses.push(`deleted_at <= $${params.length}`)
+      }
+      clauses.push('deleted_at IS NOT NULL')
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : ''
+      return pool.query(`
           SELECT TO_CHAR(DATE_TRUNC('month', deleted_at), 'YYYY-MM') AS month,
                  COUNT(*)::int AS count, COALESCE(SUM(size),0)::bigint AS total_size
           FROM files ${where}
           GROUP BY month ORDER BY month ASC
         `, params)
-      })(),
-    ])
+    })()
 
     // For direction-scoped users, include the direction name
     let scopedDirectionName = null
