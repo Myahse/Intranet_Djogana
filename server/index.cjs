@@ -241,6 +241,10 @@ const DEVICE_CODE_LENGTH = 6
 
 const app = express()
 
+// 30s cache for expensive admin stats endpoint
+const ADMIN_STATS_CACHE_TTL_MS = 30_000
+const adminStatsCache = new Map() // key -> { ts: number, data: any }
+
 // ── CORS ──
 // Build an allowed-origins list from CORS_ORIGINS env (comma-separated) plus common defaults.
 const CORS_ORIGINS = (() => {
@@ -592,6 +596,16 @@ async function initDb() {
   try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
   try { await pool.query('ALTER TABLE links ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
   try { await pool.query('ALTER TABLE folders ADD COLUMN IF NOT EXISTS deleted_by text DEFAULT NULL') } catch (_) { /* ignore */ }
+
+  // ── Indexes for analytics / stats performance ──
+  // These are safe and dramatically speed up /api/admin/stats.
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_files_created_at ON files (created_at DESC);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_files_direction_created_at ON files (direction_id, created_at DESC);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_files_deleted_at ON files (deleted_at DESC);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_files_direction_deleted_at ON files (direction_id, deleted_at DESC);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_files_uploaded_by ON files (uploaded_by);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_links_direction_created_at ON links (direction_id, created_at DESC);`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_folders_direction_id ON folders (direction_id);`)
 
   // ── APK icon support ──
   try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS icon_url text DEFAULT NULL') } catch (_) { /* ignore */ }
@@ -1149,6 +1163,19 @@ app.get('/api/admin/live', requireAuth, async (req, res) => {
 
 app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
+    // Cache key includes caller + filters (so admins and direction-scoped users don't leak data)
+    const cacheKey = JSON.stringify({
+      identifiant: req.authIdentifiant,
+      scope: (req.query.scope || '').toString().toLowerCase(),
+      period: (req.query.period || 'all').toString(),
+      from: req.query.from ? req.query.from.toString() : null,
+      to: req.query.to ? req.query.to.toString() : null,
+    })
+    const cached = adminStatsCache.get(cacheKey)
+    if (cached && Date.now() - cached.ts < ADMIN_STATS_CACHE_TTL_MS) {
+      return res.json(cached.data)
+    }
+
     // Check access
     const userRow = await pool.query(
       'SELECT role, direction_id, is_direction_chief FROM users WHERE identifiant = $1',
@@ -1392,7 +1419,7 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
     // Chiefs of direction (and admins) can switch to full-system stats
     const scopeOptionAllAvailable = isAdmin || isDirectionChief
 
-    res.json({
+    const payload = {
       scopedDirection: scopedDirectionName,
       scope: dirId ? 'direction' : 'all',
       scopeOptionAllAvailable: !!scopeOptionAllAvailable,
@@ -1426,7 +1453,10 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
       },
       recentActivity: recentActivity.rows,
       topUploaders: topUploaders.rows,
-    })
+    }
+
+    adminStatsCache.set(cacheKey, { ts: Date.now(), data: payload })
+    return res.json(payload)
   } catch (err) {
     console.error('admin stats error', err)
     res.status(500).json({ error: 'Failed to load stats' })
