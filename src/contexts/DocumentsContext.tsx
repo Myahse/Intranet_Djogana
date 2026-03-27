@@ -811,6 +811,49 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; name?: string }
       const newName = (data?.name || '').trim()
       const newFolderKey = newName ? `${direction_id}::${newName}` : sourceKeyOrGroupKey
+
+      // Optimistic local update (so UI doesn't look empty before WS reload)
+      const oldFolderKey = `${direction_id}::${source_name}`
+      if (newName && oldFolderKey) {
+        setItems((prev) =>
+          prev.map((it) => {
+            if (!it.folderKey) return it
+            if (it.folderKey === oldFolderKey) return { ...it, folderKey: newFolderKey }
+            if (it.folderKey.startsWith(`${oldFolderKey}::`)) {
+              const suffix = it.folderKey.slice(oldFolderKey.length)
+              return { ...it, folderKey: `${newFolderKey}${suffix}` }
+            }
+            return it
+          })
+        )
+        setLinkItems((prev) =>
+          prev.map((it) => {
+            if (!it.folderKey) return it
+            if (it.folderKey === oldFolderKey) return { ...it, folderKey: newFolderKey }
+            if (it.folderKey.startsWith(`${oldFolderKey}::`)) {
+              const suffix = it.folderKey.slice(oldFolderKey.length)
+              return { ...it, folderKey: `${newFolderKey}${suffix}` }
+            }
+            return it
+          })
+        )
+        setFolderList((prev) =>
+          prev.map((f) => {
+            if (!f.value) return f
+            if (f.value === oldFolderKey) {
+              const parsed = parseFolderKey(newFolderKey)
+              return { ...f, value: newFolderKey, label: parsed.name, name: parsed.name }
+            }
+            if (f.value.startsWith(`${oldFolderKey}::`)) {
+              const suffix = f.value.slice(oldFolderKey.length)
+              const nextValue = `${newFolderKey}${suffix}`
+              const parsed = parseFolderKey(nextValue)
+              return { ...f, value: nextValue, label: parsed.name, name: parsed.name }
+            }
+            return f
+          })
+        )
+      }
       sendWs({ type: 'action', action: 'move_folder', detail: `${source_name} → ${target_name ?? 'Racine'}` })
       return { newFolderKey }
     },
