@@ -812,57 +812,8 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       const newName = (data?.name || '').trim()
       const newFolderKey = newName ? `${direction_id}::${newName}` : sourceKeyOrGroupKey
 
-      // Optimistic local update (so UI doesn't look empty before WS reload)
-      const oldFolderKey = `${direction_id}::${source_name}`
-      if (newName && oldFolderKey) {
-        setItems((prev) =>
-          prev.map((it) => {
-            if (!it.folderKey) return it
-            if (it.folderKey === oldFolderKey) return { ...it, folderKey: newFolderKey }
-            if (it.folderKey.startsWith(`${oldFolderKey}::`)) {
-              const suffix = it.folderKey.slice(oldFolderKey.length)
-              return { ...it, folderKey: `${newFolderKey}${suffix}` }
-            }
-            return it
-          })
-        )
-        setLinkItems((prev) =>
-          prev.map((it) => {
-            if (!it.folderKey) return it
-            if (it.folderKey === oldFolderKey) return { ...it, folderKey: newFolderKey }
-            if (it.folderKey.startsWith(`${oldFolderKey}::`)) {
-              const suffix = it.folderKey.slice(oldFolderKey.length)
-              return { ...it, folderKey: `${newFolderKey}${suffix}` }
-            }
-            return it
-          })
-        )
-        setFolderList((prev) => {
-          const mapped = prev.map((f) => {
-            if (!f.value) return f
-            if (f.value === oldFolderKey) {
-              const parsed = parseFolderKey(newFolderKey)
-              return { ...f, value: newFolderKey, label: parsed.name, name: parsed.name }
-            }
-            if (f.value.startsWith(`${oldFolderKey}::`)) {
-              const suffix = f.value.slice(oldFolderKey.length)
-              const nextValue = `${newFolderKey}${suffix}`
-              const parsed = parseFolderKey(nextValue)
-              return { ...f, value: nextValue, label: parsed.name, name: parsed.name }
-            }
-            return f
-          })
-          // Deduplicate by value to avoid showing both old/new keys.
-          const byValue = new Map<string, FolderMeta>()
-          for (const f of mapped) {
-            if (!f.value) continue
-            if (!byValue.has(f.value)) byValue.set(f.value, f)
-          }
-          return Array.from(byValue.values())
-        })
-      }
-      // Ensure state is consistent with server (and pagination/filters):
-      // force a reload so moved files/folders appear immediately even if WS is delayed.
+      // Avoid optimistic client-side rewrites here: a folder move rewrites many paths and can
+      // temporarily misplace items depending on current view state. We rely on `loadAll()`.
       try {
         await loadAll()
       } catch {

@@ -15,7 +15,7 @@ import {
   FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft,
   LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ, ArrowUp,
   Calendar, HardDrive, FileType,
-  Check, Upload, Globe,
+  Check, Upload, Globe, FolderPlus,
 } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
@@ -49,6 +49,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -168,6 +169,10 @@ function sortFolders(
 /** Replace internal "::" separators with " / " for display */
 function formatName(name: string): string {
   return name.replace(/::/g, ' / ')
+}
+
+function normalizePathLikeName(raw: string): string {
+  return raw.replace(/\s*\/\s*/g, '::').replace(/:{3,}/g, '::').trim()
 }
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])
@@ -1254,7 +1259,7 @@ const DocumentSection = () => {
   const isRoot = pathname === '/dashboard/documents'
   const folderKey = !isRoot && !isDirectionRoute ? decodeURIComponent(lastSegment) : null
   const navigate = useNavigate()
-  const { getFiles, getLinks, addFile, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, setFolderVisibility, folderOptions } = useDocuments()
+  const { getFiles, getLinks, addFile, addLink, addFolderMeta, removeFile, removeLink, renameFile, removeFolder, renameFolderPath, deleteFolderTree, moveFolderInto, setFolderVisibility, folderOptions } = useDocuments()
   const { user, isAdmin, sendWs } = useAuth()
   const canSetFolderVisibility = isAdmin || !!user?.permissions?.can_set_folder_visibility
   const { contentFilter } = useDashboardFilter()
@@ -1269,6 +1274,11 @@ const DocumentSection = () => {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadFileName, setUploadFileName] = useState('')
   const uploadFileRef = useRef<HTMLInputElement>(null)
+  const [linkOpen, setLinkOpen] = useState(false)
+  const [linkUrl, setLinkUrl] = useState('')
+  const [linkLabel, setLinkLabel] = useState('')
+  const [subfolderOpen, setSubfolderOpen] = useState(false)
+  const [subfolderName, setSubfolderName] = useState('')
   const filesGridRef = useRef<HTMLDivElement>(null)
   useStaggerChildren(filesGridRef, '> *', [folderKey, directionId, pathname])
 
@@ -1652,6 +1662,48 @@ const DocumentSection = () => {
       }
     }
 
+    const handleCreateSubfolderHere = async () => {
+      const raw = normalizePathLikeName(subfolderName)
+      if (!raw) { toast.error('Veuillez saisir un nom de sous-dossier'); return }
+      const parsed = parseFolderKey(folderKey)
+      if (!parsed.direction_id) { toast.error('Direction introuvable'); return }
+      const fullName = `${parsed.name}::${raw}`
+      setSubfolderOpen(false)
+      setLoading({ open: true, message: 'Création du sous-dossier…' })
+      try {
+        await addFolderMeta(fullName, parsed.direction_id, 'public')
+        setSubfolderName('')
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé' }))
+        toast.success('Sous-dossier créé')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
+        toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du sous-dossier')
+      }
+    }
+
+    const handleAddLinkHere = async () => {
+      const url = linkUrl.trim()
+      if (!url) { toast.error('Veuillez saisir une URL'); return }
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        toast.error("L'URL doit commencer par http:// ou https://")
+        return
+      }
+      setLinkOpen(false)
+      setLoading({ open: true, message: 'Ajout du lien…' })
+      try {
+        await addLink(folderKey, url, linkLabel.trim() || url)
+        setLinkUrl('')
+        setLinkLabel('')
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien ajouté' }))
+        toast.success('Lien ajouté')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'ajout du lien" }))
+        toast.error(err instanceof Error ? err.message : "Erreur lors de l'ajout du lien")
+      }
+    }
+
     const handleDeleteFile = async (id: string) => {
       const file = allFiles.find((f) => f.id === id)
       const fileDesc = isAdmin
@@ -1885,7 +1937,10 @@ const DocumentSection = () => {
               </div>
             )}
 
-            {(files.length > 0 || links.length > 0) ? (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="min-h-[200px]">
+                  {(files.length > 0 || links.length > 0) ? (
               <>
                 {/* Tiles view */}
                 {viewMode === 'tiles' && (
@@ -2056,11 +2111,37 @@ const DocumentSection = () => {
                   </div>
                 )}
               </>
-            ) : (
+                  ) : (
               <p className="text-muted-foreground">
                 Aucun fichier ni lien dans ce dossier.{canEdit ? ' Vous pouvez en ajouter via le bouton + dans la barre latérale.' : ' Consultation uniquement (autre direction).'}
               </p>
-            )}
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                {canEdit && (
+                  <>
+                    <ContextMenuItem onSelect={() => setUploadOpen(true)}>
+                      <Upload className="size-4" />
+                      Uploader un fichier
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => setLinkOpen(true)}>
+                      <ExternalLink className="size-4" />
+                      Ajouter un lien
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => setSubfolderOpen(true)}>
+                      <FolderPlus className="size-4" />
+                      Créer un sous-dossier ici
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                  </>
+                )}
+                <ContextMenuItem onSelect={() => navigate(-1)}>
+                  <ChevronLeft className="size-4" />
+                  Retour
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           </div>
         </ResizablePanel>
         {selectedFile && (
@@ -2117,6 +2198,69 @@ const DocumentSection = () => {
           </>
         )}
       </ResizablePanelGroup>
+
+      {/* Add link dialog (right-click) */}
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ajouter un lien</DialogTitle>
+            <DialogDescription>Ajouter un lien (URL) dans ce dossier.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="doc-link-url">URL</Label>
+              <Input
+                id="doc-link-url"
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://example.com"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="doc-link-label">Libellé (optionnel)</Label>
+              <Input
+                id="doc-link-label"
+                value={linkLabel}
+                onChange={(e) => setLinkLabel(e.target.value)}
+                placeholder="Ex. Documentation"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkOpen(false)}>Annuler</Button>
+            <Button onClick={handleAddLinkHere}>Ajouter</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create subfolder dialog (right-click) */}
+      <Dialog open={subfolderOpen} onOpenChange={setSubfolderOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Créer un sous-dossier</DialogTitle>
+            <DialogDescription>
+              Entrez un nom (vous pouvez aussi utiliser “ / ” pour plusieurs niveaux).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="doc-subfolder-name">Nom</Label>
+              <Textarea
+                id="doc-subfolder-name"
+                value={subfolderName}
+                onChange={(e) => setSubfolderName(e.target.value)}
+                placeholder="Ex. Niveau 1 / Niveau 2"
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubfolderOpen(false)}>Annuler</Button>
+            <Button onClick={handleCreateSubfolderHere}>Créer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Upload File Dialog */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>

@@ -18,6 +18,13 @@ const os = require('os')
 const { Readable } = require('stream')
 const { pipeline } = require('stream/promises')
 
+function isUuidLike(value) {
+  if (typeof value !== 'string') return false
+  const v = value.trim()
+  if (!v) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
+}
+
 // ---------- Cloudinary ----------
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -5146,8 +5153,12 @@ app.post('/api/folders/move', async (req, res) => {
     const source = (sourceRaw || '').trim()
     const target = targetRaw === null || targetRaw === undefined ? null : String(targetRaw).trim()
     if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
+    if (!isUuidLike(String(directionId))) return res.status(400).json({ error: 'Direction invalide.' })
     if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
     if (!source) return res.status(400).json({ error: 'Dossier source requis.' })
+    if (source.length > 512 || (target && target.length > 512)) {
+      return res.status(400).json({ error: 'Nom de dossier trop long.' })
+    }
 
     const userRes = await pool.query('SELECT id, role, direction_id FROM users WHERE identifiant = $1', [identifiant])
     if (userRes.rows.length === 0) return res.status(401).json({ error: 'Utilisateur non trouvé.' })
@@ -5170,7 +5181,22 @@ app.post('/api/folders/move', async (req, res) => {
           AND (name = $2 OR name LIKE $3) LIMIT 1`,
         [directionId, target, `${target}::%`]
       )
-      if (targetExists.rows.length === 0) return res.status(404).json({ error: 'Dossier cible introuvable.' })
+      if (targetExists.rows.length === 0) {
+        // Also allow "virtual" folders that only exist via files/links prefixes.
+        const targetExistsViaContent = await pool.query(
+          `
+            SELECT 1
+            FROM (
+              SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+              UNION ALL
+              SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            ) t
+            LIMIT 1
+          `,
+          [directionId, target, `${target}::%`]
+        )
+        if (targetExistsViaContent.rows.length === 0) return res.status(404).json({ error: 'Dossier cible introuvable.' })
+      }
     }
 
     // Prevent conflicts at destination
@@ -5189,7 +5215,63 @@ app.post('/api/folders/move', async (req, res) => {
          AND (name = $2 OR name LIKE $3)`,
       [directionId, source, `${source}::%`]
     )
-    if (folderRows.rows.length === 0) return res.status(404).json({ error: 'Dossier source introuvable.' })
+    if (folderRows.rows.length === 0) {
+      // Fallback: allow moving a "virtual" folder if it exists via files/links.
+      const sourceExistsViaContent = await pool.query(
+        `
+          SELECT 1
+          FROM (
+            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            UNION ALL
+            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+          ) t
+          LIMIT 1
+        `,
+        [directionId, source, `${source}::%`]
+      )
+      if (sourceExistsViaContent.rows.length === 0) return res.status(404).json({ error: 'Dossier source introuvable.' })
+
+      // Prevent merge conflicts for virtual folders: do not move onto an existing subtree.
+      const conflictVirtual = await pool.query(
+        `
+          SELECT 1
+          FROM (
+            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            UNION ALL
+            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+          ) t
+          LIMIT 1
+        `,
+        [directionId, nextName, `${nextName}::%`]
+      )
+      if (conflictVirtual.rows.length > 0) {
+        return res.status(409).json({ error: 'Conflit: le dossier de destination contient déjà des éléments.' })
+      }
+
+      await pool.query(
+        `UPDATE files SET folder = $1 || substring(folder from $2)
+         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+        [nextName, source.length + 1, directionId, source, `${source}::%`]
+      )
+      await pool.query(
+        `UPDATE links SET folder = $1 || substring(folder from $2)
+         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
+        [nextName, source.length + 1, directionId, source, `${source}::%`]
+      )
+
+      await insertActivityLog(pool, {
+        action: 'move_folder',
+        actorIdentifiant: identifiant || null,
+        actorId: user.id,
+        directionId,
+        entityType: 'folder',
+        entityId: null,
+        details: { source, target: target || null, newName: nextName, virtual: true },
+      })
+      broadcastDataChange('files', 'updated', { directionId })
+      broadcastDataChange('links', 'updated', { directionId })
+      return res.json({ ok: true, name: nextName })
+    }
 
     // Prevent ANY conflict for the entire moved subtree (not just the root).
     // Compute all next names, then ensure none already exist outside the moving set.
@@ -5248,7 +5330,7 @@ app.post('/api/folders/move', async (req, res) => {
     return res.json({ ok: true, name: nextName })
   } catch (err) {
     console.error('folder move error', err)
-    const details = process.env.NODE_ENV !== 'production'
+    const details = (process.env.EXPOSE_ERRORS === '1' || process.env.NODE_ENV !== 'production')
       ? (err?.message || String(err))
       : undefined
     return res.status(500).json({ error: 'Erreur lors du déplacement du dossier.', details })
