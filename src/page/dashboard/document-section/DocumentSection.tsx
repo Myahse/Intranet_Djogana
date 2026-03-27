@@ -1352,6 +1352,9 @@ const DocumentSection = () => {
     // Check if user has been granted access to this direction
     return user.granted_direction_ids?.includes(direction_id) ?? false
   }
+  const canDeleteFiles = isAdmin || !!user?.permissions?.can_delete_file
+  const canDeleteFolders = isAdmin || !!user?.permissions?.can_delete_folder
+  const canUploadFiles = isAdmin || !!user?.permissions?.can_upload_file
   const canEditFile = (file: DocumentItem) => {
     if (isAdmin) return true
     if (!user) return false
@@ -1360,6 +1363,7 @@ const DocumentSection = () => {
     if (user.direction_id === fid) return true
     return user.granted_direction_ids?.includes(fid) ?? false
   }
+  const canDeleteFile = (file: DocumentItem) => canDeleteFiles && canEditFile(file)
   const canEditLink = (link: LinkItem) => {
     if (isAdmin) return true
     if (!user) return false
@@ -1476,7 +1480,7 @@ const DocumentSection = () => {
             folderHasFiles={dirFolderHasFiles}
             buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
             onRenameFolder={openRenameFolder}
-            onDeleteFolder={handleDeleteFolderTree}
+            onDeleteFolder={canDeleteFolders ? handleDeleteFolderTree : undefined}
             onMoveFolderInto={handleMoveFolderInto}
           />
         ) : (
@@ -1543,12 +1547,13 @@ const DocumentSection = () => {
     const links =
       contentFilter === 'files' ? [] : allLinks
     const canEdit = canEditFolder(folderKey)
+    const canDeleteThisFolder = canDeleteFolders && canEdit
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
 
     const fileIdsSelectable = canEdit
-      ? files.map((f) => f.id)
-      : files.filter((f) => canEditFile(f)).map((f) => f.id)
+      ? (canDeleteFiles ? files.map((f) => f.id) : [])
+      : files.filter((f) => canDeleteFile(f)).map((f) => f.id)
     const showMultiSelect = fileIdsSelectable.length > 0
     const allSelectableSelected =
       fileIdsSelectable.length > 0 && fileIdsSelectable.every((id) => selectedFileIds.has(id))
@@ -1742,46 +1747,50 @@ const DocumentSection = () => {
                   </span>
                 )}
               </div>
-              {canEdit && (
+              {(canEdit || canDeleteThisFolder) && (
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="default"
-                    className="size-9 shrink-0 justify-center p-0 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
-                    onClick={() => setUploadOpen(true)}
-                    aria-label="Ajouter un fichier"
-                  >
-                    <Upload className="size-4 md:mr-2" />
-                    <span className="hidden md:inline">Ajouter un fichier</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="size-9 shrink-0 justify-center p-0 border-destructive text-destructive hover:bg-destructive/10 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
-                    aria-label="Supprimer le dossier"
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: 'Supprimer ce dossier ?',
-                        description: isAdmin ? 'Tous les fichiers et liens de ce dossier seront déplacés vers la corbeille.' : 'Tous les fichiers et liens de ce dossier seront supprimés.',
-                        confirmLabel: 'Supprimer',
-                        variant: 'destructive',
-                      })
-                      if (ok) {
-                        setLoading({ open: true, message: 'Suppression du dossier en cours…' })
-                        try {
-                          await removeFolder(folderKey)
-                          setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
-                          toast.success('Dossier supprimé')
-                        } catch (err) {
-                          // eslint-disable-next-line no-console
-                          console.error(err)
-                          setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du dossier' }))
-                          toast.error('Erreur lors de la suppression du dossier')
+                  {canUploadFiles && canEdit && (
+                    <Button
+                      variant="default"
+                      className="size-9 shrink-0 justify-center p-0 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
+                      onClick={() => setUploadOpen(true)}
+                      aria-label="Ajouter un fichier"
+                    >
+                      <Upload className="size-4 md:mr-2" />
+                      <span className="hidden md:inline">Ajouter un fichier</span>
+                    </Button>
+                  )}
+                  {canDeleteThisFolder && (
+                    <Button
+                      variant="outline"
+                      className="size-9 shrink-0 justify-center p-0 border-destructive text-destructive hover:bg-destructive/10 md:h-9 md:w-auto md:min-w-0 md:px-4 md:py-2"
+                      aria-label="Supprimer le dossier"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: 'Supprimer ce dossier ?',
+                          description: isAdmin ? 'Tous les fichiers et liens de ce dossier seront déplacés vers la corbeille.' : 'Tous les fichiers et liens de ce dossier seront supprimés.',
+                          confirmLabel: 'Supprimer',
+                          variant: 'destructive',
+                        })
+                        if (ok) {
+                          setLoading({ open: true, message: 'Suppression du dossier en cours…' })
+                          try {
+                            await removeFolder(folderKey)
+                            setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier supprimé' }))
+                            toast.success('Dossier supprimé')
+                          } catch (err) {
+                            // eslint-disable-next-line no-console
+                            console.error(err)
+                            setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la suppression du dossier' }))
+                            toast.error('Erreur lors de la suppression du dossier')
+                          }
                         }
-                      }
-                    }}
-                  >
-                    <Trash2 className="size-4 md:mr-2" />
-                    <span className="hidden md:inline">Supprimer le dossier</span>
-                  </Button>
+                      }}
+                    >
+                      <Trash2 className="size-4 md:mr-2" />
+                      <span className="hidden md:inline">Supprimer le dossier</span>
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -1812,14 +1821,16 @@ const DocumentSection = () => {
                         <Button type="button" variant="outline" size="sm" onClick={clearFileSelection}>
                           Annuler la sélection
                         </Button>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="sm"
-                          onClick={handleBulkDeleteFiles}
-                        >
-                          Supprimer la sélection
-                        </Button>
+                        {canDeleteFiles && (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleBulkDeleteFiles}
+                          >
+                            Supprimer la sélection
+                          </Button>
+                        )}
                       </>
                     )}
                   </div>
@@ -1846,14 +1857,14 @@ const DocumentSection = () => {
                           file={item.data}
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
-                          selectionEnabled={showMultiSelect && canEdit}
+                          selectionEnabled={showMultiSelect && canEdit && canDeleteFiles}
                           selected={selectedFileIds.has(item.data.id)}
                           onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
                           }}
-                          onDelete={handleDeleteFile}
+                          onDelete={canDeleteFile(item.data) ? handleDeleteFile : undefined}
                           onRename={async (id, name) => {
                             setLoading({ open: true, message: 'Renommage du fichier…' })
                             try {
@@ -1893,14 +1904,14 @@ const DocumentSection = () => {
                           formatSize={formatSize}
                           canEdit={canEditFile(item.data)}
                           showDetails={false}
-                          selectionEnabled={showMultiSelect && canEdit}
+                          selectionEnabled={showMultiSelect && canEdit && canDeleteFiles}
                           selected={selectedFileIds.has(item.data.id)}
                           onToggleSelect={toggleFileSelect}
                           onSelect={(f) => {
                             setSelectedFile(f)
                             sendWs({ type: 'action', action: 'view_file', detail: f.name })
                           }}
-                          onDelete={handleDeleteFile}
+                          onDelete={canDeleteFile(item.data) ? handleDeleteFile : undefined}
                           onRename={async (id, name) => {
                             setLoading({ open: true, message: 'Renommage du fichier…' })
                             try {

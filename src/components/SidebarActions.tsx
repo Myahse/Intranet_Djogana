@@ -149,19 +149,45 @@ export default function SidebarActions() {
     [folderOptions]
   )
 
-  // Toutes les directions visibles dans les sélecteurs (les droits réels sont appliqués par l’API à l’enregistrement).
+  const allowedDirectionIds = useMemo(() => {
+    if (!user) return new Set<string>()
+    if (isAdmin) return new Set(directions.map((d) => d.id.toLowerCase()))
+    const s = new Set<string>()
+    if (user.direction_id) s.add(user.direction_id.toLowerCase())
+    for (const id of user.granted_direction_ids ?? []) {
+      if (id) s.add(id.toLowerCase())
+    }
+    return s
+  }, [user, isAdmin, directions])
+
+  // Directions visibles dans les sélecteurs: uniquement celles accessibles à l’utilisateur.
   const availableDirections = useMemo(() => {
     if (!user) return []
-    return directions
-  }, [directions, user])
+    if (isAdmin) return directions
+    const allowed = allowedDirectionIds
+    return directions.filter((d) => allowed.has(d.id.toLowerCase()))
+  }, [directions, user, isAdmin, allowedDirectionIds])
+
+  const availableFolderOptions = useMemo(() => {
+    if (isAdmin) return folderOptions
+    if (!user) return []
+    if (allowedDirectionIds.size === 0) return []
+    return folderOptions.filter((f) => {
+      const dir = (f.direction_id || parseFolderKey(f.value).direction_id || '').toLowerCase()
+      return dir && allowedDirectionIds.has(dir)
+    })
+  }, [folderOptions, isAdmin, user, allowedDirectionIds])
 
   // Set default direction when directions load
   useEffect(() => {
     if (availableDirections.length > 0) {
-      if (!selectedDirectionFolder) setSelectedDirectionFolder(availableDirections[0].id)
-      if (!selectedDirectionFormation) setSelectedDirectionFormation(availableDirections[0].id)
+      const preferred = user?.direction_id
+        ? availableDirections.find((d) => d.id === user.direction_id) ?? availableDirections[0]
+        : availableDirections[0]
+      if (!selectedDirectionFolder) setSelectedDirectionFolder(preferred.id)
+      if (!selectedDirectionFormation) setSelectedDirectionFormation(preferred.id)
     }
-  }, [availableDirections, selectedDirectionFolder, selectedDirectionFormation])
+  }, [availableDirections, selectedDirectionFolder, selectedDirectionFormation, user?.direction_id])
 
   // Handlers
   const handleAddFolder = async () => {
@@ -402,7 +428,7 @@ export default function SidebarActions() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={SELECT_FOLDER_ROOT}>Racine</SelectItem>
-                  {folderOptions
+                  {availableFolderOptions
                     .filter((f) => f.direction_id === selectedDirectionFolder)
                     .map((f) => (
                       <SelectItem key={f.value} value={f.value}>{formatFolderLabel(parseFolderKey(f.value).name)}</SelectItem>
@@ -482,7 +508,7 @@ export default function SidebarActions() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={SELECT_FOLDER_ROOT}>Racine</SelectItem>
-                  {folderOptions
+                  {availableFolderOptions
                     .filter((f) => f.direction_id === selectedDirectionFormation)
                     .map((f) => (
                       <SelectItem key={f.value} value={f.value}>{formatFolderLabel(parseFolderKey(f.value).name)}</SelectItem>
@@ -571,7 +597,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Sélectionner un dossier" />
                 </SelectTrigger>
                 <SelectContent>
-                  {folderOptions.map((opt) => (
+                  {availableFolderOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{formatFolderLabel(opt.label)}</SelectItem>
                   ))}
                 </SelectContent>
@@ -621,7 +647,7 @@ export default function SidebarActions() {
                   <SelectValue placeholder="Sélectionner un dossier" />
                 </SelectTrigger>
                 <SelectContent>
-                  {folderOptions.map((opt) => (
+                  {availableFolderOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{formatFolderLabel(opt.label)}</SelectItem>
                   ))}
                 </SelectContent>

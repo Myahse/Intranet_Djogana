@@ -4854,6 +4854,7 @@ app.get('/api/folders', async (_req, res) => {
 
     // Si identifiant fourni, inclure aussi les dossiers pour lesquels l'utilisateur a un accès explicite (folder_access_grants)
     let userIdForGrants = null
+    let accessibleDirectionIds = []
     if (identifiant) {
       const u = await pool.query('SELECT id, direction_id FROM users WHERE identifiant = $1', [identifiant])
       if (u.rows.length > 0) {
@@ -4861,6 +4862,21 @@ app.get('/api/folders', async (_req, res) => {
         // Fallback: if direction_id is missing from query, use the user's DB direction.
         if (!userDirectionId && u.rows[0].direction_id) {
           userDirectionId = u.rows[0].direction_id
+        }
+        // Directions accessibles: direction propre + accès accordés via direction_access_grants
+        if (userDirectionId) accessibleDirectionIds.push(userDirectionId)
+        try {
+          const grants = await pool.query(
+            'SELECT granted_direction_id FROM direction_access_grants WHERE user_id = $1',
+            [userIdForGrants]
+          )
+          for (const row of grants.rows) {
+            if (row.granted_direction_id && !accessibleDirectionIds.includes(row.granted_direction_id)) {
+              accessibleDirectionIds.push(row.granted_direction_id)
+            }
+          }
+        } catch (_) {
+          // ignore
         }
       }
     }
@@ -4881,23 +4897,33 @@ app.get('/api/folders', async (_req, res) => {
       `)
 
       // Direction-only: visible si public, ou si user dans la direction, ou si accès accordé via folder_access_grants
-      if (userDirectionId) {
-        params.push(userDirectionId)
-        if (userIdForGrants) {
+      if (userIdForGrants) {
+        // If we know the user, allow:
+        // - public folders
+        // - direction_only folders for any accessible direction (own + direction_access_grants)
+        // - folders explicitly granted via folder_access_grants
+        const dirs = accessibleDirectionIds.length > 0 ? accessibleDirectionIds : (userDirectionId ? [userDirectionId] : [])
+        if (dirs.length > 0) {
+          params.push(dirs)
           params.push(userIdForGrants)
           conditions.push(`(
             f.visibility = 'public'
-            OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length - 1})
+            OR (f.visibility = 'direction_only' AND f.direction_id = ANY($${params.length - 1}::uuid[]))
             OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length})
           )`)
         } else {
-          conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
+          params.push(userIdForGrants)
+          conditions.push(`(
+            f.visibility = 'public'
+            OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length})
+          )`)
         }
-      } else if (userIdForGrants) {
-        // Utilisateur sans direction_id: public + dossiers avec accès accordé
-        params.push(userIdForGrants)
-        conditions.push(`(f.visibility = 'public' OR EXISTS (SELECT 1 FROM folder_access_grants fag WHERE fag.folder_id = f.id AND fag.user_id = $${params.length}))`)
+      } else if (userDirectionId) {
+        // Legacy: identifiant not provided, rely on direction_id query param only
+        params.push(userDirectionId)
+        conditions.push(`(f.visibility = 'public' OR (f.visibility = 'direction_only' AND f.direction_id = $${params.length}))`)
       } else {
+        // Utilisateur sans direction_id: public + dossiers avec accès accordé
         conditions.push(`f.visibility = 'public'`)
       }
     }
@@ -5326,6 +5352,7 @@ app.get('/api/files', async (req, res) => {
     let userDirectionId = req.query.direction_id
 
     let userIdForFolderGrants = null
+    let accessibleDirectionIds = []
     if (identifiant) {
       // Trust DB for role/direction (avoid spoofing via query params)
       const u = await pool.query('SELECT id, direction_id, role FROM users WHERE identifiant = $1', [identifiant])
@@ -5335,6 +5362,20 @@ app.get('/api/files', async (req, res) => {
         // Fallback: if direction_id is missing from query, use the user's DB direction.
         if (!userDirectionId && u.rows[0].direction_id) {
           userDirectionId = u.rows[0].direction_id
+        }
+        if (userDirectionId) accessibleDirectionIds.push(userDirectionId)
+        try {
+          const grants = await pool.query(
+            'SELECT granted_direction_id FROM direction_access_grants WHERE user_id = $1',
+            [userIdForFolderGrants]
+          )
+          for (const row of grants.rows) {
+            if (row.granted_direction_id && !accessibleDirectionIds.includes(row.granted_direction_id)) {
+              accessibleDirectionIds.push(row.granted_direction_id)
+            }
+          }
+        } catch (_) {
+          // ignore
         }
       }
     }
@@ -5365,9 +5406,10 @@ app.get('/api/files', async (req, res) => {
       `)
 
       // Direction-only: visible si public, ou user dans la direction, ou accès accordé via folder_access_grants
-      if (userDirectionId) {
-        params.push(userDirectionId)
-        if (userIdForFolderGrants) {
+      if (userIdForFolderGrants) {
+        const dirs = accessibleDirectionIds.length > 0 ? accessibleDirectionIds : (userDirectionId ? [userDirectionId] : [])
+        if (dirs.length > 0) {
+          params.push(dirs)
           params.push(userIdForFolderGrants)
           conditions.push(`
           (
@@ -5375,7 +5417,7 @@ app.get('/api/files', async (req, res) => {
               SELECT 1 FROM folders ff
               WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
                 AND ff.visibility = 'direction_only'
-                AND ff.direction_id != $${params.length - 1}
+                AND NOT (ff.direction_id = ANY($${params.length - 1}::uuid[]))
             )
             OR EXISTS (
               SELECT 1 FROM folders ff
@@ -5386,30 +5428,31 @@ app.get('/api/files', async (req, res) => {
           )
           `)
         } else {
+          params.push(userIdForFolderGrants)
           conditions.push(`
-          NOT EXISTS (
-            SELECT 1 FROM folders ff
-            WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
-              AND ff.visibility = 'direction_only'
-              AND ff.direction_id != $${params.length}
-          )
+            (
+              NOT EXISTS (
+                SELECT 1 FROM folders ff
+                WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+                  AND ff.visibility = 'direction_only'
+              )
+              OR EXISTS (
+                SELECT 1 FROM folders ff
+                JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
+                WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+              )
+            )
           `)
         }
-      } else if (userIdForFolderGrants) {
-        params.push(userIdForFolderGrants)
+      } else if (userDirectionId) {
+        params.push(userDirectionId)
         conditions.push(`
-          (
-            NOT EXISTS (
-              SELECT 1 FROM folders ff
-              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
-                AND ff.visibility = 'direction_only'
-            )
-            OR EXISTS (
-              SELECT 1 FROM folders ff
-              JOIN folder_access_grants fag ON fag.folder_id = ff.id AND fag.user_id = $${params.length}
-              WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
-            )
-          )
+        NOT EXISTS (
+          SELECT 1 FROM folders ff
+          WHERE ff.name = files.folder AND ff.direction_id = files.direction_id
+            AND ff.visibility = 'direction_only'
+            AND ff.direction_id != $${params.length}
+        )
         `)
       } else {
         conditions.push(`

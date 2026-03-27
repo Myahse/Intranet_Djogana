@@ -481,6 +481,8 @@ const DocumentSection = () => {
     // Check if user has been granted access to this direction
     return user.granted_direction_ids?.includes(direction_id) ?? false
   }
+  const canDeleteFiles = isAdmin || !!user?.permissions?.can_delete_file
+  const canDeleteFolders = isAdmin || !!user?.permissions?.can_delete_folder
   const canEditFile = (file: DocumentItem) => {
     if (isAdmin) return true
     if (!file.direction_id || !user) return false
@@ -489,6 +491,7 @@ const DocumentSection = () => {
     // Check if user has been granted access to this direction
     return user.granted_direction_ids?.includes(file.direction_id) ?? false
   }
+  const canDeleteFile = (file: DocumentItem) => canDeleteFiles && canEditFile(file)
   const canEditLink = (link: LinkItem) => {
     if (isAdmin) return true
     if (!link.direction_id || !user) return false
@@ -539,6 +542,7 @@ const DocumentSection = () => {
     const links =
       contentFilter === 'files' ? [] : allLinks
     const canEdit = canEditFolder(folderKey)
+    const canDeleteThisFolder = canDeleteFolders && canEdit
     const folderOpt = folderOptions.find((f) => f.value === folderKey)
     const directionLabel = folderOpt?.direction_name ?? ''
 
@@ -628,7 +632,7 @@ const DocumentSection = () => {
                   </span>
                 )}
               </div>
-              {canEdit && (
+              {canDeleteThisFolder && (
                 <Button
                   variant="outline"
                   className="border-destructive text-destructive hover:bg-destructive/10"
@@ -672,7 +676,7 @@ const DocumentSection = () => {
                     formatSize={formatSize}
                     canEdit={canEditFile(file)}
                     onSelect={setSelectedFile}
-                    onDelete={handleDeleteFile}
+                    onDelete={canDeleteFile(file) ? handleDeleteFile : undefined}
                     onRename={async (id, name) => {
                       setLoading({ open: true, message: 'Renommage du fichier…' })
                       try {
