@@ -30,6 +30,18 @@ module.exports = {
       package: "com.djogana.approval",
       googleServicesFile: "./google_service_files/google-services-android.json",
     },
+    updates: {
+      // Enable EAS Update (OTA) for JS-only updates.
+      // Native changes still require a new build.
+      url: "https://u.expo.dev/6ae03c31-2398-4710-9a5d-8f1cb7ac8156",
+      checkAutomatically: "ON_LOAD",
+      fallbackToCacheTimeout: 0,
+    },
+    runtimeVersion: {
+      // OTA updates are applied only when runtimeVersion matches.
+      // Using appVersion keeps it safe across breaking native changes.
+      policy: "appVersion",
+    },
     web: {
       bundler: "metro",
       output: "static",

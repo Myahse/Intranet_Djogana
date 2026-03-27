@@ -192,10 +192,26 @@ function DashboardLayout() {
     return Array.from(byId.values())
   }, [allDirections, folderOptions])
 
+  const allowedDirectionIds = useMemo(() => {
+    if (!user) return new Set<string>()
+    if (isAdmin) return new Set(mergedDirectionsList.map((d) => normDirId(d.id)))
+    const s = new Set<string>()
+    if (user.direction_id) s.add(normDirId(user.direction_id))
+    for (const id of user.granted_direction_ids ?? []) {
+      const n = normDirId(id)
+      if (n) s.add(n)
+    }
+    return s
+  }, [user, isAdmin, mergedDirectionsList])
+
   const directionMap = useMemo(() => {
     const map: Record<string, DirectionEntry> = {}
 
-    mergedDirectionsList.forEach((d) => {
+    const seedDirections = isAdmin
+      ? mergedDirectionsList
+      : mergedDirectionsList.filter((d) => allowedDirectionIds.has(normDirId(d.id)))
+
+    seedDirections.forEach((d) => {
       if (!map[d.id]) {
         map[d.id] = { directionId: d.id, directionName: d.name, rootFolders: [], groupedFolders: {} }
       }
@@ -204,6 +220,7 @@ function DashboardLayout() {
     folderOptions.forEach((folder) => {
       const dirId = normDirId(folder.direction_id || parseFolderKey(folder.value).direction_id)
       if (!dirId) return
+      if (!isAdmin && allowedDirectionIds.size > 0 && !allowedDirectionIds.has(dirId)) return
       const dirName = (folder.direction_name && folder.direction_name.trim()) || dirId
 
       if (!map[dirId]) {
@@ -238,7 +255,7 @@ function DashboardLayout() {
     }
 
     return map
-  }, [folderOptions, mergedDirectionsList])
+  }, [folderOptions, mergedDirectionsList, isAdmin, allowedDirectionIds])
 
   // Sort directions alphabetically
   const sortedDirections = useMemo(
