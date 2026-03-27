@@ -4963,7 +4963,7 @@ app.get('/api/folders', async (_req, res) => {
     return res.json(
       result.rows.map((row) => ({
         id: row.id,
-        name: row.name,
+        name: normalizeFolderPath(row.name),
         direction_id: row.direction_id,
         direction_name: row.direction_name,
         visibility: row.visibility || 'public',
@@ -4980,7 +4980,7 @@ app.get('/api/folders', async (_req, res) => {
 app.post('/api/folders', async (req, res) => {
   try {
     const { folder, direction_id: directionId, identifiant, visibility: rawVisibility } = req.body || {}
-    const name = (folder || '').trim()
+    const name = normalizeFolderPath(folder)
     if (!name) {
       return res.status(400).json({ error: 'Nom de dossier requis.' })
     }
@@ -5098,8 +5098,8 @@ app.post('/api/folders', async (req, res) => {
 app.patch('/api/folders/rename', async (req, res) => {
   try {
     const { direction_id: directionId, old_name: oldNameRaw, new_name: newNameRaw, identifiant } = req.body || {}
-    const oldName = (oldNameRaw || '').trim()
-    const newName = (newNameRaw || '').trim()
+    const oldName = normalizeFolderPath(oldNameRaw)
+    const newName = normalizeFolderPath(newNameRaw)
     if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
     if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
     if (!oldName || !newName) return res.status(400).json({ error: 'Ancien et nouveau nom requis.' })
