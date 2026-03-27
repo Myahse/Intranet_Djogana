@@ -1286,15 +1286,21 @@ const DocumentSection = () => {
     if (target && src === target) return
     setLoading({ open: true, message: 'Déplacement du dossier…' })
     try {
-      await moveFolderInto(src, target)
+      const { newFolderKey } = await moveFolderInto(src, target)
       setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier déplacé' }))
       toast.success('Dossier déplacé')
+      // If user is currently inside this subtree, navigate to the new path so files don't "disappear"
+      if (folderKey && (folderKey === src || folderKey.startsWith(`${src}::`))) {
+        const suffix = folderKey === src ? '' : folderKey.slice(src.length)
+        const nextKey = `${newFolderKey}${suffix}`
+        navigate(`/dashboard/documents/${encodeURIComponent(nextKey)}`)
+      }
     } catch (err) {
       console.error(err)
       setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors du déplacement' }))
       toast.error(err instanceof Error ? err.message : 'Erreur lors du déplacement')
     }
-  }, [moveFolderInto])
+  }, [moveFolderInto, folderKey, navigate])
 
   // View & sort state — persisted per user in localStorage
   const storageKey = user?.identifiant ? `doc_prefs_${user.identifiant}` : null

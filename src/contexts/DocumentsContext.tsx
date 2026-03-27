@@ -74,7 +74,7 @@ type DocumentsContextValue = {
   removeFolder: (folderKey: string) => Promise<void>
   renameFolderPath: (folderKey: string, newName: string) => Promise<void>
   deleteFolderTree: (folderKeyOrGroupKey: string) => Promise<void>
-  moveFolderInto: (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null) => Promise<void>
+  moveFolderInto: (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null) => Promise<{ newFolderKey: string }>
   setFolderVisibility: (folderId: string, visibility: 'public' | 'direction_only') => Promise<void>
   folderOptions: FolderOption[]
 }
@@ -785,7 +785,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   )
 
   const moveFolderInto = useCallback(
-    async (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null) => {
+    async (sourceKeyOrGroupKey: string, targetFolderKeyOrGroupKey: string | null): Promise<{ newFolderKey: string }> => {
       const srcParsed = parseFolderKey(sourceKeyOrGroupKey)
       const direction_id = srcParsed.direction_id
       const source_name = srcParsed.name || sourceKeyOrGroupKey
@@ -808,7 +808,11 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error ?? 'Échec du déplacement du dossier')
       }
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; name?: string }
+      const newName = (data?.name || '').trim()
+      const newFolderKey = newName ? `${direction_id}::${newName}` : sourceKeyOrGroupKey
       sendWs({ type: 'action', action: 'move_folder', detail: `${source_name} → ${target_name ?? 'Racine'}` })
+      return { newFolderKey }
     },
     [user?.identifiant, sendWs]
   )
