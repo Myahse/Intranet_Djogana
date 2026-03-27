@@ -5193,7 +5193,8 @@ app.post('/api/folders/move', async (req, res) => {
 
     // Prevent ANY conflict for the entire moved subtree (not just the root).
     // Compute all next names, then ensure none already exist outside the moving set.
-    const movingIds = folderRows.rows.map((r) => r.id)
+    // Compare ids as text to stay compatible with legacy schemas (uuid/int/etc.).
+    const movingIds = folderRows.rows.map((r) => String(r.id))
     const nextNames = folderRows.rows.map((row) => {
       const current = row.name
       return current === source ? nextName : nextName + current.slice(source.length)
@@ -5205,7 +5206,7 @@ app.post('/api/folders/move', async (req, res) => {
         WHERE direction_id = $1
           AND deleted_at IS NULL
           AND name = ANY($2::text[])
-          AND NOT (id = ANY($3::uuid[]))
+          AND NOT (id::text = ANY($3::text[]))
         LIMIT 1
       `,
       [directionId, nextNames, movingIds]
@@ -5247,7 +5248,10 @@ app.post('/api/folders/move', async (req, res) => {
     return res.json({ ok: true, name: nextName })
   } catch (err) {
     console.error('folder move error', err)
-    return res.status(500).json({ error: 'Erreur lors du déplacement du dossier.' })
+    const details = process.env.NODE_ENV !== 'production'
+      ? (err?.message || String(err))
+      : undefined
+    return res.status(500).json({ error: 'Erreur lors du déplacement du dossier.', details })
   }
 })
 
