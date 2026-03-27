@@ -1289,11 +1289,14 @@ const DocumentSection = () => {
       const { newFolderKey } = await moveFolderInto(src, target)
       setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Dossier déplacé' }))
       toast.success('Dossier déplacé')
-      // If user is currently inside this subtree, navigate to the new path so files don't "disappear"
+      // Navigate to the destination so the user can immediately find files.
+      // If user is currently inside this subtree, preserve the deeper path.
       if (folderKey && (folderKey === src || folderKey.startsWith(`${src}::`))) {
         const suffix = folderKey === src ? '' : folderKey.slice(src.length)
         const nextKey = `${newFolderKey}${suffix}`
         navigate(`/dashboard/documents/${encodeURIComponent(nextKey)}`)
+      } else {
+        navigate(`/dashboard/documents/${encodeURIComponent(newFolderKey)}`)
       }
     } catch (err) {
       console.error(err)
