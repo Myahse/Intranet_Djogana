@@ -837,8 +837,8 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
             return it
           })
         )
-        setFolderList((prev) =>
-          prev.map((f) => {
+        setFolderList((prev) => {
+          const mapped = prev.map((f) => {
             if (!f.value) return f
             if (f.value === oldFolderKey) {
               const parsed = parseFolderKey(newFolderKey)
@@ -852,7 +852,14 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
             }
             return f
           })
-        )
+          // Deduplicate by value to avoid showing both old/new keys.
+          const byValue = new Map<string, FolderMeta>()
+          for (const f of mapped) {
+            if (!f.value) continue
+            if (!byValue.has(f.value)) byValue.set(f.value, f)
+          }
+          return Array.from(byValue.values())
+        })
       }
       // Ensure state is consistent with server (and pagination/filters):
       // force a reload so moved files/folders appear immediately even if WS is delayed.

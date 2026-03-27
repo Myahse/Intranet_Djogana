@@ -1055,6 +1055,18 @@ function FolderGrid({
   const renderFolderLink = (f: FolderEntry, className: string, children: ReactNode) => {
     const parsedKey = parseFolderKey(f.key)
     const isManagedKey = Boolean(parsedKey.direction_id)
+    const folderParts = parsedKey.name ? parsedKey.name.split('::').filter(Boolean) : []
+    const moveUpTargets =
+      isManagedKey && folderParts.length > 0
+        ? [
+            // null = root
+            null as string | null,
+            // then each prefix level: A, A::B, A::B::C ... (excluding full self)
+            ...folderParts
+              .slice(0, Math.max(0, folderParts.length - 1))
+              .map((_, idx) => folderParts.slice(0, idx + 1).join('::')),
+          ]
+        : []
     const link = (
       <Link
         key={f.key}
@@ -1090,10 +1102,36 @@ function FolderGrid({
         <ContextMenuContent>
           {onMoveFolderInto && (
             <>
-              <ContextMenuItem onSelect={() => onMoveFolderInto(f.key, null)}>
-                <ArrowUp className="size-4" />
-                Déplacer à la racine
-              </ContextMenuItem>
+              {/* Move out: choose level (root/parent/any prefix) */}
+              {moveUpTargets.length > 0 ? (
+                <>
+                  {moveUpTargets.map((t, idx) => {
+                    const label =
+                      t === null
+                        ? 'Racine'
+                        : t.split('::').join(' / ')
+                    return (
+                      <ContextMenuItem
+                        key={`${f.key}__moveup__${t ?? 'root'}__${idx}`}
+                        onSelect={() => {
+                          if (!onMoveFolderInto) return
+                          if (t === null) return onMoveFolderInto(f.key, null)
+                          // target key in same direction
+                          return onMoveFolderInto(f.key, `${parsedKey.direction_id}::${t}`)
+                        }}
+                      >
+                        <ArrowUp className="size-4" />
+                        Déplacer vers {label}
+                      </ContextMenuItem>
+                    )
+                  })}
+                </>
+              ) : (
+                <ContextMenuItem onSelect={() => onMoveFolderInto(f.key, null)}>
+                  <ArrowUp className="size-4" />
+                  Déplacer à la racine
+                </ContextMenuItem>
+              )}
               <ContextMenuSeparator />
             </>
           )}
