@@ -5004,6 +5004,15 @@ app.post('/api/folders', async (req, res) => {
       return res.status(400).json({ error: 'Direction invalide.' })
     }
 
+    // Avoid duplicates explicitly (do not silently "succeed")
+    const existing = await pool.query(
+      'SELECT id FROM folders WHERE direction_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1',
+      [directionId, name]
+    )
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'Un dossier avec ce nom existe déjà dans cette direction.' })
+    }
+
     const id = uuidv4()
     await pool.query(
       `
@@ -5181,6 +5190,32 @@ app.post('/api/folders/move', async (req, res) => {
       [directionId, source, `${source}::%`]
     )
     if (folderRows.rows.length === 0) return res.status(404).json({ error: 'Dossier source introuvable.' })
+
+    // Prevent ANY conflict for the entire moved subtree (not just the root).
+    // Compute all next names, then ensure none already exist outside the moving set.
+    const movingIds = folderRows.rows.map((r) => r.id)
+    const nextNames = folderRows.rows.map((row) => {
+      const current = row.name
+      return current === source ? nextName : nextName + current.slice(source.length)
+    })
+    const conflictAny = await pool.query(
+      `
+        SELECT 1
+        FROM folders
+        WHERE direction_id = $1
+          AND deleted_at IS NULL
+          AND name = ANY($2::text[])
+          AND NOT (id = ANY($3::uuid[]))
+        LIMIT 1
+      `,
+      [directionId, nextNames, movingIds]
+    )
+    if (conflictAny.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Conflit: un ou plusieurs sous-dossiers existent déjà à la destination.',
+      })
+    }
+
     for (const row of folderRows.rows) {
       const current = row.name
       const next = current === source ? nextName : nextName + current.slice(source.length)

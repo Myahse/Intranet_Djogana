@@ -70,6 +70,11 @@ function splitFolderNames(raw: string): string[] {
     .filter(Boolean)
 }
 
+function normalizePathLikeName(raw: string): string {
+  // Allow users to type "A / B / C" and store it as "A::B::C"
+  return raw.replace(/\s*\/\s*/g, '::').replace(/:{3,}/g, '::').trim()
+}
+
 
 export default function SidebarActions() {
   const { user, isAdmin } = useAuth()
@@ -195,7 +200,7 @@ export default function SidebarActions() {
     if (!raw) { toast.error('Veuillez saisir un nom de dossier'); return }
     if (!selectedDirectionFolder) { toast.error('Veuillez sélectionner une direction'); return }
     const file = addFolderFileRef.current?.files?.[0]
-    const names = splitFolderNames(raw)
+    const names = splitFolderNames(raw).map(normalizePathLikeName).filter(Boolean)
     if (names.length > 1 && file) {
       toast.error('Veuillez créer un seul dossier quand un fichier est sélectionné.')
       return
@@ -208,7 +213,8 @@ export default function SidebarActions() {
     setLoading({ open: true, message: 'Création du dossier en cours…' })
     try {
       for (const n of names) {
-        const fullName = parentName ? `${parentName}::${n}` : n
+        const nn = normalizePathLikeName(n)
+        const fullName = parentName ? `${parentName}::${nn}` : nn
         if (file) {
           await addFolder(fullName, file, selectedDirectionFolder, newFolderVisibility)
         } else {
@@ -234,8 +240,8 @@ export default function SidebarActions() {
   }
 
   const handleAddSubfolder = async () => {
-    const group = (selectedFormationGroup || formationGroupName).trim()
-    const subs = splitFolderNames(formationSubfolderName)
+    const group = normalizePathLikeName((selectedFormationGroup || formationGroupName).trim())
+    const subs = splitFolderNames(formationSubfolderName).map(normalizePathLikeName).filter(Boolean)
     if (!group) { toast.error('Veuillez saisir ou sélectionner un nom de groupe'); return }
     if (subs.length === 0) { toast.error('Veuillez saisir au moins un nom de sous-dossier'); return }
     if (!selectedDirectionFormation) { toast.error('Veuillez sélectionner une direction'); return }
@@ -252,7 +258,8 @@ export default function SidebarActions() {
     setLoading({ open: true, message: subs.length > 1 ? 'Création des sous-dossiers…' : 'Création du sous-dossier en cours…' })
     try {
       for (const sub of subs) {
-        const folderKey = parentName ? `${parentName}::${group}::${sub}` : `${group}::${sub}`
+        const ss = normalizePathLikeName(sub)
+        const folderKey = parentName ? `${parentName}::${group}::${ss}` : `${group}::${ss}`
         if (file) {
           await addFolder(folderKey, file, selectedDirectionFormation, formationSubfolderVisibility)
         } else {
