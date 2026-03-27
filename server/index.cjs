@@ -5624,7 +5624,7 @@ app.get('/api/files', async (req, res) => {
       name: row.name,
       size: Number(row.size) || 0,
       mime_type: row.mime_type || '',
-      folder: row.folder,
+      folder: normalizeFolderPath(row.folder),
       direction_id: row.direction_id,
       url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
       view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
@@ -6098,7 +6098,7 @@ app.get('/api/links', async (req, res) => {
     return res.json(
       result.rows.map((row) => ({
         id: row.id,
-        folder: row.folder,
+        folder: normalizeFolderPath(row.folder),
         direction_id: row.direction_id,
         url: row.url,
         label: row.label,

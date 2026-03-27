@@ -1939,7 +1939,14 @@ const DocumentSection = () => {
 
             <ContextMenu>
               <ContextMenuTrigger asChild>
-                <div className="min-h-[200px]">
+                <div
+                  className="flex-1 min-h-[240px]"
+                  onContextMenu={(e) => {
+                    // Ensure the custom menu opens instead of the browser menu,
+                    // even when right-clicking on empty space inside the panel.
+                    e.preventDefault()
+                  }}
+                >
                   {(files.length > 0 || links.length > 0) ? (
               <>
                 {/* Tiles view */}
