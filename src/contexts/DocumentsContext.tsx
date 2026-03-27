@@ -854,10 +854,17 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           })
         )
       }
+      // Ensure state is consistent with server (and pagination/filters):
+      // force a reload so moved files/folders appear immediately even if WS is delayed.
+      try {
+        await loadAll()
+      } catch {
+        // ignore
+      }
       sendWs({ type: 'action', action: 'move_folder', detail: `${source_name} → ${target_name ?? 'Racine'}` })
       return { newFolderKey }
     },
-    [user?.identifiant, sendWs]
+    [user?.identifiant, sendWs, loadAll]
   )
 
   const setFolderVisibility = useCallback(
