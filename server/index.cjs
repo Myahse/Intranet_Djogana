@@ -25,6 +25,24 @@ function isUuidLike(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
 }
 
+function normalizeFolderPath(raw) {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  // Accept "A / B" style coming from UI and normalize to internal "::" separator.
+  const asColons = s.replace(/\s*\/\s*/g, '::')
+  // Collapse repeated separators and remove leading/trailing separators.
+  return asColons
+    .replace(/:{4,}/g, '::')
+    .replace(/^::+/, '')
+    .replace(/::+$/, '')
+    .trim()
+}
+
+function escapeLikePattern(value) {
+  // Escape for SQL LIKE ... ESCAPE '\'
+  return String(value).replace(/([\\%_])/g, '\\$1')
+}
+
 // ---------- Cloudinary ----------
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -5150,8 +5168,8 @@ app.patch('/api/folders/rename', async (req, res) => {
 app.post('/api/folders/move', async (req, res) => {
   try {
     const { direction_id: directionId, source_name: sourceRaw, target_name: targetRaw, identifiant } = req.body || {}
-    const source = (sourceRaw || '').trim()
-    const target = targetRaw === null || targetRaw === undefined ? null : String(targetRaw).trim()
+    const source = normalizeFolderPath(sourceRaw)
+    const target = targetRaw === null || targetRaw === undefined ? null : normalizeFolderPath(targetRaw)
     if (!directionId) return res.status(400).json({ error: 'Direction requise.' })
     if (!isUuidLike(String(directionId))) return res.status(400).json({ error: 'Direction invalide.' })
     if (!identifiant) return res.status(401).json({ error: 'Authentification requise.' })
@@ -5176,24 +5194,26 @@ app.post('/api/folders/move', async (req, res) => {
 
     // If target is provided, ensure target exists (as a folder or as a group root)
     if (target) {
+      const targetLike = `${escapeLikePattern(target)}::%`
       const targetExists = await pool.query(
         `SELECT 1 FROM folders WHERE direction_id = $1 AND deleted_at IS NULL
-          AND (name = $2 OR name LIKE $3) LIMIT 1`,
-        [directionId, target, `${target}::%`]
+          AND (name = $2 OR name LIKE $3 ESCAPE '\\') LIMIT 1`,
+        [directionId, target, targetLike]
       )
       if (targetExists.rows.length === 0) {
         // Also allow "virtual" folders that only exist via files/links prefixes.
+        const targetLike2 = `${escapeLikePattern(target)}::%`
         const targetExistsViaContent = await pool.query(
           `
             SELECT 1
             FROM (
-              SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+              SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
               UNION ALL
-              SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+              SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
             ) t
             LIMIT 1
           `,
-          [directionId, target, `${target}::%`]
+          [directionId, target, targetLike2]
         )
         if (targetExistsViaContent.rows.length === 0) return res.status(404).json({ error: 'Dossier cible introuvable.' })
       }
@@ -5209,11 +5229,12 @@ app.post('/api/folders/move', async (req, res) => {
     // Reuse rename logic by renaming prefix source -> nextName
     req.body = { direction_id: directionId, old_name: source, new_name: nextName, identifiant }
     // Call handler inline by duplicating minimal behavior (avoid refactor in this patch)
+    const sourceLike = `${escapeLikePattern(source)}::%`
     const folderRows = await pool.query(
       `SELECT id, name FROM folders
        WHERE direction_id = $1 AND deleted_at IS NULL
-         AND (name = $2 OR name LIKE $3)`,
-      [directionId, source, `${source}::%`]
+         AND (name = $2 OR name LIKE $3 ESCAPE '\\')`,
+      [directionId, source, sourceLike]
     )
     if (folderRows.rows.length === 0) {
       // Fallback: allow moving a "virtual" folder if it exists via files/links.
@@ -5221,28 +5242,29 @@ app.post('/api/folders/move', async (req, res) => {
         `
           SELECT 1
           FROM (
-            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
             UNION ALL
-            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
           ) t
           LIMIT 1
         `,
-        [directionId, source, `${source}::%`]
+        [directionId, source, sourceLike]
       )
       if (sourceExistsViaContent.rows.length === 0) return res.status(404).json({ error: 'Dossier source introuvable.' })
 
       // Prevent merge conflicts for virtual folders: do not move onto an existing subtree.
+      const nextLike = `${escapeLikePattern(nextName)}::%`
       const conflictVirtual = await pool.query(
         `
           SELECT 1
           FROM (
-            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            SELECT 1 AS ok FROM files WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
             UNION ALL
-            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3) LIMIT 1
+            SELECT 1 AS ok FROM links WHERE direction_id = $1 AND deleted_at IS NULL AND (folder = $2 OR folder LIKE $3 ESCAPE '\\') LIMIT 1
           ) t
           LIMIT 1
         `,
-        [directionId, nextName, `${nextName}::%`]
+        [directionId, nextName, nextLike]
       )
       if (conflictVirtual.rows.length > 0) {
         return res.status(409).json({ error: 'Conflit: le dossier de destination contient déjà des éléments.' })
@@ -5250,13 +5272,13 @@ app.post('/api/folders/move', async (req, res) => {
 
       await pool.query(
         `UPDATE files SET folder = $1 || substring(folder from $2)
-         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
-        [nextName, source.length + 1, directionId, source, `${source}::%`]
+         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5 ESCAPE '\\')`,
+        [nextName, source.length + 1, directionId, source, sourceLike]
       )
       await pool.query(
         `UPDATE links SET folder = $1 || substring(folder from $2)
-         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
-        [nextName, source.length + 1, directionId, source, `${source}::%`]
+         WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5 ESCAPE '\\')`,
+        [nextName, source.length + 1, directionId, source, sourceLike]
       )
 
       await insertActivityLog(pool, {
@@ -5306,13 +5328,13 @@ app.post('/api/folders/move', async (req, res) => {
     }
     await pool.query(
       `UPDATE files SET folder = $1 || substring(folder from $2)
-       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
-      [nextName, source.length + 1, directionId, source, `${source}::%`]
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5 ESCAPE '\\')`,
+      [nextName, source.length + 1, directionId, source, sourceLike]
     )
     await pool.query(
       `UPDATE links SET folder = $1 || substring(folder from $2)
-       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5)`,
-      [nextName, source.length + 1, directionId, source, `${source}::%`]
+       WHERE direction_id = $3 AND deleted_at IS NULL AND (folder = $4 OR folder LIKE $5 ESCAPE '\\')`,
+      [nextName, source.length + 1, directionId, source, sourceLike]
     )
 
     await insertActivityLog(pool, {
