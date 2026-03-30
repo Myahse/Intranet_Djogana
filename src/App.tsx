@@ -15,11 +15,13 @@ import AdminPage from '@/page/admin'
 import Corbeille from '@/page/dashboard/corbeille'
 import LiveActivityPage from '@/page/admin/LiveActivityPage'
 import PageTransition from '@/components/PageTransition'
+import SessionExpiredModal from '@/components/SessionExpiredModal'
 
 export default function App() {
   return (
     <AuthProvider>
       <DocumentsProvider>
+        <SessionExpiredModal />
         <Routes>
           <Route path="/" element={<PageTransition><Landing /></PageTransition>} />
           <Route path="/login" element={<PageTransition><Login /></PageTransition>} />

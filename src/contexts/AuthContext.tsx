@@ -12,6 +12,8 @@ import { getApiBaseUrl, getWsUrl } from '../utils/apiBase'
 
 const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY??'intranet_djogana_user'
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY??'intranet_djogana_token'
+const INACTIVITY_LOGOUT_MS = Number(import.meta.env.VITE_INACTIVITY_LOGOUT_MS ?? 15 * 60 * 1000)
+const LOGOUT_ON_BLUR = String(import.meta.env.VITE_LOGOUT_ON_BLUR ?? 'false').toLowerCase() === 'true'
 
 export type UserPermissions = {
   can_create_folder: boolean
@@ -299,6 +301,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // But don't clear if user was just set (within last 5 seconds) - might be race condition
         const timeSinceLogin = Date.now() - lastLoginTimeRef.current
         if ((res.status === 401 || res.status === 403) && timeSinceLogin > 5000) {
+          if (res.status === 401) {
+            try {
+              window.dispatchEvent(
+                new CustomEvent('auth:session_expired', { detail: { message: 'Votre session a expiré. Veuillez vous reconnecter.' } })
+              )
+            } catch { /* ignore */ }
+          }
           setUser(null)
           try { sessionStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* ignore */ }
           try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
@@ -627,6 +636,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoggedIn = !!user
   const isLoggedInRef = useRef(isLoggedIn)
   isLoggedInRef.current = isLoggedIn
+
+  // Auto-logout after inactivity (default 15 min)
+  useEffect(() => {
+    if (!isLoggedIn) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const bump = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        // Inactivity → force logout + close WS
+        try { wsRef.current?.close() } catch { /* ignore */ }
+        try {
+          window.dispatchEvent(
+            new CustomEvent('auth:session_expired', { detail: { message: 'Vous avez été déconnecté après 15 minutes d’inactivité.' } })
+          )
+        } catch { /* ignore */ }
+        logoutRef.current()
+      }, Math.max(10_000, INACTIVITY_LOGOUT_MS))
+    }
+    const events: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart']
+    for (const e of events) window.addEventListener(e, bump, { passive: true })
+    bump()
+    return () => {
+      if (timer) clearTimeout(timer)
+      for (const e of events) window.removeEventListener(e, bump as any)
+    }
+  }, [isLoggedIn])
+
+  // Optional: logout immediately when user leaves the tab/window.
+  // - visibilitychange covers switching tabs / minimizing
+  // - blur covers switching to another app/window while staying on same tab
+  useEffect(() => {
+    if (!isLoggedIn || !LOGOUT_ON_BLUR) return
+
+    let blurTimer: ReturnType<typeof setTimeout> | null = null
+    const doLogout = (message: string) => {
+      try { wsRef.current?.close() } catch { /* ignore */ }
+      try {
+        window.dispatchEvent(new CustomEvent('auth:session_expired', { detail: { message } }))
+      } catch { /* ignore */ }
+      logoutRef.current()
+    }
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        doLogout('Vous avez quitté la page. Veuillez vous reconnecter.')
+      }
+    }
+
+    const onBlur = () => {
+      if (blurTimer) clearTimeout(blurTimer)
+      // Delay slightly to avoid false positives (e.g. transient focus changes)
+      blurTimer = setTimeout(() => {
+        if (!document.hasFocus()) {
+          doLogout('Vous avez quitté la page. Veuillez vous reconnecter.')
+        }
+      }, 200)
+    }
+
+    const onFocus = () => {
+      if (blurTimer) { clearTimeout(blurTimer); blurTimer = null }
+    }
+
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+      if (blurTimer) clearTimeout(blurTimer)
+    }
+  }, [isLoggedIn])
+
+  // Disconnect as soon as the user leaves/closes the page (best-effort)
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      try { wsRef.current?.close() } catch { /* ignore */ }
+      try { sessionStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* ignore */ }
+      try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
 
   // On mount: sync user state with the server so stale sessionStorage values
   // (like must_change_password) are corrected immediately
