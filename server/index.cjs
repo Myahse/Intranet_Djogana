@@ -1155,10 +1155,11 @@ function recordLiveEvent(identifiant, action, detail) {
 
 // ---------- JWT helpers (for device-approval flow: mobile uses token to list/approve) ----------
 function signToken(identifiant) {
+  const expiresIn = (process.env.JWT_EXPIRES_IN || '15m').toString()
   return jwt.sign(
     { identifiant, type: 'auth' },
     JWT_SECRET,
-    { expiresIn: '7d', algorithm: 'HS256' }
+    { expiresIn, algorithm: 'HS256' }
   )
 }
 
