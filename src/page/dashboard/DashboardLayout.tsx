@@ -512,14 +512,31 @@ function DashboardLayout() {
                               navigate(`/dashboard/direction/${encodeURIComponent(dirKey)}`)
                             }}
                           >
-                            <Building2 className="size-4" />
+                            <span className="relative shrink-0">
+                              <Building2 className="size-4" />
+                              {badgeCount > 0 ? (
+                                <span
+                                  className={cn(
+                                    "hidden group-data-[collapsible=icon]:flex",
+                                    "absolute -right-1 -top-1 min-w-4 h-4 px-1",
+                                    "items-center justify-center rounded-full",
+                                    "bg-primary text-primary-foreground text-[10px] font-semibold tabular-nums"
+                                  )}
+                                  aria-label={`${badgeCount} nouveau(x) dossier(s)`}
+                                >
+                                  {badgeCount > 99 ? "99+" : badgeCount}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="truncate">{dir.directionName}</span>
-                            {badgeCount > 0 ? (
-                              <SidebarMenuBadge className="bg-primary/15 text-primary">
-                                {badgeCount}
-                              </SidebarMenuBadge>
-                            ) : null}
-                            {isDirOpen ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />}
+                            <span className="ml-auto flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+                              {badgeCount > 0 ? (
+                                <SidebarMenuBadge className="static bg-primary/15 text-primary">
+                                  {badgeCount}
+                                </SidebarMenuBadge>
+                              ) : null}
+                              {isDirOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                            </span>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       </SidebarMenu>
