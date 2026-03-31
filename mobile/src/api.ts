@@ -327,7 +327,8 @@ export async function registerPushToken(
   try {
     const base = await getApiBaseUrl();
     const trimmed = (deviceToken || "").trim();
-    const isExpo = /^ExponentPushToken\[[^\]]+\]$/i.test(trimmed);
+    // Expo SDKs may return `ExponentPushToken[…]` (legacy) or `ExpoPushToken[…]` (newer).
+    const isExpo = /^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$/i.test(trimmed);
     const res = await fetch(`${base}/api/auth/device/push-token`, {
       method: "POST",
       headers: {

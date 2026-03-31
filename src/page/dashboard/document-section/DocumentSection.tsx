@@ -1594,8 +1594,12 @@ const DocumentSection = () => {
 
   const hasSubfolders = subfolderEntries.length > 0
 
-  // Show subfolders view when the route has child folders
-  const isGroupRoute = !isRoot && folderKey && hasSubfolders
+
+  const folderHasOwnContent =
+    !isRoot && folderKey
+      ? getFiles(folderKey).length > 0 || getLinks(folderKey).length > 0
+      : false
+  const isGroupRoute = !isRoot && folderKey && hasSubfolders && !folderHasOwnContent
 
   const title = isRoot
     ? 'Tous les dossiers'
@@ -1623,6 +1627,25 @@ const DocumentSection = () => {
     const allSelectableSelected =
       fileIdsSelectable.length > 0 && fileIdsSelectable.every((id) => selectedFileIds.has(id))
     const selectedEditableCount = fileIdsSelectable.filter((id) => selectedFileIds.has(id)).length
+
+    const directSubfolderEntries: FolderEntry[] = (() => {
+      if (!hasSubfolders) return []
+      const parsedParent = parseFolderKey(folderKey)
+      const parentName = parsedParent.direction_id ? parsedParent.name : folderKey
+      const out: FolderEntry[] = []
+      for (const f of subfolderEntries) {
+        const { name } = parseFolderKey(f.value)
+        if (!name.startsWith(`${parentName}::`)) continue
+        const rest = name.slice(parentName.length + 2)
+        if (!rest || rest.includes('::')) continue // direct children only
+        out.push({
+          key: f.value,
+          label: formatName(rest),
+          hasFiles: getFiles(f.value).length > 0,
+        })
+      }
+      return out
+    })()
 
     const toggleFileSelect = (id: string) => {
       setSelectedFileIds((prev) => {
@@ -1906,6 +1929,29 @@ const DocumentSection = () => {
                 </div>
               )}
             </div>
+
+            {directSubfolderEntries.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-muted-foreground">Sous-dossiers</h2>
+                </div>
+                <FolderGrid
+                  folders={directSubfolderEntries}
+                  viewMode={viewMode}
+                  sortField={sortField}
+                  sortDir={sortDir}
+                  onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
+                  setViewMode={setViewMode}
+                  folderHasFiles={Object.fromEntries(
+                    directSubfolderEntries.map((e) => [e.key, Boolean(e.hasFiles)]),
+                  )}
+                  buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+                  onRenameFolder={openRenameFolder}
+                  onDeleteFolder={canDeleteFolders ? handleDeleteFolderTree : undefined}
+                  onMoveFolderInto={handleMoveFolderInto}
+                />
+              </div>
+            )}
 
             {/* View toolbar */}
             {(files.length > 0 || links.length > 0) && (
