@@ -91,11 +91,28 @@ function DashboardLayout() {
   // Fallback: detect new folders by comparing folderOptions values.
   // This works even if WebSocket events are missed.
   const seenFolderValuesRef = useRef<Set<string>>(new Set())
+  const badgeDetectionReadyRef = useRef(false)
+  const badgeDetectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (folderOptions.length === 0) return
-    // Initialize once with the current set (do not badge the initial load).
-    if (seenFolderValuesRef.current.size === 0) {
-      seenFolderValuesRef.current = new Set(folderOptions.map((f) => f.value))
+    // Avoid showing "new folder" badges during the initial multi-step load
+    // (e.g. fallback-from-files → later /api/folders success). We wait a short
+    // window before we start counting deltas as "new creations".
+    if (!badgeDetectionReadyRef.current) {
+      const current = new Set(folderOptions.map((f) => f.value))
+      if (seenFolderValuesRef.current.size === 0) {
+        seenFolderValuesRef.current = current
+      } else {
+        // Merge any late arrivals into the baseline without counting them.
+        const merged = new Set(seenFolderValuesRef.current)
+        for (const v of current) merged.add(v)
+        seenFolderValuesRef.current = merged
+      }
+
+      if (badgeDetectionTimerRef.current) clearTimeout(badgeDetectionTimerRef.current)
+      badgeDetectionTimerRef.current = setTimeout(() => {
+        badgeDetectionReadyRef.current = true
+      }, 1500)
       return
     }
 

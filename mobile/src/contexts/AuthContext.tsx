@@ -54,9 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await storage.setToken(result.token);
       setTokenState(result.token);
       setUser(result.user);
-      // Get the push token and register it on the server (best-effort).
-      // We also verify registration and retry once; this fixes cases where the first
-      // registration happens before network is fully ready or the token rotates.
       registerForPushNotificationsAsync()
         .then(async (deviceToken) => {
           await api.registerPushToken(result.token, deviceToken);
@@ -69,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
       return true;
     },
-    []
+    [] 
   );
 
   const logout = useCallback(async () => {
