@@ -2467,6 +2467,7 @@ const DocumentSection = () => {
         (f): f is (typeof folderOptions)[number] & { id: string } =>
           Boolean(f?.id && f.visibility === 'direction_only'),
       )
+    const canEditHere = canEditFolder(folderKey)
 
     const handleSetGroupSubfoldersPublic = async () => {
       if (subfoldersDirectionOnly.length === 0) return
@@ -2496,7 +2497,15 @@ const DocumentSection = () => {
     }
 
     return (
-      <div className="p-6">
+      <div
+        className="p-6"
+        onContextMenuCapture={(e) => {
+         
+          if (!canEditHere) return
+          e.preventDefault()
+          setFolderCtx({ open: true, x: e.clientX, y: e.clientY })
+        }}
+      >
         <ConfirmDialog />
         <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
         <div className="mb-8 flex flex-wrap items-center gap-2 gap-y-3">
@@ -2541,6 +2550,35 @@ const DocumentSection = () => {
             Aucun sous-dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
           </p>
         )}
+
+        <FixedContextMenu
+          open={folderCtx.open}
+          x={folderCtx.x}
+          y={folderCtx.y}
+          onClose={() => setFolderCtx((s) => ({ ...s, open: false }))}
+        >
+          {canEditHere && (
+            <>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setSubfolderOpen(true) }}
+              >
+                <FolderPlus className="size-4 text-muted-foreground" />
+                Créer un sous-dossier ici
+              </button>
+              <div className="bg-border -mx-1 my-1 h-px" />
+            </>
+          )}
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+            onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); navigate(-1) }}
+          >
+            <ChevronLeft className="size-4 text-muted-foreground" />
+            Retour
+          </button>
+        </FixedContextMenu>
         {/* Rename folder dialog (context menu) */}
         <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
           <DialogContent className="sm:max-w-md">
