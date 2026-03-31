@@ -88,6 +88,42 @@ function DashboardLayout() {
 
   const [newFoldersByDirection, setNewFoldersByDirection] = useState<Record<string, number>>({})
 
+  // Fallback: detect new folders by comparing folderOptions values.
+  // This works even if WebSocket events are missed.
+  const seenFolderValuesRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (folderOptions.length === 0) return
+    // Initialize once with the current set (do not badge the initial load).
+    if (seenFolderValuesRef.current.size === 0) {
+      seenFolderValuesRef.current = new Set(folderOptions.map((f) => f.value))
+      return
+    }
+
+    const prev = seenFolderValuesRef.current
+    const next = new Set(prev)
+    const createdByDir: Record<string, number> = {}
+
+    for (const f of folderOptions) {
+      if (next.has(f.value)) continue
+      next.add(f.value)
+      const dirId = normDirId(f.direction_id || parseFolderKey(f.value).direction_id)
+      if (!dirId) continue
+      createdByDir[dirId] = (createdByDir[dirId] || 0) + 1
+    }
+
+    if (Object.keys(createdByDir).length > 0) {
+      setNewFoldersByDirection((prevMap) => {
+        const out = { ...prevMap }
+        for (const [dirId, n] of Object.entries(createdByDir)) {
+          out[dirId] = (out[dirId] || 0) + n
+        }
+        return out
+      })
+    }
+
+    seenFolderValuesRef.current = next
+  }, [folderOptions])
+
   useEffect(() => {
     const bump = (d: any) => {
       const dirId = normDirId(d?.directionId || d?.direction_id)

@@ -1146,10 +1146,10 @@ function FolderGrid({
         className={className}
         draggable={!!onMoveFolderInto && isManagedKey}
         onContextMenuCapture={(e) => {
-          // Allow the folder tile context-menu (rename/delete/move) to open.
-          // Prevent the parent "background" context-menu (create/upload) from intercepting.
+        
           e.stopPropagation()
         }}
+        data-folder-tile="true"
         onDragStart={(e) => {
           if (!onMoveFolderInto || !isManagedKey) return
           e.dataTransfer.setData('text/plain', f.key)
@@ -2507,6 +2507,59 @@ const DocumentSection = () => {
       }
     }
 
+    const handleUploadHereInGroup = async () => {
+      if (!folderKey) { toast.error('Dossier non trouvé'); return }
+      const files = Array.from(uploadFileRef.current?.files ?? [])
+      if (files.length === 0) { toast.error('Veuillez choisir au moins un fichier'); return }
+      const customName = uploadFileName.trim()
+      if (files.length > 1 && customName) {
+        toast.error('Le nom personnalisé est disponible uniquement pour un seul fichier.')
+        return
+      }
+      setUploadOpen(false)
+      setLoading({ open: true, message: files.length > 1 ? 'Envoi des fichiers en cours…' : 'Envoi du fichier en cours…' })
+      try {
+        for (const file of files) {
+          await addFile(folderKey, file, customName || undefined)
+        }
+        setUploadFileName('')
+        if (uploadFileRef.current) uploadFileRef.current.value = ''
+        setLoading((s) => ({
+          ...s,
+          result: 'success',
+          resultMessage: files.length > 1 ? 'Fichiers ajoutés avec succès' : 'Fichier ajouté avec succès',
+        }))
+        toast.success(files.length > 1 ? 'Fichiers ajoutés' : 'Fichier ajouté')
+      } catch (err) {
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'envoi des fichiers" }))
+        toast.error(err instanceof Error ? err.message : "Erreur lors de l'upload des fichiers")
+        console.error(err)
+      }
+    }
+
+    const handleAddLinkHereInGroup = async () => {
+      if (!folderKey) { toast.error('Dossier non trouvé'); return }
+      const url = linkUrl.trim()
+      if (!url) { toast.error('Veuillez saisir une URL'); return }
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        toast.error("L'URL doit commencer par http:// ou https://")
+        return
+      }
+      setLinkOpen(false)
+      setLoading({ open: true, message: 'Ajout du lien…' })
+      try {
+        await addLink(folderKey, url, linkLabel.trim() || url)
+        setLinkUrl('')
+        setLinkLabel('')
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Lien ajouté' }))
+        toast.success('Lien ajouté')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: "Erreur lors de l'ajout du lien" }))
+        toast.error(err instanceof Error ? err.message : "Erreur lors de l'ajout du lien")
+      }
+    }
+
     const handleSetGroupSubfoldersPublic = async () => {
       if (subfoldersDirectionOnly.length === 0) return
       const ok = await confirm({
@@ -2565,6 +2618,8 @@ const DocumentSection = () => {
           className="flex-1"
           onContextMenuCapture={(e) => {
             if (!canEditHere) return
+            const target = e.target as HTMLElement | null
+            if (target?.closest?.('[data-folder-tile=\"true\"]')) return
             e.preventDefault()
             setFolderCtx({ open: true, x: e.clientX, y: e.clientY })
           }}
@@ -2598,6 +2653,22 @@ const DocumentSection = () => {
         >
           {canEditHere && (
             <>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setUploadOpen(true) }}
+              >
+                <Upload className="size-4 text-muted-foreground" />
+                Ajouter un fichier
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setLinkOpen(true) }}
+              >
+                <ExternalLink className="size-4 text-muted-foreground" />
+                Ajouter un lien
+              </button>
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
@@ -2643,6 +2714,78 @@ const DocumentSection = () => {
             <DialogFooter>
               <Button variant="outline" onClick={() => setSubfolderOpen(false)}>Annuler</Button>
               <Button onClick={handleCreateSubfolderHereInGroup}>Créer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add link dialog (right-click) */}
+        <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Ajouter un lien</DialogTitle>
+              <DialogDescription>Ajouter un lien (URL) dans ce dossier.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="doc-link-url-group">URL</Label>
+                <Input
+                  id="doc-link-url-group"
+                  type="url"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  placeholder="https://example.com"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="doc-link-label-group">Libellé (optionnel)</Label>
+                <Input
+                  id="doc-link-label-group"
+                  value={linkLabel}
+                  onChange={(e) => setLinkLabel(e.target.value)}
+                  placeholder="Ex. Documentation"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLinkOpen(false)}>Annuler</Button>
+              <Button onClick={handleAddLinkHereInGroup}>Ajouter</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Upload File Dialog */}
+        <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Upload className="size-5" />
+                Ajouter un fichier
+              </DialogTitle>
+              <DialogDescription>
+                Ajoutez un ou plusieurs fichiers à ce dossier.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-2">
+                <Label>Fichier(s)</Label>
+                <input ref={uploadFileRef} type="file" multiple className={fileInputClass} accept={FILE_UPLOAD_ACCEPT} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="upload-name-group">Nom du fichier (optionnel, fichier unique)</Label>
+                <Input
+                  id="upload-name-group"
+                  value={uploadFileName}
+                  onChange={(e) => setUploadFileName(e.target.value)}
+                  placeholder="Ex. rapport.pdf"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setUploadOpen(false)}>Annuler</Button>
+              <Button onClick={handleUploadHereInGroup}>
+                <Upload className="size-4 mr-2" />
+                Envoyer
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

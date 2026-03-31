@@ -4862,7 +4862,7 @@ app.post('/api/files/register', async (req, res) => {
       const bodyText = `${directionName} a ajouté un fichier "${storedFileName}"`
       sendPushToIdentifiants(
         toNotify,
-        directionName,
+        'Nouveau fichier',
         bodyText,
         {
           type: 'document_uploaded',
@@ -5104,7 +5104,7 @@ app.post('/api/folders', async (req, res) => {
         const folderDisplay = name.includes('::') ? name.split('::').slice(-1)[0] : name
         return sendPushToIdentifiants(
           idents,
-          directionName,
+          'Nouveau dossier',
           `${directionName} a ajouté un dossier "${folderDisplay}"`,
           {
             type: 'folder_created',
