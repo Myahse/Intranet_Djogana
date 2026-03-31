@@ -1145,10 +1145,6 @@ function FolderGrid({
         to={buildLink(f.key)}
         className={className}
         draggable={!!onMoveFolderInto && isManagedKey}
-        onContextMenuCapture={(e) => {
-        
-          e.stopPropagation()
-        }}
         data-folder-tile="true"
         onDragStart={(e) => {
           if (!onMoveFolderInto || !isManagedKey) return
