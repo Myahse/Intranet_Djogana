@@ -4676,7 +4676,7 @@ app.post('/api/files', (req, res, next) => {
  */
 app.post('/api/files/sign', async (req, res) => {
   try {
-    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size } = req.body || {}
+    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size, file_name: fileName } = req.body || {}
 
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
@@ -4724,8 +4724,10 @@ app.post('/api/files/sign', async (req, res) => {
     const isApkMime =
       mime === 'application/vnd.android.package-archive' ||
       mime === 'application/android-package-archive'
+    const isApkByName =
+      typeof fileName === 'string' && fileName.trim().toLowerCase().endsWith('.apk')
     const fileSize = Number(size) || 0
-    if (isApkMime && fileSize > 20 * 1024 * 1024) {
+    if ((isApkMime || isApkByName) && fileSize > 20 * 1024 * 1024) {
       resourceType = 'video'
     }
 

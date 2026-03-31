@@ -199,6 +199,7 @@ async function uploadToServer(
       folder: folderName,
       direction_id: directionId,
       identifiant,
+      file_name: file.name,
       mime_type: file.type || 'application/octet-stream',
       size: file.size,
     }),
