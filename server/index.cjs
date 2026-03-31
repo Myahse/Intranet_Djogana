@@ -215,7 +215,8 @@ function getMessaging() {
 }
 
 function isExpoPushToken(token) {
-  return typeof token === 'string' && /^ExponentPushToken\[[^\]]+\]$/i.test(token.trim())
+  // Expo can return `ExponentPushToken[…]` (legacy) or `ExpoPushToken[…]` (newer SDKs).
+  return typeof token === 'string' && /^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$/i.test(token.trim())
 }
 
 function isLikelyFcmToken(token) {

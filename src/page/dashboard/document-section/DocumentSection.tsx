@@ -2417,24 +2417,30 @@ const DocumentSection = () => {
     folderHasFiles[folder.value] = getFiles(folder.value).length > 0
   })
 
-  // Build groups from folder names: "Module 1::Cours" → group "Module 1", sub "Cours"
+  // Build groups from folder names, but keep them direction-scoped so the key
+  // always contains `direction_id::` (required for nested subfolder creation).
+  // Example: "dir::Module 1::Cours" → groupKey "dir::Module 1", sub "Cours"
   const groups: Record<string, { name: string; subfolders: string[] }> = {}
   folderOptions.forEach((folder) => {
-    const { name } = parseFolderKey(folder.value)
-    const [group, ...subParts] = name.split('::')
+    const parsed = parseFolderKey(folder.value)
+    if (!parsed.direction_id) return
+    const [group, ...subParts] = (parsed.name || '').split('::')
     const sub = subParts.join('::')
-    if (sub) {
-      if (!groups[group]) {
-        groups[group] = { name: group, subfolders: [] }
-      }
-      groups[group].subfolders.push(folder.value)
+    if (!group || !sub) return
+    const groupKey = `${parsed.direction_id}::${group}`
+    if (!groups[groupKey]) {
+      groups[groupKey] = { name: group, subfolders: [] }
     }
+    groups[groupKey].subfolders.push(folder.value)
   })
 
   // Root folders: only those whose name does NOT appear as a group prefix
   const rootFolders = folderOptions.filter((folder) => {
-    const { name } = parseFolderKey(folder.value)
-    return !name.includes('::') && !groups[name]
+    const parsed = parseFolderKey(folder.value)
+    if (!parsed.direction_id) return false
+    const name = parsed.name || ''
+    const groupKey = `${parsed.direction_id}::${name}`
+    return !name.includes('::') && !groups[groupKey]
   })
 
   const groupNames = Object.keys(groups)
@@ -2814,10 +2820,10 @@ const DocumentSection = () => {
       label: folder.label,
       hasFiles: folderHasFiles[folder.value],
     })),
-    ...groupNames.map((groupName) => {
-      const subfolders = groups[groupName]?.subfolders ?? []
+    ...groupNames.map((groupKey) => {
+      const subfolders = groups[groupKey]?.subfolders ?? []
       const hasAnyFile = subfolders.some((value) => folderHasFiles[value])
-      return { key: groupName, label: groupName, hasFiles: hasAnyFile }
+      return { key: groupKey, label: groups[groupKey]?.name || groupKey, hasFiles: hasAnyFile }
     }),
   ]
 
