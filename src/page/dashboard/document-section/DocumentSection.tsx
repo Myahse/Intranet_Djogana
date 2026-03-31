@@ -211,9 +211,23 @@ function FixedContextMenu({
 
   if (!open) return null
 
-  // Keep menu inside viewport
-  const left = Math.min(Math.max(8, x), window.innerWidth - 240)
-  const top = Math.min(Math.max(8, y), window.innerHeight - 240)
+  // Keep menu near cursor while staying inside viewport.
+  // We don't measure the real menu size here, so we use a safe max size.
+  const MENU_W = 260
+  const MENU_H = 220
+  const OFFSET = 6
+  const MARGIN = 8
+
+  let left = x + OFFSET
+  let top = y + OFFSET
+
+  // Flip if it would overflow
+  if (left + MENU_W > window.innerWidth - MARGIN) left = x - OFFSET - MENU_W
+  if (top + MENU_H > window.innerHeight - MARGIN) top = y - OFFSET - MENU_H
+
+  // Clamp to viewport
+  left = Math.min(Math.max(MARGIN, left), window.innerWidth - MENU_W - MARGIN)
+  top = Math.min(Math.max(MARGIN, top), window.innerHeight - MENU_H - MARGIN)
 
   return (
     <div
@@ -2497,15 +2511,7 @@ const DocumentSection = () => {
     }
 
     return (
-      <div
-        className="p-6"
-        onContextMenuCapture={(e) => {
-         
-          if (!canEditHere) return
-          e.preventDefault()
-          setFolderCtx({ open: true, x: e.clientX, y: e.clientY })
-        }}
-      >
+      <div className="p-6 flex min-h-[70vh] flex-col">
         <ConfirmDialog />
         <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
         <div className="mb-8 flex flex-wrap items-center gap-2 gap-y-3">
@@ -2531,25 +2537,34 @@ const DocumentSection = () => {
             </Button>
           )}
         </div>
-        {subFolderEntries.length > 0 ? (
-          <FolderGrid
-            folders={subFolderEntries}
-            viewMode={viewMode}
-            sortField={sortField}
-            sortDir={sortDir}
-            onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
-            setViewMode={setViewMode}
-            folderHasFiles={folderHasFiles}
-            buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
-            onRenameFolder={openRenameFolder}
-            onDeleteFolder={handleDeleteFolderTree}
-            onMoveFolderInto={handleMoveFolderInto}
-          />
-        ) : (
-          <p className="text-muted-foreground">
-            Aucun sous-dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
-          </p>
-        )}
+        <div
+          className="flex-1"
+          onContextMenuCapture={(e) => {
+            if (!canEditHere) return
+            e.preventDefault()
+            setFolderCtx({ open: true, x: e.clientX, y: e.clientY })
+          }}
+        >
+          {subFolderEntries.length > 0 ? (
+            <FolderGrid
+              folders={subFolderEntries}
+              viewMode={viewMode}
+              sortField={sortField}
+              sortDir={sortDir}
+              onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
+              setViewMode={setViewMode}
+              folderHasFiles={folderHasFiles}
+              buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+              onRenameFolder={openRenameFolder}
+              onDeleteFolder={handleDeleteFolderTree}
+              onMoveFolderInto={handleMoveFolderInto}
+            />
+          ) : (
+            <p className="text-muted-foreground">
+              Aucun sous-dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
+            </p>
+          )}
+        </div>
 
         <FixedContextMenu
           open={folderCtx.open}
@@ -2622,29 +2637,31 @@ const DocumentSection = () => {
   ]
 
   return (
-    <div className="p-6">
+    <div className="p-6 flex min-h-[70vh] flex-col">
       <ConfirmDialog />
       <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
       <h1 className="mb-8 text-2xl font-semibold">{title}</h1>
-      {allFolderEntries.length > 0 ? (
-        <FolderGrid
-          folders={allFolderEntries}
-          viewMode={viewMode}
-          sortField={sortField}
-          sortDir={sortDir}
-          onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
-          setViewMode={setViewMode}
-          folderHasFiles={folderHasFiles}
-          buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
-          onRenameFolder={openRenameFolder}
-          onDeleteFolder={handleDeleteFolderTree}
-          onMoveFolderInto={handleMoveFolderInto}
-        />
-      ) : (
-        <p className="text-muted-foreground">
-          Aucun dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
-        </p>
-      )}
+      <div className="flex-1">
+        {allFolderEntries.length > 0 ? (
+          <FolderGrid
+            folders={allFolderEntries}
+            viewMode={viewMode}
+            sortField={sortField}
+            sortDir={sortDir}
+            onSortChange={(f, d) => { setSortField(f); setSortDir(d) }}
+            setViewMode={setViewMode}
+            folderHasFiles={folderHasFiles}
+            buildLink={(key) => `/dashboard/documents/${encodeURIComponent(key)}`}
+            onRenameFolder={openRenameFolder}
+            onDeleteFolder={handleDeleteFolderTree}
+            onMoveFolderInto={handleMoveFolderInto}
+          />
+        ) : (
+          <p className="text-muted-foreground">
+            Aucun dossier pour le moment. Les administrateurs peuvent en créer depuis le profil.
+          </p>
+        )}
+      </div>
       {/* Rename folder dialog (context menu) */}
       <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
         <DialogContent className="sm:max-w-md">
