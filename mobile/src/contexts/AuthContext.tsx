@@ -54,9 +54,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await storage.setToken(result.token);
       setTokenState(result.token);
       setUser(result.user);
-      // Get the FCM device token and register it on the server (non bloquant)
+      // Get the push token and register it on the server (best-effort).
+      // We also verify registration and retry once; this fixes cases where the first
+      // registration happens before network is fully ready or the token rotates.
       registerForPushNotificationsAsync()
-        .then((deviceToken) => api.registerPushToken(result.token, deviceToken))
+        .then(async (deviceToken) => {
+          await api.registerPushToken(result.token, deviceToken);
+          const status1 = await api.getPushTokenStatus(result.token);
+          if (status1.registered) return;
+          // Retry once after a short delay
+          await new Promise((r) => setTimeout(r, 1500));
+          await api.registerPushToken(result.token, deviceToken);
+        })
         .catch(() => {});
       return true;
     },
