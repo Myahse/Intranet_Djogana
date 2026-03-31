@@ -235,6 +235,8 @@ async function sendExpoPushNotifications(tokens, message) {
     title: message?.title,
     body: message?.body,
     data: message?.data || {},
+    // Needed so iOS action buttons / categories work for Expo pushes.
+    categoryId: message?.categoryId,
     sound: message?.sound || 'default',
     channelId: message?.channelId,
     priority: 'high',
@@ -3090,6 +3092,7 @@ app.post('/api/auth/device/request', async (req, res) => {
               body: `Code: ${code} — Approuver ou refuser`,
               channelId: 'approval_mixkit_v1',
               sound: 'mixkit_correct_answer_tone_2870',
+              categoryId: 'approval_request',
               data: {
                 requestId: String(requestId),
                 code: String(code),
@@ -3102,9 +3105,12 @@ app.post('/api/auth/device/request', async (req, res) => {
             if (!messaging) return
             for (const deviceToken of fcmTokens) {
               try {
-                // Data-only to let expo-notifications handle background behavior on Android.
                 const result = await messaging.send({
                   token: deviceToken,
+                  notification: {
+                    title: 'Nouvelle demande de connexion',
+                    body: `Code: ${code} — Approuver ou refuser`,
+                  },
                   data: {
                     title: 'Nouvelle demande de connexion',
                     body: `Code: ${code} — Approuver ou refuser`,
@@ -3114,7 +3120,13 @@ app.post('/api/auth/device/request', async (req, res) => {
                     channelId: 'approval_mixkit_v1',
                     sound: 'mixkit_correct_answer_tone_2870',
                   },
-                  android: { priority: 'high' },
+                  android: {
+                    priority: 'high',
+                    notification: {
+                      channelId: 'approval_mixkit_v1',
+                      sound: 'mixkit_correct_answer_tone_2870',
+                    },
+                  },
                   apns: {
                     payload: {
                       aps: {
@@ -4535,11 +4547,20 @@ app.post('/api/files', (req, res, next) => {
     // Extract APK icon if this is an APK file
     let iconUrl = null
     if (storedFileName.toLowerCase().endsWith('.apk')) {
-      const apkBufForIcon = dataForDb || fs.readFileSync(tmpPath)
-      const iconBuffer = extractApkIcon(apkBufForIcon)
-      if (iconBuffer) {
-        const cloudinaryFolder = `intranet/${directionCode}/${folder}`
-        iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
+      // Large APKs can cause high memory/CPU usage during ZIP parsing and may crash small hosts.
+      // Skip icon extraction for large APKs; the upload should still succeed.
+      const APK_ICON_MAX_BYTES = 25 * 1024 * 1024 // 25 MB
+      if (fileSize <= APK_ICON_MAX_BYTES) {
+        try {
+          const apkBufForIcon = dataForDb || fs.readFileSync(tmpPath)
+          const iconBuffer = extractApkIcon(apkBufForIcon)
+          if (iconBuffer) {
+            const cloudinaryFolder = `intranet/${directionCode}/${folder}`
+            iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
+          }
+        } catch (err) {
+          console.error('[apk-icon] Skipping icon extraction (error):', err?.message || err)
+        }
       }
     }
 
