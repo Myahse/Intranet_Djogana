@@ -4511,8 +4511,9 @@ app.post('/api/files', (req, res, next) => {
     if (mimeType.startsWith('image/')) resourceType = 'image'
     else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) resourceType = 'video'
 
-    // Cloudinary plan limits: image/raw = 20 MB, video = 2 GB
-    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : 20 * 1024 * 1024
+    // Allow Cloudinary uploads up to our MAX_FILE_SIZE for non-video too.
+    // This keeps large APK uploads fast (direct-to-Cloudinary) and avoids DB bytea fallback.
+    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : MAX_FILE_SIZE
     const fileSize = Number(req.file.size) || 0
     const useCloudinary = fileSize <= cloudinaryLimit
 
@@ -4714,8 +4715,12 @@ app.post('/api/files/sign', async (req, res) => {
     if (mime.startsWith('image/')) resourceType = 'image'
     else if (mime.startsWith('video/') || mime.startsWith('audio/')) resourceType = 'video'
 
-    // Cloudinary limits: image/raw = 20 MB, video = 2 GB
-    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : 20 * 1024 * 1024
+    // Prefer direct-to-Cloudinary (client-side chunked uploads) up to our MAX_FILE_SIZE.
+    // The previous 20MB limit forced large APKs into slow server multipart + DB storage.
+    const cloudinaryLimit =
+      resourceType === 'video'
+        ? 2000 * 1024 * 1024
+        : MAX_FILE_SIZE
     const fileSize = Number(size) || 0
 
     if (fileSize > cloudinaryLimit) {
