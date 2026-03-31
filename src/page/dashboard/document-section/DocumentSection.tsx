@@ -172,7 +172,12 @@ function formatName(name: string): string {
 }
 
 function normalizePathLikeName(raw: string): string {
-  return raw.replace(/\s*\/\s*/g, '::').replace(/:{3,}/g, '::').trim()
+  const v = raw.replace(/\s*\/\s*/g, '::').replace(/:{3,}/g, '::').trim()
+  return v
+    .replace(/^::+/, '')
+    .replace(/::+$/, '')
+    .replace(/:{3,}/g, '::')
+    .trim()
 }
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])

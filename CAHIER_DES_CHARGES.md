@@ -1,7 +1,7 @@
 # Cahier des charges — Intranet Djogana
 
-**Version :** 1.0  
-**Date :** 23 février 2025  
+**Version :** 1.1  
+**Date :** 27 mars 2026  
 **Projet :** Plateforme intranet de gestion documentaire et de collaboration
 
 ---
@@ -56,7 +56,11 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Connexion identifiant / mot de passe | Connexion via identifiant (ex. numéro de téléphone) et mot de passe | P0 |
 | Changement de mot de passe obligatoire | Obligation de changer le mot de passe à la première connexion | P0 |
 | Connexion par appareil | Demande de connexion depuis le web, approbation ou refus sur l’application mobile (flux type GitHub) | P0 |
-| Tokens de session | Tokens d’authentification pour la session, stockés côté client | P0 |
+| Tokens de session | JWT stocké côté client en `sessionStorage` (session navigateur) | P0 |
+| Expiration des tokens | Expiration serveur configurable (par défaut 15 minutes) | P0 |
+| Déconnexion par inactivité | Déconnexion automatique après 15 minutes sans interaction (configurable) | P0 |
+| Déconnexion au changement de focus (option) | Option de déconnexion immédiate si l’utilisateur quitte l’onglet/la fenêtre | P1 |
+| Modal “Session expirée” | Affichage d’un modal informant l’utilisateur lors d’une déconnexion automatique (inactivité / token expiré) | P1 |
 | Suspension de compte | L’administrateur peut suspendre un compte utilisateur | P0 |
 | Authentification biométrique (mobile) | Passkey / biométrie pour les actions rapides sur mobile | P1 |
 
@@ -64,7 +68,9 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 
 | Fonctionnalité | Description | Priorité |
 |----------------|-------------|----------|
-| Arborescence par directions | Dossiers organisés par direction avec sous-dossiers (notation `direction::sous-dossier`) | P0 |
+| Arborescence par directions | Dossiers organisés par direction avec sous-dossiers (notation interne `direction_id::dossier::sous-dossier`) | P0 |
+| Séparateur de niveaux (UX) | Affichage utilisateur avec “ / ”, converti en `::` en interne | P0 |
+| Fichier + dossier même nom | Un fichier et un dossier peuvent partager le même nom dans le même parent (comportement type explorateur) | P1 |
 | Types de fichiers supportés | PDF, Word, Excel, PowerPoint, images, vidéos, audio, APK, ZIP, RAR | P0 |
 | Upload de fichiers | Upload direct vers le stockage cloud, upload par parties pour fichiers volumineux (> 6 Mo) | P0 |
 | Liens (URLs) | Création de liens associés aux dossiers | P0 |
@@ -72,6 +78,8 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Prévisualisation | Prévisualisation Office via Microsoft Office Online Viewer | P1 |
 | Extraction d’icônes APK | Extraction automatique des icônes pour les fichiers APK | P2 |
 | Corbeille | Suppression logicielle (soft delete), restauration, suppression définitive | P0 |
+| Déplacement de dossiers | Déplacement d’un dossier (et de son sous-arbre) vers un autre dossier de la même direction | P0 |
+| Normalisation des chemins | Normalisation des chemins de dossiers côté API (conversion “ / ” → `::`, suppression des séparateurs de bord) | P0 |
 
 ### 3.3 Interface utilisateur — Section documents
 
@@ -164,6 +172,8 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | `/api/users` | GET | Utilisateurs |
 | `/api/roles` | GET/POST | Profils |
 | `/api/folders` | GET/POST | Dossiers |
+| `/api/folders/rename` | PATCH | Renommage d’un dossier (sous-arbre inclus) |
+| `/api/folders/move` | POST | Déplacement d’un dossier vers un autre (sous-arbre inclus) |
 | `/api/files` | GET/POST | Fichiers |
 | `/api/files/sign` | POST | Signature pour upload |
 | `/api/files/register` | POST | Enregistrement fichier |
@@ -188,6 +198,9 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 
 - Mots de passe hashés de manière sécurisée
 - Tokens d’authentification avec secret robuste
+- JWT avec expiration côté serveur (par défaut 15 minutes)
+- Déconnexion automatique par inactivité (par défaut 15 minutes)
+- Option de déconnexion immédiate au changement d’onglet/fenêtre (si activée)
 - Configuration des domaines autorisés
 - Connexion base de données sécurisée (SSL)
 
@@ -253,6 +266,9 @@ L’entreprise Djogana souhaite disposer d’une plateforme intranet centralisé
 | Base de données | Chaîne de connexion à la base de données | Oui |
 | Stockage fichiers | Identifiants du service de stockage cloud | Oui |
 | Notifications push | Identifiants du service de notifications | Oui (pour mobile) |
+| Expiration JWT | Durée d’expiration des tokens JWT (ex. `15m`) | Non (défaut : 15m) |
+| Inactivité (web) | Durée d’inactivité avant déconnexion (ms) | Non (défaut : 900000) |
+| Logout on blur (web) | Déconnexion immédiate si l’utilisateur quitte l’onglet/fenêtre | Non (défaut : false) |
 
 ---
 
