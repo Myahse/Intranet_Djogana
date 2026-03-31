@@ -3980,8 +3980,6 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
   )
   if (tokenRows.rows.length === 0) return
   try {
-    const messaging = getMessaging()
-    if (!messaging) return
     const expoTokens = []
     const fcmTokens = []
     for (const row of tokenRows.rows) {
@@ -4000,6 +3998,12 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
         sound: data?.sound,
         data: normalizedData,
       })
+    }
+
+    const messaging = fcmTokens.length > 0 ? getMessaging() : null
+    if (fcmTokens.length > 0 && !messaging) {
+      console.warn('[push] Firebase messaging unavailable; skipping FCM sends (Expo sends may still work).')
+      return
     }
 
     for (const deviceToken of fcmTokens) {

@@ -74,6 +74,9 @@ import { useConfirmDialog } from '@/components/ConfirmDialog'
 import { useStaggerChildren } from '@/hooks/useAnimations'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
+import { FixedContextMenu } from '@/page/dashboard/document-section/components/FixedContextMenu'
+import { FolderBreadcrumb } from '@/page/dashboard/document-section/components/FolderBreadcrumb'
+import { formatName, normalizePathLikeName } from '@/page/dashboard/document-section/utils'
 
 // ── View & Sort types ──
 type ViewMode = 'tiles' | 'list' | 'details'
@@ -164,82 +167,6 @@ function sortFolders(
     return sortDir === 'desc' ? -cmp : cmp
   })
   return sorted
-}
-
-/** Replace internal "::" separators with " / " for display */
-function formatName(name: string): string {
-  return name.replace(/::/g, ' / ')
-}
-
-function normalizePathLikeName(raw: string): string {
-  const v = raw.replace(/\s*\/\s*/g, '::').replace(/:{3,}/g, '::').trim()
-  return v
-    .replace(/^::+/, '')
-    .replace(/::+$/, '')
-    .replace(/:{3,}/g, '::')
-    .trim()
-}
-
-function FixedContextMenu({
-  open,
-  x,
-  y,
-  children,
-  onClose,
-}: {
-  open: boolean
-  x: number
-  y: number
-  children: ReactNode
-  onClose: () => void
-}) {
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    const onMouseDown = () => onClose()
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('mousedown', onMouseDown)
-    window.addEventListener('scroll', onMouseDown, true)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('mousedown', onMouseDown)
-      window.removeEventListener('scroll', onMouseDown, true)
-    }
-  }, [open, onClose])
-
-  if (!open) return null
-
-  // Keep menu near cursor while staying inside viewport.
-  // We don't measure the real menu size here, so we use a safe max size.
-  const MENU_W = 260
-  const MENU_H = 220
-  const OFFSET = 6
-  const MARGIN = 8
-
-  let left = x + OFFSET
-  let top = y + OFFSET
-
-  // Flip if it would overflow
-  if (left + MENU_W > window.innerWidth - MARGIN) left = x - OFFSET - MENU_W
-  if (top + MENU_H > window.innerHeight - MARGIN) top = y - OFFSET - MENU_H
-
-  // Clamp to viewport
-  left = Math.min(Math.max(MARGIN, left), window.innerWidth - MENU_W - MARGIN)
-  top = Math.min(Math.max(MARGIN, top), window.innerHeight - MENU_H - MARGIN)
-
-  return (
-    <div
-      className="fixed z-50"
-      style={{ left, top }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <div className="min-w-[220px] rounded-md border bg-popover p-1 shadow-md">
-        {children}
-      </div>
-    </div>
-  )
 }
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])
@@ -1468,6 +1395,18 @@ const DocumentSection = () => {
     savePrefs({ sortDir: dir })
   }, [savePrefs])
 
+ 
+  useEffect(() => {
+    if (!folderKey) return
+    const parsed = parseFolderKey(folderKey)
+    if (!parsed.direction_id) return
+    const normalizedName = normalizePathLikeName(parsed.name)
+    const normalizedKey = `${parsed.direction_id}::${normalizedName}`
+    if (normalizedKey !== folderKey) {
+      navigate(`/dashboard/documents/${encodeURIComponent(normalizedKey)}`, { replace: true })
+    }
+  }, [folderKey, navigate])
+
   // User can edit (delete/upload) in their own direction or granted directions
   const canEditFolder = (key: string) => {
     if (isAdmin) return true
@@ -1869,6 +1808,11 @@ const DocumentSection = () => {
           className="flex flex-col min-w-0 min-h-0"
         >
           <div className="flex flex-1 flex-col overflow-auto p-6">
+            {folderKey && (
+              <div className="mb-3">
+                <FolderBreadcrumb folderKey={folderKey} />
+              </div>
+            )}
             <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
                 <button
@@ -2587,6 +2531,9 @@ const DocumentSection = () => {
       <div className="p-6 flex min-h-[70vh] flex-col">
         <ConfirmDialog />
         <LoadingModal state={loading} onClose={() => setLoading(initialLoadingState)} />
+        <div className="mb-3">
+          <FolderBreadcrumb folderKey={folderKey} />
+        </div>
         <div className="mb-8 flex flex-wrap items-center gap-2 gap-y-3">
           <button
             type="button"
