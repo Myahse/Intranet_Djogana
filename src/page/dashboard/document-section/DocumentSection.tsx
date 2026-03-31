@@ -1145,6 +1145,11 @@ function FolderGrid({
         to={buildLink(f.key)}
         className={className}
         draggable={!!onMoveFolderInto && isManagedKey}
+        onContextMenuCapture={(e) => {
+          // Allow the folder tile context-menu (rename/delete/move) to open.
+          // Prevent the parent "background" context-menu (create/upload) from intercepting.
+          e.stopPropagation()
+        }}
         onDragStart={(e) => {
           if (!onMoveFolderInto || !isManagedKey) return
           e.dataTransfer.setData('text/plain', f.key)
@@ -2482,6 +2487,25 @@ const DocumentSection = () => {
           Boolean(f?.id && f.visibility === 'direction_only'),
       )
     const canEditHere = canEditFolder(folderKey)
+    const handleCreateSubfolderHereInGroup = async () => {
+      const raw = normalizePathLikeName(subfolderName)
+      if (!raw) { toast.error('Veuillez saisir un nom de sous-dossier'); return }
+      const parsed = parseFolderKey(folderKey)
+      if (!parsed.direction_id) { toast.error('Direction introuvable'); return }
+      const fullName = `${parsed.name}::${raw}`
+      setSubfolderOpen(false)
+      setLoading({ open: true, message: 'Création du sous-dossier…' })
+      try {
+        await addFolderMeta(fullName, parsed.direction_id, 'public')
+        setSubfolderName('')
+        setLoading((s) => ({ ...s, result: 'success', resultMessage: 'Sous-dossier créé' }))
+        toast.success('Sous-dossier créé')
+      } catch (err) {
+        console.error(err)
+        setLoading((s) => ({ ...s, result: 'error', resultMessage: 'Erreur lors de la création du sous-dossier' }))
+        toast.error(err instanceof Error ? err.message : 'Erreur lors de la création du sous-dossier')
+      }
+    }
 
     const handleSetGroupSubfoldersPublic = async () => {
       if (subfoldersDirectionOnly.length === 0) return
@@ -2594,6 +2618,35 @@ const DocumentSection = () => {
             Retour
           </button>
         </FixedContextMenu>
+
+        {/* Create subfolder dialog (right-click) */}
+        <Dialog open={subfolderOpen} onOpenChange={setSubfolderOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Créer un sous-dossier</DialogTitle>
+              <DialogDescription>
+                Entrez un nom (vous pouvez aussi utiliser “ / ” pour plusieurs niveaux).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="doc-subfolder-name-group">Nom</Label>
+                <Textarea
+                  id="doc-subfolder-name-group"
+                  value={subfolderName}
+                  onChange={(e) => setSubfolderName(e.target.value)}
+                  placeholder="Ex. Niveau 1 / Niveau 2"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSubfolderOpen(false)}>Annuler</Button>
+              <Button onClick={handleCreateSubfolderHereInGroup}>Créer</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Rename folder dialog (context menu) */}
         <Dialog open={renameFolderOpen} onOpenChange={setRenameFolderOpen}>
           <DialogContent className="sm:max-w-md">
