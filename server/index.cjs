@@ -4506,15 +4506,20 @@ app.post('/api/files', (req, res, next) => {
       [folderId, folder, directionId]
     )
 
-    // Determine Cloudinary resource_type from mime
     let resourceType = 'raw'
     if (mimeType.startsWith('image/')) resourceType = 'image'
     else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) resourceType = 'video'
 
-    // Allow Cloudinary uploads up to our MAX_FILE_SIZE for non-video too.
-    // This keeps large APK uploads fast (direct-to-Cloudinary) and avoids DB bytea fallback.
-    const cloudinaryLimit = resourceType === 'video' ? 2000 * 1024 * 1024 : MAX_FILE_SIZE
     const fileSize = Number(req.file.size) || 0
+    const isApkUpload = storedFileName.toLowerCase().endsWith('.apk')
+    if (isApkUpload && resourceType === 'raw' && fileSize > 20 * 1024 * 1024) {
+      // Upload large APKs as "video" to bypass common RAW plan limits (~20MB).
+      resourceType = 'video'
+    }
+
+    const cloudinaryLimit = resourceType === 'video'
+      ? 2000 * 1024 * 1024
+      : 20 * 1024 * 1024
     const useCloudinary = fileSize <= cloudinaryLimit
 
     let cloudinaryUrl = null
@@ -4709,22 +4714,27 @@ app.post('/api/files/sign', async (req, res) => {
     }
     const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
 
-    // Determine Cloudinary resource_type and size limits
+
     const mime = (mimeType || '').toLowerCase()
     let resourceType = 'raw'
     if (mime.startsWith('image/')) resourceType = 'image'
     else if (mime.startsWith('video/') || mime.startsWith('audio/')) resourceType = 'video'
 
-    // Prefer direct-to-Cloudinary (client-side chunked uploads) up to our MAX_FILE_SIZE.
-    // The previous 20MB limit forced large APKs into slow server multipart + DB storage.
-    const cloudinaryLimit =
-      resourceType === 'video'
-        ? 2000 * 1024 * 1024
-        : MAX_FILE_SIZE
+    
+    const isApkMime =
+      mime === 'application/vnd.android.package-archive' ||
+      mime === 'application/android-package-archive'
     const fileSize = Number(size) || 0
+    if (isApkMime && fileSize > 20 * 1024 * 1024) {
+      resourceType = 'video'
+    }
+
+    const cloudinaryLimit = resourceType === 'video'
+      ? 2000 * 1024 * 1024
+      : 20 * 1024 * 1024
 
     if (fileSize > cloudinaryLimit) {
-      // File too large for direct Cloudinary upload — tell client to use multipart fallback
+   
       return res.json({ use_direct: false, direction_code: directionCode })
     }
 
@@ -4759,11 +4769,7 @@ app.post('/api/files/sign', async (req, res) => {
   }
 })
 
-/**
- * POST /api/files/register
- * Registers file metadata in the database after a successful direct Cloudinary upload.
- * Body: { id, name, mime_type, size, folder, direction_id, identifiant, cloudinary_url, cloudinary_public_id, direction_code }
- */
+
 app.post('/api/files/register', async (req, res) => {
   try {
     const {
@@ -4798,7 +4804,7 @@ app.post('/api/files/register', async (req, res) => {
     const u = userRes.rows[0]
     const uploadedBy = u.id
 
-    // Check if user has access to upload to this direction
+ 
     const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
     if (!hasAccess) {
       return res.status(403).json({
@@ -4808,7 +4814,7 @@ app.post('/api/files/register', async (req, res) => {
 
     const code = (directionCode || 'DEF').toString().toUpperCase()
 
-    // Prefix file name with direction code (e.g. SUM_rapport.pdf)
+ 
     let baseName = (name || 'document').replace(/^.*[/\\]/, '').trim() || 'document'
     if (baseName.toUpperCase().startsWith(code + '_')) {
       baseName = baseName.slice(code.length + 1)
