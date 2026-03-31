@@ -99,20 +99,13 @@ function DashboardLayout() {
     // (e.g. fallback-from-files → later /api/folders success). We wait a short
     // window before we start counting deltas as "new creations".
     if (!badgeDetectionReadyRef.current) {
-      const current = new Set(folderOptions.map((f) => f.value))
-      if (seenFolderValuesRef.current.size === 0) {
-        seenFolderValuesRef.current = current
-      } else {
-        // Merge any late arrivals into the baseline without counting them.
-        const merged = new Set(seenFolderValuesRef.current)
-        for (const v of current) merged.add(v)
-        seenFolderValuesRef.current = merged
-      }
-
+      // Keep resetting the baseline while the initial lists are still changing.
+      // Once things are quiet for a short window, we "arm" the detector.
+      seenFolderValuesRef.current = new Set(folderOptions.map((f) => f.value))
       if (badgeDetectionTimerRef.current) clearTimeout(badgeDetectionTimerRef.current)
       badgeDetectionTimerRef.current = setTimeout(() => {
         badgeDetectionReadyRef.current = true
-      }, 1500)
+      }, 1200)
       return
     }
 
@@ -140,34 +133,6 @@ function DashboardLayout() {
 
     seenFolderValuesRef.current = next
   }, [folderOptions])
-
-  useEffect(() => {
-    const bump = (d: any) => {
-      const dirId = normDirId(d?.directionId || d?.direction_id)
-      if (!dirId) return
-      setNewFoldersByDirection((prev) => ({ ...prev, [dirId]: (prev[dirId] || 0) + 1 }))
-    }
-
-    const onAny = (e: Event) => {
-      const d = (e as CustomEvent | undefined)?.detail as any
-      if (!d) return
-      // Prefer ws:data_changed with resource='folders'
-      if (d.resource === 'folders' && d.action === 'created') return bump(d)
-      // Also accept direct ws:folders events for robustness
-      if (d.action === 'created' && (d.resource === 'folders' || d.type === 'data_changed' || d.directionId || d.direction_id)) {
-        // If it doesn't clearly identify a folder event, ignore
-        if (d.resource && d.resource !== 'folders') return
-        return bump(d)
-      }
-    }
-
-    window.addEventListener('ws:data_changed', onAny as EventListener)
-    window.addEventListener('ws:folders', onAny as EventListener)
-    return () => {
-      window.removeEventListener('ws:data_changed', onAny as EventListener)
-      window.removeEventListener('ws:folders', onAny as EventListener)
-    }
-  }, [])
 
   // Clear badge when user opens that direction (or any folder within it)
   useEffect(() => {
