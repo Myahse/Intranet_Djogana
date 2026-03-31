@@ -4822,6 +4822,8 @@ app.post('/api/files/register', async (req, res) => {
       ? await getIdentifiantsToNotifyForFolder(folderIdForNotify, identifiant)
       : await getIdentifiantsToNotifyForDirection(directionId, identifiant)
     if (toNotify.length > 0) {
+      const dirRow = await pool.query('SELECT name FROM directions WHERE id = $1 LIMIT 1', [directionId])
+      const directionName = (dirRow.rows[0]?.name || '').toString().trim() || 'Direction'
       const uploaderRow = await pool.query(
         'SELECT name, prenoms FROM users WHERE identifiant = $1 LIMIT 1',
         [identifiant]
@@ -4829,10 +4831,10 @@ app.post('/api/files/register', async (req, res) => {
       const uploaderName = uploaderRow.rows[0]
         ? [uploaderRow.rows[0].name, uploaderRow.rows[0].prenoms].filter(Boolean).join(' ').trim() || identifiant
         : identifiant
-      const bodyText = `${storedFileName} — déposé par ${uploaderName}`
+      const bodyText = `${directionName} a ajouté un fichier "${storedFileName}"`
       sendPushToIdentifiants(
         toNotify,
-        'Nouveau document',
+        directionName,
         bodyText,
         {
           type: 'document_uploaded',
@@ -4840,6 +4842,7 @@ app.post('/api/files/register', async (req, res) => {
           fileName: storedFileName,
           uploaderName,
           directionId,
+          direction_name: directionName,
           folder: folderName,
           channelId: 'approval_mixkit_v1',
           sound: 'mixkit_correct_answer_tone_2870',
@@ -5067,21 +5070,26 @@ app.post('/api/folders', async (req, res) => {
     broadcastDataChange('folders', 'created', { id, directionId })
     // Notify all users on the platform (mobile app)
     getIdentifiantsToNotifyAll(identifiant || null)
-      .then((idents) =>
-        sendPushToIdentifiants(
+      .then(async (idents) => {
+        const dirRow = await pool.query('SELECT name FROM directions WHERE id = $1 LIMIT 1', [directionId])
+        const directionName = (dirRow.rows[0]?.name || '').toString().trim() || 'Direction'
+        const folderDisplay = name.includes('::') ? name.split('::').slice(-1)[0] : name
+        return sendPushToIdentifiants(
           idents,
-          'Nouveau dossier',
-          `Un nouveau dossier a été créé : ${name}`,
+          directionName,
+          `${directionName} a ajouté un dossier "${folderDisplay}"`,
           {
             type: 'folder_created',
             folder_name: name,
+            folder_display_name: folderDisplay,
             direction_id: directionId,
+            direction_name: directionName,
             channelId: 'approval_mixkit_v1',
             sound: 'mixkit_correct_answer_tone_2870',
             apnsSound: 'mixkit_correct_answer_tone_2870.wav',
           }
         )
-      )
+      })
       .catch((err) => console.error('[push] folder_created', err))
     return res.status(201).json({ id, name, direction_id: directionId, visibility })
   } catch (err) {

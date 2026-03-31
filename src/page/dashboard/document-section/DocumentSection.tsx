@@ -180,6 +180,54 @@ function normalizePathLikeName(raw: string): string {
     .trim()
 }
 
+function FixedContextMenu({
+  open,
+  x,
+  y,
+  children,
+  onClose,
+}: {
+  open: boolean
+  x: number
+  y: number
+  children: ReactNode
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    const onMouseDown = () => onClose()
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('scroll', onMouseDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('scroll', onMouseDown, true)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  // Keep menu inside viewport
+  const left = Math.min(Math.max(8, x), window.innerWidth - 240)
+  const top = Math.min(Math.max(8, y), window.innerHeight - 240)
+
+  return (
+    <div
+      className="fixed z-50"
+      style={{ left, top }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="min-w-[220px] rounded-md border bg-popover p-1 shadow-md">
+        {children}
+      </div>
+    </div>
+  )
+}
+
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'])
 
 function isImageFile(fileName: string): boolean {
@@ -1284,6 +1332,7 @@ const DocumentSection = () => {
   const [linkLabel, setLinkLabel] = useState('')
   const [subfolderOpen, setSubfolderOpen] = useState(false)
   const [subfolderName, setSubfolderName] = useState('')
+  const [folderCtx, setFolderCtx] = useState<{ open: boolean; x: number; y: number }>({ open: false, x: 0, y: 0 })
   const filesGridRef = useRef<HTMLDivElement>(null)
   useStaggerChildren(filesGridRef, '> *', [folderKey, directionId, pathname])
 
@@ -1942,11 +1991,15 @@ const DocumentSection = () => {
               </div>
             )}
 
-            <ContextMenu>
-              <ContextMenuTrigger asChild>
-                <div
-                  className="flex-1 min-h-[240px]"
-                >
+            <div
+              className="flex-1 min-h-[240px]"
+              onContextMenuCapture={(e) => {
+                // Ensure right-click actions are available even when clicking on file/link rows/cards.
+                if (!canEdit) return
+                e.preventDefault()
+                setFolderCtx({ open: true, x: e.clientX, y: e.clientY })
+              }}
+            >
                   {(files.length > 0 || links.length > 0) ? (
               <>
                 {/* Tiles view */}
@@ -2123,32 +2176,52 @@ const DocumentSection = () => {
                 Aucun fichier ni lien dans ce dossier.{canEdit ? ' Vous pouvez en ajouter via le bouton + dans la barre latérale.' : ' Consultation uniquement (autre direction).'}
               </p>
                   )}
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                {canEdit && (
-                  <>
-                    <ContextMenuItem onSelect={() => setUploadOpen(true)}>
-                      <Upload className="size-4" />
-                      Uploader un fichier
-                    </ContextMenuItem>
-                    <ContextMenuItem onSelect={() => setLinkOpen(true)}>
-                      <ExternalLink className="size-4" />
-                      Ajouter un lien
-                    </ContextMenuItem>
-                    <ContextMenuItem onSelect={() => setSubfolderOpen(true)}>
-                      <FolderPlus className="size-4" />
-                      Créer un sous-dossier ici
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                  </>
-                )}
-                <ContextMenuItem onSelect={() => navigate(-1)}>
-                  <ChevronLeft className="size-4" />
-                  Retour
-                </ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
+            </div>
+
+            <FixedContextMenu
+              open={folderCtx.open}
+              x={folderCtx.x}
+              y={folderCtx.y}
+              onClose={() => setFolderCtx((s) => ({ ...s, open: false }))}
+            >
+              {canEdit && (
+                <>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                    onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setUploadOpen(true) }}
+                  >
+                    <Upload className="size-4 text-muted-foreground" />
+                    Uploader un fichier
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                    onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setLinkOpen(true) }}
+                  >
+                    <ExternalLink className="size-4 text-muted-foreground" />
+                    Ajouter un lien
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                    onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); setSubfolderOpen(true) }}
+                  >
+                    <FolderPlus className="size-4 text-muted-foreground" />
+                    Créer un sous-dossier ici
+                  </button>
+                  <div className="bg-border -mx-1 my-1 h-px" />
+                </>
+              )}
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                onClick={() => { setFolderCtx((s) => ({ ...s, open: false })); navigate(-1) }}
+              >
+                <ChevronLeft className="size-4 text-muted-foreground" />
+                Retour
+              </button>
+            </FixedContextMenu>
           </div>
         </ResizablePanel>
         {selectedFile && (

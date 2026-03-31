@@ -12,6 +12,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -83,6 +84,41 @@ function DashboardLayout() {
   const isDashboardHome = location.pathname === '/dashboard' || location.pathname === '/dashboard/'
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
   const isLivePage = location.pathname === '/dashboard/live'
+
+  // ── New folders badge per direction (WS-driven) ──
+  const [newFoldersByDirection, setNewFoldersByDirection] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    const onFoldersChanged = (e: Event) => {
+      const d = (e as CustomEvent | undefined)?.detail as any
+      if (!d || d.resource !== 'folders') return
+      if (d.action !== 'created') return
+      const dirId = normDirId(d.directionId || d.direction_id)
+      if (!dirId) return
+      setNewFoldersByDirection((prev) => ({ ...prev, [dirId]: (prev[dirId] || 0) + 1 }))
+    }
+    window.addEventListener('ws:data_changed', onFoldersChanged as EventListener)
+    return () => window.removeEventListener('ws:data_changed', onFoldersChanged as EventListener)
+  }, [])
+
+  // Clear badge when user opens that direction (or any folder within it)
+  useEffect(() => {
+    const path = location.pathname || ''
+    let dirId = ''
+    if (path.startsWith('/dashboard/direction/')) {
+      dirId = normDirId(decodeURIComponent(path.replace('/dashboard/direction/', '').split('/')[0] || ''))
+    } else if (path.startsWith('/dashboard/documents/')) {
+      const key = decodeURIComponent(path.replace('/dashboard/documents/', ''))
+      dirId = normDirId(parseFolderKey(key).direction_id)
+    }
+    if (!dirId) return
+    setNewFoldersByDirection((prev) => {
+      if (!prev[dirId]) return prev
+      const next = { ...prev }
+      delete next[dirId]
+      return next
+    })
+  }, [location.pathname])
 
   // ── Silent presence tracking: report current page to server via WebSocket ──
   useEffect(() => {
@@ -398,6 +434,7 @@ function DashboardLayout() {
               {filteredDirections.map((dir) => {
                 const dirKey = dir.directionId
                 const isDirActive = location.pathname === `/dashboard/direction/${encodeURIComponent(dirKey)}`
+                const badgeCount = newFoldersByDirection[normDirId(dirKey)] ?? 0
                 const dirHasActive = isDirActive || [
                   ...dir.rootFolders,
                   ...Object.values(dir.groupedFolders).flatMap((g) => g.subfolders),
@@ -413,11 +450,24 @@ function DashboardLayout() {
                             isActive={isDirActive}
                             onClick={() => {
                               setOpenDirections((prev) => ({ ...prev, [dirKey]: !isDirOpen }))
+                              // Mark as seen for this direction
+                              setNewFoldersByDirection((prev) => {
+                                const k = normDirId(dirKey)
+                                if (!k || !prev[k]) return prev
+                                const next = { ...prev }
+                                delete next[k]
+                                return next
+                              })
                               navigate(`/dashboard/direction/${encodeURIComponent(dirKey)}`)
                             }}
                           >
                             <Building2 className="size-4" />
                             <span className="truncate">{dir.directionName}</span>
+                            {badgeCount > 0 ? (
+                              <SidebarMenuBadge className="bg-primary/15 text-primary">
+                                {badgeCount}
+                              </SidebarMenuBadge>
+                            ) : null}
                             {isDirOpen ? <ChevronDown className="size-3 ml-auto group-data-[collapsible=icon]:hidden" /> : <ChevronRight className="size-3 ml-auto group-data-[collapsible=icon]:hidden" />}
                           </SidebarMenuButton>
                         </SidebarMenuItem>
