@@ -639,17 +639,21 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error ?? 'Échec de la création du dossier')
       }
-
-      const folderKey = `${directionId}::${name}`
+      const created = (await res.json().catch(() => ({}))) as { id?: string; name?: string; direction_id?: string }
+      const normalizedName = (created?.name || name).trim()
+      const folderKey = `${directionId}::${normalizedName}`
       setFolderList((prev) => {
         if (prev.some((f) => f.value === folderKey)) return prev
         return [
           ...prev,
-          { value: folderKey, label: name, direction_id: directionId, direction_name: '', name },
+          { value: folderKey, label: normalizedName, direction_id: directionId, direction_name: '', name: normalizedName, id: created?.id },
         ]
       })
+
+      // Ensure UI reflects server truth (important for nested paths and normalization).
+      try { await loadAll() } catch { /* ignore */ }
     },
-    [user?.identifiant]
+    [user?.identifiant, loadAll]
   )
 
   const removeFile = useCallback(

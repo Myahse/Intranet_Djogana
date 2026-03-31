@@ -3982,18 +3982,46 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
   try {
     const messaging = getMessaging()
     if (!messaging) return
+    const expoTokens = []
+    const fcmTokens = []
     for (const row of tokenRows.rows) {
-      const deviceToken = row.fcm_token || row.expo_push_token
-      if (!deviceToken) continue
+      const expo = typeof row.expo_push_token === 'string' ? row.expo_push_token.trim() : ''
+      const fcm = typeof row.fcm_token === 'string' ? row.fcm_token.trim() : ''
+      if (isExpoPushToken(expo)) expoTokens.push(expo)
+      else if (isLikelyFcmToken(fcm)) fcmTokens.push(fcm)
+      else if (isLikelyFcmToken(expo)) fcmTokens.push(expo)
+    }
+
+    if (expoTokens.length > 0) {
+      await sendExpoPushNotifications(expoTokens, {
+        title: String(title),
+        body: String(body),
+        channelId: data?.channelId,
+        sound: data?.sound,
+        data: normalizedData,
+      })
+    }
+
+    for (const deviceToken of fcmTokens) {
       try {
         await messaging.send({
           token: deviceToken,
+          notification: {
+            title: String(title),
+            body: String(body),
+          },
           data: {
             title: String(title),
             body: String(body),
             ...normalizedData,
           },
-          android: { priority: 'high' },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: typeof data?.channelId === 'string' ? data.channelId : undefined,
+              sound: androidSound || undefined,
+            },
+          },
           apns: {
             payload: {
               aps: {
@@ -4012,8 +4040,8 @@ async function sendPushToIdentifiants(identifiants, title, body, data = {}) {
         ) {
           await pool.query(
             'DELETE FROM push_tokens WHERE user_identifiant = $1 AND (fcm_token = $2 OR expo_push_token = $2)',
-            [row.user_identifiant, deviceToken]
-          )
+            [tokenRows.rows.find((r) => r.fcm_token === deviceToken || r.expo_push_token === deviceToken)?.user_identifiant, deviceToken]
+          ).catch(() => {})
         }
       }
     }

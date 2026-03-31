@@ -85,20 +85,35 @@ function DashboardLayout() {
   const isAdminPage = location.pathname === '/admin' || location.pathname === '/dashboard/stats'
   const isLivePage = location.pathname === '/dashboard/live'
 
-  // ── New folders badge per direction (WS-driven) ──
+
   const [newFoldersByDirection, setNewFoldersByDirection] = useState<Record<string, number>>({})
 
   useEffect(() => {
-    const onFoldersChanged = (e: Event) => {
-      const d = (e as CustomEvent | undefined)?.detail as any
-      if (!d || d.resource !== 'folders') return
-      if (d.action !== 'created') return
-      const dirId = normDirId(d.directionId || d.direction_id)
+    const bump = (d: any) => {
+      const dirId = normDirId(d?.directionId || d?.direction_id)
       if (!dirId) return
       setNewFoldersByDirection((prev) => ({ ...prev, [dirId]: (prev[dirId] || 0) + 1 }))
     }
-    window.addEventListener('ws:data_changed', onFoldersChanged as EventListener)
-    return () => window.removeEventListener('ws:data_changed', onFoldersChanged as EventListener)
+
+    const onAny = (e: Event) => {
+      const d = (e as CustomEvent | undefined)?.detail as any
+      if (!d) return
+      // Prefer ws:data_changed with resource='folders'
+      if (d.resource === 'folders' && d.action === 'created') return bump(d)
+      // Also accept direct ws:folders events for robustness
+      if (d.action === 'created' && (d.resource === 'folders' || d.type === 'data_changed' || d.directionId || d.direction_id)) {
+        // If it doesn't clearly identify a folder event, ignore
+        if (d.resource && d.resource !== 'folders') return
+        return bump(d)
+      }
+    }
+
+    window.addEventListener('ws:data_changed', onAny as EventListener)
+    window.addEventListener('ws:folders', onAny as EventListener)
+    return () => {
+      window.removeEventListener('ws:data_changed', onAny as EventListener)
+      window.removeEventListener('ws:folders', onAny as EventListener)
+    }
   }, [])
 
   // Clear badge when user opens that direction (or any folder within it)
