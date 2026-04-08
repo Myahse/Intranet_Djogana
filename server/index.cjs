@@ -50,8 +50,16 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 })
 if (!process.env.CLOUDINARY_CLOUD_NAME) {
-  console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME not set. File uploads will fail.')
+  console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME is not set. File uploads will fail.')
 }
+
+/**
+ * Cloudinary rejects uploads above this size on many plans (often 20MB for raw *and* video).
+ * Files larger than this use POST /api/files (multipart) and are stored in DB bytea instead.
+ * Override with CLOUDINARY_MAX_UPLOAD_MB if your plan allows larger direct uploads.
+ */
+const CLOUDINARY_MAX_UPLOAD_BYTES =
+  Math.max(1, Number(process.env.CLOUDINARY_MAX_UPLOAD_MB || 20)) * 1024 * 1024
 
 // ---------- APK Icon Extraction ----------
 /**
@@ -4511,16 +4519,7 @@ app.post('/api/files', (req, res, next) => {
     else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) resourceType = 'video'
 
     const fileSize = Number(req.file.size) || 0
-    const isApkUpload = storedFileName.toLowerCase().endsWith('.apk')
-    if (isApkUpload && resourceType === 'raw' && fileSize > 20 * 1024 * 1024) {
-      // Upload large APKs as "video" to bypass common RAW plan limits (~20MB).
-      resourceType = 'video'
-    }
-
-    const cloudinaryLimit = resourceType === 'video'
-      ? 2000 * 1024 * 1024
-      : 20 * 1024 * 1024
-    const useCloudinary = fileSize <= cloudinaryLimit
+    const useCloudinary = fileSize <= CLOUDINARY_MAX_UPLOAD_BYTES
 
     let cloudinaryUrl = null
     let cloudinaryPublicId = null
@@ -4665,18 +4664,10 @@ app.post('/api/files', (req, res, next) => {
   }
 })
 
-// ---------- Direct-to-Cloudinary upload (sign + register) ----------
 
-/**
- * POST /api/files/sign
- * Returns a Cloudinary upload signature so the client can upload directly to Cloudinary.
- * If the file exceeds Cloudinary limits for its resource type, returns { use_direct: false }
- * so the client falls back to the multipart POST /api/files endpoint.
- * Body: { folder, direction_id, identifiant, mime_type, size }
- */
 app.post('/api/files/sign', async (req, res) => {
   try {
-    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size, file_name: fileName } = req.body || {}
+    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size } = req.body || {}
 
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
@@ -4714,31 +4705,15 @@ app.post('/api/files/sign', async (req, res) => {
     }
     const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
 
+    const fileSize = Number(size) || 0
+    if (fileSize > CLOUDINARY_MAX_UPLOAD_BYTES) {
+      return res.json({ use_direct: false, direction_code: directionCode })
+    }
 
     const mime = (mimeType || '').toLowerCase()
     let resourceType = 'raw'
     if (mime.startsWith('image/')) resourceType = 'image'
     else if (mime.startsWith('video/') || mime.startsWith('audio/')) resourceType = 'video'
-
-    
-    const isApkMime =
-      mime === 'application/vnd.android.package-archive' ||
-      mime === 'application/android-package-archive'
-    const isApkByName =
-      typeof fileName === 'string' && fileName.trim().toLowerCase().endsWith('.apk')
-    const fileSize = Number(size) || 0
-    if ((isApkMime || isApkByName) && fileSize > 20 * 1024 * 1024) {
-      resourceType = 'video'
-    }
-
-    const cloudinaryLimit = resourceType === 'video'
-      ? 2000 * 1024 * 1024
-      : 20 * 1024 * 1024
-
-    if (fileSize > cloudinaryLimit) {
-   
-      return res.json({ use_direct: false, direction_code: directionCode })
-    }
 
     const id = uuidv4()
     const cloudinaryFolder = `intranet/${directionCode}/${folder || 'default'}`
@@ -4812,6 +4787,48 @@ app.post('/api/files/register', async (req, res) => {
       return res.status(403).json({
         error: 'Vous ne pouvez déposer des fichiers que dans votre direction ou dans les directions pour lesquelles vous avez reçu un accès.',
       })
+    }
+
+    // Idempotency: clients can retry /api/files/register (network / app lifecycle).
+    // If the file is already registered, do NOT re-send notifications.
+    const existingById = await pool.query(
+      'SELECT id, name, size, folder, direction_id, cloudinary_url, icon_url FROM files WHERE id = $1 LIMIT 1',
+      [id]
+    )
+    if (existingById.rows.length > 0) {
+      const row = existingById.rows[0]
+      const publicUrl = row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`
+      return res.json({
+        id: row.id,
+        name: row.name,
+        size: Number(row.size) || 0,
+        url: publicUrl,
+        view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+        direction_id: row.direction_id,
+        icon_url: row.icon_url || undefined,
+        deduped: true,
+      })
+    }
+
+    if (cloudinaryPublicId) {
+      const existingByPublicId = await pool.query(
+        'SELECT id, name, size, folder, direction_id, cloudinary_url, icon_url FROM files WHERE cloudinary_public_id = $1 LIMIT 1',
+        [cloudinaryPublicId]
+      )
+      if (existingByPublicId.rows.length > 0) {
+        const row = existingByPublicId.rows[0]
+        const publicUrl = row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`
+        return res.json({
+          id: row.id,
+          name: row.name,
+          size: Number(row.size) || 0,
+          url: publicUrl,
+          view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+          direction_id: row.direction_id,
+          icon_url: row.icon_url || undefined,
+          deduped: true,
+        })
+      }
     }
 
     const code = (directionCode || 'DEF').toString().toUpperCase()
