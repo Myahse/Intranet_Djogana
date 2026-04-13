@@ -276,13 +276,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {}
   }, [])
 
-  // Fetch fresh permissions / user data from the server without re-login
+
   const refreshPermissions = useCallback(async () => {
     try {
       const token = sessionStorage.getItem(AUTH_TOKEN_KEY)
       if (!token) {
-        // If no token but we have a stored user, clear it (stale session)
-        // But don't clear if user was just set (within last 5 seconds) - might be race condition
+    
         const timeSinceLogin = Date.now() - lastLoginTimeRef.current
         if (timeSinceLogin > 5000) {
           const storedUser = loadStoredUser()
@@ -297,8 +296,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
-        // 401 = invalid token, 403 = suspended → clear session so user can re-login
-        // But don't clear if user was just set (within last 5 seconds) - might be race condition
+       
         const timeSinceLogin = Date.now() - lastLoginTimeRef.current
         if ((res.status === 401 || res.status === 403) && timeSinceLogin > 5000) {
           if (res.status === 401) {
@@ -312,7 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try { sessionStorage.removeItem(AUTH_TOKEN_KEY) } catch { /* ignore */ }
           try { sessionStorage.removeItem(AUTH_STORAGE_KEY) } catch { /* ignore */ }
         }
-        // For other errors (500, network issues, etc.), keep existing session
+      
         return
       }
       const data = (await res.json()) as {
@@ -636,6 +634,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoggedIn = !!user
   const isLoggedInRef = useRef(isLoggedIn)
   isLoggedInRef.current = isLoggedIn
+
+  // Sliding JWT: if the server refreshes the token, persist it automatically.
+  // We hook fetch globally so every request (across all files) benefits.
+  useEffect(() => {
+    if (!isLoggedIn) return
+    const originalFetch = window.fetch.bind(window)
+
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await originalFetch(input, init)
+      try {
+        const refreshed = res.headers.get('X-Auth-Token')
+        if (refreshed) {
+          sessionStorage.setItem(AUTH_TOKEN_KEY, refreshed)
+        }
+      } catch { /* ignore */ }
+      return res
+    }) as typeof window.fetch
+
+    return () => {
+      window.fetch = originalFetch
+    }
+  }, [isLoggedIn])
 
   // Auto-logout after inactivity (default 15 min)
   useEffect(() => {
