@@ -15,7 +15,7 @@ import {
   FileText, Download, Trash2, X, Pencil, ExternalLink, ChevronLeft,
   LayoutGrid, List, AlignJustify, ArrowUpDown, ArrowUpAZ, ArrowDownAZ, ArrowUp,
   Calendar, HardDrive, FileType,
-  Check, Upload, Globe, FolderPlus,
+  Check, Upload, Globe, FolderPlus, Video,
 } from 'lucide-react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAuth } from '@/contexts/AuthContext'
@@ -218,11 +218,30 @@ function isTextFile(fileName: string): boolean {
   return ext === 'txt'
 }
 
+const VIDEO_PLAYABLE_EXTENSIONS = new Set(['mp4', 'webm'])
+
+function isVideoPlayableFile(fileName: string): boolean {
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  return !!ext && VIDEO_PLAYABLE_EXTENSIONS.has(ext)
+}
+
+/** Folder path (after direction id) contains a segment named "MP4", e.g. `Reports::MP4`. */
+function isMp4PreviewFolder(folderKey: string): boolean {
+  const { name } = parseFolderKey(folderKey)
+  if (!name) return false
+  return name.split('::').some((seg) => seg.trim().toLowerCase() === 'mp4')
+}
+
+function canInlinePreviewVideo(file: DocumentItem): boolean {
+  return !!file.url && isVideoPlayableFile(file.name) && isMp4PreviewFolder(file.folderKey)
+}
+
 function FilePreviewContent({
   file,
   formatSize,
   canPreviewPdf,
   canPreviewImage,
+  canPreviewVideo,
   canPreviewOffice,
   canPreviewText,
   className,
@@ -231,6 +250,7 @@ function FilePreviewContent({
   formatSize: (bytes: number) => string
   canPreviewPdf: boolean
   canPreviewImage: boolean
+  canPreviewVideo: boolean
   canPreviewOffice: boolean
   canPreviewText: boolean
   className?: string
@@ -273,6 +293,17 @@ function FilePreviewContent({
           alt={file.name}
           className="w-full h-full min-h-[min(70vh,500px)] object-contain bg-muted"
         />
+      ) : canPreviewVideo ? (
+        <div className="flex w-full min-h-[min(70vh,500px)] items-center justify-center bg-black p-2">
+          <video
+            src={file.url}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-[min(70vh,80vh)] w-full max-w-full"
+            title={file.name}
+          />
+        </div>
       ) : canPreviewOffice ? (
         <iframe
           src={isExcelFile(file.name)
@@ -387,6 +418,7 @@ function FileCard({
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
+  const canPreviewVideo = canInlinePreviewVideo(file)
   const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
   const canPreviewText = isTextFile(file.name) && !!file.url
 
@@ -486,6 +518,10 @@ function FileCard({
                 alt=""
                 className="h-24 w-24 sm:h-28 sm:w-28 rounded-md border bg-muted object-cover"
               />
+            ) : canPreviewVideo ? (
+              <div className="flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-md border bg-muted">
+                <Video className="size-12 text-muted-foreground" aria-hidden />
+              </div>
             ) : iconSrc ? (
               <img
                 src={iconSrc}
@@ -510,6 +546,7 @@ function FileCard({
             formatSize={formatSize}
             canPreviewPdf={canPreviewPdf}
             canPreviewImage={isImage}
+            canPreviewVideo={canPreviewVideo}
             canPreviewOffice={canPreviewOffice}
             canPreviewText={canPreviewText}
             className="w-full h-[min(70vh,500px)]"
@@ -761,6 +798,7 @@ function FileListRow({
   const iconSrc = getFileIconSrc(file.name)
   const isImage = isImageFile(file.name) && !!file.url
   const canPreviewPdf = isPdf(file.name) && !!file.url
+  const canPreviewVideo = canInlinePreviewVideo(file)
   const canPreviewOffice = isOfficeDocPreviewable(file.name) && !!file.url
   const canPreviewText = isTextFile(file.name) && !!file.url
   const ext = getFileExtension(file.name).toUpperCase() || 'FILE'
@@ -819,6 +857,10 @@ function FileListRow({
                 <img src={file.icon_url} alt="" className="w-8 h-8 rounded object-cover" />
               ) : isImage ? (
                 <img src={file.url} alt="" className="w-8 h-8 rounded object-cover" />
+              ) : canPreviewVideo ? (
+                <div className="flex h-8 w-8 items-center justify-center rounded bg-muted">
+                  <Video className="size-5 text-muted-foreground" aria-hidden />
+                </div>
               ) : iconSrc ? (
                 <img src={iconSrc} alt="" className="w-8 h-auto object-contain" />
               ) : (
@@ -899,6 +941,7 @@ function FileListRow({
             formatSize={fmtSize}
             canPreviewPdf={canPreviewPdf}
             canPreviewImage={isImage}
+            canPreviewVideo={canPreviewVideo}
             canPreviewOffice={canPreviewOffice}
             canPreviewText={canPreviewText}
             className="w-full h-[min(60vh,400px)]"
@@ -2272,6 +2315,7 @@ const DocumentSection = () => {
                   formatSize={formatSize}
                   canPreviewPdf={isPdf(selectedFile.name) && !!selectedFile.url}
                   canPreviewImage={isImageFile(selectedFile.name) && !!selectedFile.url}
+                  canPreviewVideo={canInlinePreviewVideo(selectedFile)}
                   canPreviewOffice={
                     isOfficeDocPreviewable(selectedFile.name) && !!selectedFile.url
                   }

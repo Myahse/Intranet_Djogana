@@ -326,6 +326,8 @@ app.use(
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Identifiant'],
+    // Allow the browser to read refreshed JWT from response headers
+    exposedHeaders: ['X-Auth-Token'],
   })
 )
 app.use(express.json())
@@ -1194,6 +1196,11 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Authentification requise.' })
   }
   req.authIdentifiant = identifiant
+  // Sliding session: refresh JWT on each authenticated request.
+  // This turns a fixed 15m expiry into "15 minutes since last activity".
+  try {
+    res.setHeader('X-Auth-Token', signToken(identifiant))
+  } catch (_) { /* ignore */ }
   next()
 }
 
