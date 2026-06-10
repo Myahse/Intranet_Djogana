@@ -17,7 +17,7 @@
       "android": { "buildType": "apk" },
       "ios": { "simulator": false },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.ci"
       }
     },
     "production": {
@@ -26,7 +26,7 @@
       "android": { "buildType": "app-bundle" },
       "ios": {},
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://intranet-djogana.ci"
       }
     }
   },

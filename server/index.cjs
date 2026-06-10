@@ -301,7 +301,6 @@ const CORS_ORIGINS = (() => {
   const defaults = [
     'https://www.intranet-djogana.ci',
     'https://intranet-djogana.ci',
-    'https://intranet-djogana.onrender.com',
     'http://localhost:5173',
     'http://localhost:3000',
   ]

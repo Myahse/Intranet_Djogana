@@ -1,4 +1,4 @@
-const DEFAULT_RENDER_API_BASE = 'https://intranet-djogana.onrender.com'
+const DEFAULT_PRODUCTION_API_BASE = 'https://intranet-djogana.ci'
 
 function isDjoganaProdHost(hostname: string): boolean {
   return hostname === 'intranet-djogana.ci' || hostname.endsWith('.intranet-djogana.ci')
@@ -37,7 +37,7 @@ export function getApiBaseUrl(): string {
  *
  * - Uses `VITE_WS_BASE_URL` if provided.
  * - Otherwise, derives from `VITE_API_BASE_URL`.
- * - If neither is set and we are on `*.intranet-djogana.ci`, connect directly to Render.
+ * - If neither is set and we are on `*.intranet-djogana.ci`, use the production API host.
  */
 export function getWsUrl(): string {
   const wsEnv = (import.meta.env.VITE_WS_BASE_URL as string | undefined) ?? ''
@@ -52,7 +52,7 @@ export function getWsUrl(): string {
         : import.meta.env.DEV
           ? 'http://localhost:3000'
           : isDjoganaProdHost(hostname)
-            ? DEFAULT_RENDER_API_BASE
+            ? DEFAULT_PRODUCTION_API_BASE
             : window.location.origin
 
   return normalizeBaseUrl(base).replace(/^http/, 'ws') + '/ws'

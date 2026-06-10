@@ -1,0 +1,80 @@
+stages:
+  - deploy
+
+variables:
+  APP_PORT: "8010"
+  HOST_PORT: "9091"
+
+.deploy_base:
+  stage: deploy
+  image: docker
+  script:
+    - docker build -t $CI_PROJECT_NAME:${CI_COMMIT_SHORT_SHA} .
+    - docker rm -f $CI_PROJECT_NAME || true
+   
+    - |
+      ENV_FILE="/tmp/intranet_web.env"
+      if [ -n "${DOTENV_FILE:-}" ] && [ -f "${DOTENV_FILE}" ]; then
+        echo "Using GitLab File variable DOTENV_FILE"
+        cp "${DOTENV_FILE}" "${ENV_FILE}"
+      elif [ -n "${DEPLOY_ENV_FILE:-}" ] && [ -f "${DEPLOY_ENV_FILE}" ]; then
+        echo "Using env file: ${DEPLOY_ENV_FILE}"
+        ENV_FILE="${DEPLOY_ENV_FILE}"
+      elif [ -f "ci/dotenv.deploy" ]; then
+        echo "Using ci/dotenv.deploy from repository"
+        cp ci/dotenv.deploy "${ENV_FILE}"
+      else
+        echo "Generating ${ENV_FILE} from GitLab CI/CD variables..."
+        if [ -z "${DATABASE_URL:-}" ] || [ -z "${JWT_SECRET:-}" ] || [ -z "${PUBLIC_BASE_URL:-}" ]; then
+          echo "ERROR: Aucune configuration d'environnement trouvée."
+          echo ""
+          echo "Option A (recommandée) — une seule variable :"
+          echo "  GitLab → Settings → CI/CD → Variables → Add variable"
+          echo "  Key: DOTENV_FILE | Type: File | Value: copier votre fichier .env local"
+          echo ""
+          echo "Option B — variables individuelles (masquer les secrets) :"
+          echo "  DATABASE_URL, JWT_SECRET, PUBLIC_BASE_URL (+ CLOUDINARY_*, FIREBASE_*)"
+          echo ""
+          echo "Option C — fichier sur le runner :"
+          echo "  Variable DEPLOY_ENV_FILE=/chemin/vers/.env"
+          exit 1
+        fi
+        {
+          echo "DATABASE_URL=${DATABASE_URL}"
+          echo "JWT_SECRET=${JWT_SECRET}"
+          echo "PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
+          [ -n "${CLOUDINARY_CLOUD_NAME:-}" ] && echo "CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}"
+          [ -n "${CLOUDINARY_API_KEY:-}" ] && echo "CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}"
+          [ -n "${CLOUDINARY_API_SECRET:-}" ] && echo "CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}"
+        } > "${ENV_FILE}"
+        if [ -n "${FIREBASE_SERVICE_ACCOUNT_JSON:-}" ]; then
+          echo "FIREBASE_SERVICE_ACCOUNT_JSON=${FIREBASE_SERVICE_ACCOUNT_JSON}" >> "${ENV_FILE}"
+        elif [ -n "${FIREBASE_SERVICE_ACCOUNT_JSON_FILE:-}" ] && [ -f "${FIREBASE_SERVICE_ACCOUNT_JSON_FILE}" ]; then
+          printf 'FIREBASE_SERVICE_ACCOUNT_JSON=%s\n' "$(tr -d '\n' < "${FIREBASE_SERVICE_ACCOUNT_JSON_FILE}")" >> "${ENV_FILE}"
+        fi
+      fi
+      echo "ENV_FILE=${ENV_FILE}" > deploy.env.path
+    - |
+      ENV_FILE=$(cat deploy.env.path | cut -d= -f2-)
+      docker run --restart always -d \
+        -p ${HOST_PORT}:${APP_PORT} \
+        -e PORT=${APP_PORT} \
+        --env-file "${ENV_FILE}" \
+        --name $CI_PROJECT_NAME \
+        $CI_PROJECT_NAME:${CI_COMMIT_SHORT_SHA}
+    - sleep 10
+    - docker logs $CI_PROJECT_NAME
+
+deploy-dev:
+  extends: .deploy_base
+  tags:
+    - build
+  only:
+    - develop
+
+deploy-production:
+  extends: .deploy_base
+  tags:
+    - production
+  only:
+    - production

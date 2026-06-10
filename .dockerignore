@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+src/.env
+mobile
+admin
+*.md
+!README.md
+.vscode
+.cursor
+terminals
