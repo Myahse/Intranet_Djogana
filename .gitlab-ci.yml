@@ -20,9 +20,6 @@ variables:
       elif [ -n "${DEPLOY_ENV_FILE:-}" ] && [ -f "${DEPLOY_ENV_FILE}" ]; then
         echo "Using env file: ${DEPLOY_ENV_FILE}"
         ENV_FILE="${DEPLOY_ENV_FILE}"
-      elif [ -f "ci/dotenv.deploy" ]; then
-        echo "Using ci/dotenv.deploy from repository"
-        cp ci/dotenv.deploy "${ENV_FILE}"
       else
         echo "Generating ${ENV_FILE} from GitLab CI/CD variables..."
         if [ -z "${DATABASE_URL:-}" ] || [ -z "${JWT_SECRET:-}" ] || [ -z "${PUBLIC_BASE_URL:-}" ]; then

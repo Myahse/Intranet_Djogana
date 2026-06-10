@@ -92,8 +92,7 @@ Intranet_Djogana/
 ├── Dockerfile              # Image Docker (frontend + API)
 ├── .gitlab-ci.yml          # Pipeline GitLab (deploy dev / prod)
 ├── vercel.json             # Rewrites Vercel → backend
-├── render.yaml             # Configuration Render (transition)
-└── .env.example            # Modèle de variables d'environnement
+└── render.yaml             # Configuration Render (transition)
 ```
 
 ### Principaux endpoints API
@@ -113,7 +112,7 @@ Intranet_Djogana/
 
 ## Variables d'environnement
 
-Copier `.env.example` vers `.env` à la racine du projet.
+Créer un fichier `.env` à la racine du projet (non versionné).
 
 | Variable | Description |
 |----------|-------------|

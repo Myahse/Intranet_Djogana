@@ -16,7 +16,12 @@ dist-ssr
 .env
 .env.local
 .env.production
+.env.example
+src/.env
+mobile/.env
+mobile/.env.example
 ci/dotenv.deploy
+ci/dotenv.deploy.example
 
 # Firebase service account keys
 *-firebase-adminsdk-*.json
