@@ -2,6 +2,10 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://intranet-djogana-fhhd.onrender.com/api/$1" },
     { "source": "/files/(.*)", "destination": "https://intranet-djogana-fhhd.onrender.com/files/$1" },
+    {
+      "source": "/download/intranet-auth.apk",
+      "destination": "https://pub-e7b94b0e8bb94a6e8eca053bb9811f10.r2.dev/intranet-auth.apk"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

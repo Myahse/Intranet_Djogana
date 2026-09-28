@@ -9,14 +9,16 @@ import { wakeApi } from "@/utils/apiBase"
 
 /**
  * APK download link.
- * Prefer `VITE_ANDROID_APK_URL` (e.g. Google Drive direct link) to avoid hosting a large file on the app server.
- * Fallback: static file in `public/app/` if present.
+ * External R2 URLs open in a new tab on mobile and often fail to start a download;
+ * production uses a same-origin path proxied to R2 in `vercel.json`.
  */
+const APK_FILE_NAME = 'intranet-auth.apk'
+const APK_SAME_ORIGIN_PATH = `/download/${APK_FILE_NAME}`
+const configuredApkUrl = (import.meta.env.VITE_ANDROID_APK_URL as string | undefined)?.trim()
 const ANDROID_APK_HREF =
-  (import.meta.env.VITE_ANDROID_APK_URL as string | undefined)?.trim() ||
-  "/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk"
-
-const isExternalApkUrl = /^https?:\/\//i.test(ANDROID_APK_HREF)
+  configuredApkUrl && /^https?:\/\//i.test(configuredApkUrl)
+    ? APK_SAME_ORIGIN_PATH
+    : configuredApkUrl || '/app/application-10220baa-3ebd-47bd-9b63-dc55f6d0d732.apk'
 
 const Landing = () => {
   const { user } = useAuth()
@@ -112,9 +114,7 @@ const Landing = () => {
             </div>
             <a
               href={ANDROID_APK_HREF}
-              {...(isExternalApkUrl
-                ? { target: "_blank", rel: "noopener noreferrer" }
-                : { download: true })}
+              download={APK_FILE_NAME}
               className="group inline-flex items-center rounded-xl border bg-card px-3 py-2 text-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-muted/60"
               aria-label="Télécharger l'application Android"
             >

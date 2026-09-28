@@ -15,6 +15,11 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://localhost:3000', changeOrigin: true },
       '/files': { target: 'http://localhost:3000', changeOrigin: true },
+      '/download/intranet-auth.apk': {
+        target: 'https://pub-e7b94b0e8bb94a6e8eca053bb9811f10.r2.dev',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/download/, ''),
+      },
     },
   },
 })
