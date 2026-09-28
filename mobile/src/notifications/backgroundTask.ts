@@ -18,6 +18,7 @@ import {
   ACTION_DENY,
   APPROVAL_CHANNEL_ID,
 } from "./constants";
+import { resolveApiBaseUrl } from "../apiBaseUrl";
 
 // ── Inline helpers so we don't rely on metro aliases inside the task ──
 
@@ -48,11 +49,11 @@ async function getApiBaseUrl(): Promise<string> {
   try {
     const Constants = require("expo-constants").default;
     const extraUrl = Constants?.expoConfig?.extra?.apiUrl?.trim();
-    if (extraUrl) return extraUrl.replace(/\/+$/, "");
+    if (extraUrl) return resolveApiBaseUrl(extraUrl);
   } catch {
     /* ignore */
   }
-  return process.env.EXPO_PUBLIC_API_URL?.trim()?.replace(/\/+$/, "") || "";
+  return resolveApiBaseUrl(process.env.EXPO_PUBLIC_API_URL);
 }
 
 async function callApi(

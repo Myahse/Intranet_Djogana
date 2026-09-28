@@ -80,7 +80,7 @@ module.exports = {
         projectId: "6ae03c31-2398-4710-9a5d-8f1cb7ac8156",
       },
       // Included in the APK at EAS build time (from preview/production profile env)
-      apiUrl: process.env.EXPO_PUBLIC_API_URL || "",
+      apiUrl: process.env.EXPO_PUBLIC_API_URL || "https://intranet-djogana-fhhd.onrender.com",
     },
   },
 };

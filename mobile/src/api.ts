@@ -3,6 +3,7 @@
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
+import { PRODUCTION_API_BASE, resolveApiBaseUrl } from "./apiBaseUrl";
 
 function getDevServerHostSync(): string | null {
   const sources: (Record<string, unknown> | null)[] = [
@@ -41,36 +42,33 @@ function getApiPort(): string {
   return port || "3000";
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
-}
-
 async function getApiBaseUrl(): Promise<string> {
   if (cachedBaseUrl) return cachedBaseUrl;
-  // URL injectée au build EAS via app.config.js (extra.apiUrl)
   const extraUrl = (Constants.expoConfig as { extra?: { apiUrl?: string } } | null)?.extra?.apiUrl?.trim();
-  if (extraUrl) {
-    cachedBaseUrl = normalizeBaseUrl(extraUrl);
+  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  const configured = extraUrl || envUrl;
+  if (configured) {
+    cachedBaseUrl = resolveApiBaseUrl(configured);
     return cachedBaseUrl;
   }
-  if (process.env.EXPO_PUBLIC_API_URL?.trim()) {
-    cachedBaseUrl = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL.trim());
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    const port = getApiPort();
+    let host = getDevServerHostSync();
+    if (!host) {
+      const initialUrl = await Linking.getInitialURL();
+      host = parseHostFromExpUrl(initialUrl);
+    }
+    if (host) {
+      cachedBaseUrl = `http://${host}:${port}`;
+      return cachedBaseUrl;
+    }
+    cachedBaseUrl =
+      Platform.OS === "android"
+        ? `http://10.0.2.2:${port}`
+        : `http://localhost:${port}`;
     return cachedBaseUrl;
   }
-  const port = getApiPort();
-  let host = getDevServerHostSync();
-  if (!host) {
-    const initialUrl = await Linking.getInitialURL();
-    host = parseHostFromExpUrl(initialUrl);
-  }
-  if (host) {
-    cachedBaseUrl = `http://${host}:${port}`;
-    return cachedBaseUrl;
-  }
-  cachedBaseUrl =
-    Platform.OS === "android"
-      ? `http://10.0.2.2:${port}`
-      : `http://localhost:${port}`;
+  cachedBaseUrl = PRODUCTION_API_BASE;
   return cachedBaseUrl;
 }
 
