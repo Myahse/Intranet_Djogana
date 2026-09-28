@@ -856,6 +856,24 @@ async function initDb() {
       ON CONFLICT (role_id) DO NOTHING
     `
   )
+
+  // Empty databases have no admin, and /api/auth/register cannot create one
+  // without an existing admin. Seed the documented bootstrap account once.
+  const adminUsers = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM users WHERE LOWER(role) = 'admin'"
+  )
+  if ((adminUsers.rows[0]?.n || 0) === 0) {
+    const ident = String(process.env.ADMIN_BOOTSTRAP_IDENTIFIANT || '1234567890').trim()
+    const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || '1234567890')
+    const hash = await bcrypt.hash(password, 10)
+    await pool.query(
+      `INSERT INTO users (id, name, prenoms, identifiant, password_hash, role, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, 'admin', true)
+       ON CONFLICT (identifiant) DO NOTHING`,
+      [uuidv4(), 'Administrateur', 'Système', ident, hash]
+    )
+    console.log(`[initDb] Bootstrap admin created (identifiant=${ident}). Change this password.`)
+  }
 }
 
 // Disk storage avoids holding the whole file in RAM (memoryStorage + large uploads = OOM on 2GB hosts).
