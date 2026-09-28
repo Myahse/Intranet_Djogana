@@ -1,7 +1,7 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://intranet-djogana-leok.onrender.com/api/$1" },
-    { "source": "/files/(.*)", "destination": "https://intranet-djogana-leok.onrender.com/files/$1" },
+    { "source": "/api/(.*)", "destination": "https://intranet-djogana-fhhd.onrender.com/api/$1" },
+    { "source": "/files/(.*)", "destination": "https://intranet-djogana-fhhd.onrender.com/files/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

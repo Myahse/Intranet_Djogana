@@ -1,4 +1,4 @@
-const DEFAULT_PRODUCTION_API_BASE = 'https://intranet-djogana.ci'
+const DEFAULT_PRODUCTION_API_BASE = 'https://intranet-djogana-fhhd.onrender.com'
 
 function isDjoganaProdHost(hostname: string): boolean {
   return hostname === 'intranet-djogana.ci' || hostname.endsWith('.intranet-djogana.ci')

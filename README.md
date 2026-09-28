@@ -64,7 +64,7 @@ https://intranet-djogana.ci          ← Frontend (Vercel)
         │
         │  /api/*  et  /files/*  (proxy Vercel)
         ▼
-https://intranet-djogana-leok.onrender.com   ← Backend API (Render)
+https://intranet-djogana-fhhd.onrender.com   ← Backend API (Render)
         │
         ├── PostgreSQL (Neon)
         ├── Cloudinary (fichiers)
@@ -193,7 +193,7 @@ Ouvrir [http://localhost:5173](http://localhost:5173).
 | **Développement (CI Docker)** | `develop` | `build` | **9091** | **8010** | `http://<serveur-dev>:9091` |
 | **Production (CI Docker)** | `production` | `production` | **9091** | **8010** | `http://<serveur-prod>:9091` |
 | **Production (site public)** | — | — | — | — | [https://intranet-djogana.ci](https://intranet-djogana.ci) |
-| **Backend Render (actuel)** | — | — | — | — | [https://intranet-djogana-leok.onrender.com](https://intranet-djogana-leok.onrender.com) |
+| **Backend Render (actuel)** | — | — | — | — | [https://intranet-djogana-fhhd.onrender.com](https://intranet-djogana-fhhd.onrender.com) |
 
 > Le mapping Docker est **`9091:8010`** (hôte:conteneur). Express écoute le port **`8010`** dans le conteneur (`PORT=8010`).
 
@@ -263,7 +263,7 @@ curl http://localhost:9091/api/health
 curl http://localhost:9091/api/health
 
 # Backend Render
-curl https://intranet-djogana-leok.onrender.com/api/health
+curl https://intranet-djogana-fhhd.onrender.com/api/health
 
 # Site public via Vercel (proxy)
 curl https://intranet-djogana.ci/api/health
