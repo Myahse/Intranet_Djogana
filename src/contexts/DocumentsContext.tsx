@@ -90,82 +90,74 @@ function buildOfficeViewerUrl(viewUrl: string) {
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(viewUrl)}`
 }
 
-// Chunked upload threshold: files larger than this use chunked upload to Cloudinary
-const CLOUDINARY_CHUNK_SIZE = 6 * 1024 * 1024 // 6 MB per chunk
-
-/** Generate a random unique ID for Cloudinary chunked uploads */
-function uniqueUploadId(): string {
-  return 'xxxxxxxx-xxxx-4xxx'.replace(/x/g, () =>
-    Math.floor(Math.random() * 16).toString(16),
-  )
-}
-
-/**
- * Upload a large file to Cloudinary in chunks using Content-Range headers.
- * Each chunk is sent as a separate POST; Cloudinary reassembles them server-side.
- * This avoids the per-request size limit and works for files up to 5 GB.
- */
-async function uploadToCloudinaryChunked(
-  file: File,
-  sign: { id: string; signature: string; timestamp: number; api_key: string; cloud_name: string; folder: string; resource_type?: string },
-) {
-  const totalSize = file.size
-  const totalChunks = Math.ceil(totalSize / CLOUDINARY_CHUNK_SIZE)
-  const uploadId = uniqueUploadId()
-  const resType = sign.resource_type || 'auto'
-  const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloud_name}/${resType}/upload`
-
-  let lastResult: Record<string, unknown> | null = null
-
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * CLOUDINARY_CHUNK_SIZE
-    const end = Math.min(start + CLOUDINARY_CHUNK_SIZE, totalSize)
-    const chunk = file.slice(start, end)
-
-    const form = new FormData()
-    form.append('file', chunk)
-    form.append('api_key', sign.api_key)
-    form.append('timestamp', String(sign.timestamp))
-    form.append('signature', sign.signature)
-    form.append('folder', sign.folder)
-    form.append('public_id', sign.id)
-
-    const res = await fetch(uploadUrl, {
-      method: 'POST',
-      body: form,
-      headers: {
-        'X-Unique-Upload-Id': uploadId,
-        'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`,
-      },
-    })
-
-    if (i === totalChunks - 1) {
-      // Final chunk — Cloudinary returns the full upload result
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error?.message ?? '\u00c9chec de l\'upload Cloudinary (chunked)')
-      }
-      lastResult = await res.json()
-    } else if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err?.error?.message ?? `\u00c9chec du chunk ${i + 1}/${totalChunks}`)
-    }
-  }
-
-  return lastResult!
-}
-
-/**
- * Upload via the old multipart endpoint (server receives the file, uploads to Cloudinary or stores as bytea).
- * Used as a fallback when the file exceeds Cloudinary's direct-upload size limits.
- */
-async function uploadViaMultipart(
+async function uploadToServer(
   file: File,
   folderName: string,
   directionId: string,
   identifiant: string,
-  customName?: string,
+  customName?: string
 ) {
+  const signRes = await fetch(`${API_BASE_URL}/api/files/sign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      folder: folderName,
+      direction_id: directionId,
+      identifiant,
+      file_name: customName?.trim() || file.name,
+      mime_type: file.type || 'application/octet-stream',
+      size: file.size,
+    }),
+  })
+  if (signRes.ok) {
+    const sign = (await signRes.json()) as {
+      use_direct?: boolean
+      id: string
+      upload_url: string
+      headers?: Record<string, string>
+      storage_key: string
+      storage_url?: string | null
+      name: string
+    }
+    if (sign.use_direct && sign.upload_url) {
+      const putRes = await fetch(sign.upload_url, {
+        method: 'PUT',
+        headers: sign.headers || { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      })
+      if (!putRes.ok) {
+        throw new Error('Échec de l\'envoi du fichier vers le stockage')
+      }
+      const regRes = await fetch(`${API_BASE_URL}/api/files/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: sign.id,
+          name: sign.name,
+          mime_type: file.type || 'application/octet-stream',
+          size: file.size,
+          folder: folderName,
+          direction_id: directionId,
+          identifiant,
+          storage_key: sign.storage_key,
+          storage_url: sign.storage_url,
+        }),
+      })
+      if (!regRes.ok) {
+        const err = await regRes.json().catch(() => ({}))
+        throw new Error(err?.error ?? 'Échec de l\'enregistrement du fichier')
+      }
+      return (await regRes.json()) as {
+        id: string
+        name: string
+        size: number
+        url: string
+        view_url?: string
+        icon_url?: string | null
+      }
+    }
+  }
+
   const form = new FormData()
   form.append('file', file)
   form.append('folder', folderName)
@@ -182,90 +174,6 @@ async function uploadViaMultipart(
     throw new Error(err?.error ?? '\u00c9chec de l\'upload')
   }
   return (await res.json()) as { id: string; name: string; size: number; url: string; view_url?: string; icon_url?: string | null }
-}
-
-async function uploadToServer(
-  file: File,
-  folderName: string,
-  directionId: string,
-  identifiant: string,
-  customName?: string
-) {
-  // 1) Get a Cloudinary signature from our server (lightweight JSON \u2014 no file data)
-  const signRes = await fetch(`${API_BASE_URL}/api/files/sign`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      folder: folderName,
-      direction_id: directionId,
-      identifiant,
-      file_name: file.name,
-      mime_type: file.type || 'application/octet-stream',
-      size: file.size,
-    }),
-  })
-  if (!signRes.ok) {
-    const err = await signRes.json().catch(() => ({}))
-    throw new Error(err?.error ?? '\u00c9chec de la signature')
-  }
-  const sign = await signRes.json()
-
-  // If the server says the file is too large for direct Cloudinary upload, fall back to multipart
-  if (sign.use_direct === false) {
-    return uploadViaMultipart(file, folderName, directionId, identifiant, customName)
-  }
-
-  // 2) Upload to Cloudinary — chunked for large files, single request for small ones
-  const resType = sign.resource_type || 'auto'
-  let cloudResult: Record<string, unknown>
-
-  if (file.size > CLOUDINARY_CHUNK_SIZE) {
-    // Large file: chunked upload (supports files up to 5 GB)
-    cloudResult = await uploadToCloudinaryChunked(file, sign)
-  } else {
-    // Small file: single request
-    const cloudForm = new FormData()
-    cloudForm.append('file', file)
-    cloudForm.append('api_key', sign.api_key)
-    cloudForm.append('timestamp', String(sign.timestamp))
-    cloudForm.append('signature', sign.signature)
-    cloudForm.append('folder', sign.folder)
-    cloudForm.append('public_id', sign.id)
-
-    const cloudRes = await fetch(
-      `https://api.cloudinary.com/v1_1/${sign.cloud_name}/${resType}/upload`,
-      { method: 'POST', body: cloudForm },
-    )
-    if (!cloudRes.ok) {
-      const cloudErr = await cloudRes.json().catch(() => ({}))
-      throw new Error(cloudErr?.error?.message ?? '\u00c9chec de l\'upload Cloudinary')
-    }
-    cloudResult = await cloudRes.json()
-  }
-
-  // 3) Register file metadata on our server (small JSON \u2014 no file data)
-  const regRes = await fetch(`${API_BASE_URL}/api/files/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: sign.id,
-      name: customName?.trim() || file.name,
-      mime_type: file.type || 'application/octet-stream',
-      size: file.size,
-      folder: folderName,
-      direction_id: directionId,
-      identifiant,
-      cloudinary_url: cloudResult.secure_url as string,
-      cloudinary_public_id: cloudResult.public_id as string,
-      direction_code: sign.direction_code,
-    }),
-  })
-  if (!regRes.ok) {
-    const err = await regRes.json().catch(() => ({}))
-    throw new Error(err?.error ?? '\u00c9chec de l\'enregistrement du fichier')
-  }
-
-  return (await regRes.json()) as { id: string; name: string; size: number; url: string; view_url?: string; icon_url?: string | null }
 }
 
 type FolderMeta = {

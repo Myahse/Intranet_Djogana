@@ -1,11 +1,29 @@
-
-
 services:
   - type: web
     name: intranet-djogana
     runtime: node
+    plan: free
     buildCommand: npm run render:build
     startCommand: npm run start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=384"
+      - key: RENDER_LOW_MEMORY
+        value: "1"
+      - key: PG_POOL_MAX
+        value: "2"
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false

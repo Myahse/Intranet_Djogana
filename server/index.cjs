@@ -11,8 +11,8 @@ const jwt = require('jsonwebtoken')
 const cloudinary = require('cloudinary').v2
 const { WebSocketServer } = require('ws')
 const http = require('http')
-const AdmZip = require('adm-zip')
 const path = require('path')
+const r2 = require('./r2.cjs')
 const fs = require('fs')
 const os = require('os')
 const { Readable } = require('stream')
@@ -43,23 +43,16 @@ function escapeLikePattern(value) {
   return String(value).replace(/([\\%_])/g, '\\$1')
 }
 
-// ---------- Cloudinary ----------
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-})
-if (!process.env.CLOUDINARY_CLOUD_NAME) {
-  console.warn('[cloudinary] WARNING: CLOUDINARY_CLOUD_NAME is not set. File uploads will fail.')
+// ---------- Optional Cloudinary (legacy files only) ----------
+// New uploads are stored in Postgres `files.data`. Cloudinary is used only to
+// serve or delete files that were uploaded before this change.
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  })
 }
-
-/**
- * Cloudinary rejects uploads above this size on many plans (often 20MB for raw *and* video).
- * Files larger than this use POST /api/files (multipart) and are stored in DB bytea instead.
- * Override with CLOUDINARY_MAX_UPLOAD_MB if your plan allows larger direct uploads.
- */
-const CLOUDINARY_MAX_UPLOAD_BYTES =
-  Math.max(1, Number(process.env.CLOUDINARY_MAX_UPLOAD_MB || 20)) * 1024 * 1024
 
 // ---------- APK Icon Extraction ----------
 /**
@@ -69,6 +62,7 @@ const CLOUDINARY_MAX_UPLOAD_BYTES =
  */
 function extractApkIcon(fileBuffer) {
   try {
+    const AdmZip = require('adm-zip')
     const zip = new AdmZip(fileBuffer)
     const entries = zip.getEntries()
 
@@ -271,6 +265,20 @@ async function sendExpoPushNotifications(tokens, message) {
   }
 }
 
+const LOW_MEMORY = /^(1|true|yes)$/i.test(String(process.env.RENDER_LOW_MEMORY || ''))
+
+async function deleteStoredBlobs(rows) {
+  const list = Array.isArray(rows) ? rows : [rows]
+  for (const row of list) {
+    if (!row) continue
+    if (row.storage_key) await r2.deleteObject(row.storage_key)
+    if (row.cloudinary_public_id && process.env.CLOUDINARY_CLOUD_NAME) {
+      try { await cloudinary.uploader.destroy(row.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
+      try { await cloudinary.uploader.destroy(row.cloudinary_public_id) } catch (_) { /* ignore */ }
+    }
+  }
+}
+
 const JWT_SECRET = process.env.JWT_SECRET
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET is not set')
@@ -386,7 +394,11 @@ const pool = new Pool({
   max: Math.max(
     2,
     Math.min(
-      parseInt(process.env.PG_POOL_MAX || (process.env.NODE_ENV === 'production' ? '5' : '10'), 10) || 5,
+      parseInt(
+        process.env.PG_POOL_MAX ||
+          (LOW_MEMORY ? '2' : process.env.NODE_ENV === 'production' ? '5' : '10'),
+        10
+      ) || 2,
       20
     )
   ),
@@ -648,15 +660,11 @@ async function initDb() {
   // Migration: add Cloudinary columns to existing tables
   try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS cloudinary_url text') } catch (_) { /* ignore */ }
   try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS cloudinary_public_id text') } catch (_) { /* ignore */ }
-  // Make data column nullable for Cloudinary-stored files
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key text') } catch (_) { /* ignore */ }
+  try { await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_url text') } catch (_) { /* ignore */ }
+  // Make data column nullable (object-store files have no bytea)
   try { await pool.query('ALTER TABLE files ALTER COLUMN data DROP NOT NULL') } catch (_) { /* ignore */ }
 
-  // Background migration: move existing bytea files to Cloudinary
-  if (process.env.CLOUDINARY_CLOUD_NAME) {
-    migrateLegacyFilesToCloudinary(pool).catch(err =>
-      console.error('[cloudinary-migration] error:', err?.message || err)
-    )
-  }
 
   try {
     await pool.query(`
@@ -4520,65 +4528,21 @@ app.post('/api/files', (req, res, next) => {
       [folderId, folder, directionId]
     )
 
-    let resourceType = 'raw'
-    if (mimeType.startsWith('image/')) resourceType = 'image'
-    else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) resourceType = 'video'
-
     const fileSize = Number(req.file.size) || 0
-    const useCloudinary = fileSize <= CLOUDINARY_MAX_UPLOAD_BYTES
-
-    let cloudinaryUrl = null
-    let cloudinaryPublicId = null
-
-    if (useCloudinary) {
-      const cloudinaryOpts = {
-        folder: `intranet/${directionCode}/${folder}`,
-        public_id: id,
-        resource_type: resourceType,
-      }
-      const cloudinaryResult = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          cloudinaryOpts,
-          (error, result) => {
-            if (error) reject(error)
-            else resolve(result)
-          }
-        )
-        fs.createReadStream(tmpPath).on('error', reject).pipe(uploadStream)
+    if (!r2.isConfigured()) {
+      return res.status(503).json({
+        error:
+          'Stockage fichiers non configuré. Définissez R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY et R2_BUCKET (Cloudflare R2, gratuit jusqu’à 10 Go).',
       })
-      cloudinaryUrl = cloudinaryResult.secure_url
-      cloudinaryPublicId = cloudinaryResult.public_id
     }
 
-    let dataForDb = null
-    if (!useCloudinary) {
-      dataForDb = fs.readFileSync(tmpPath)
-    }
+    const storageKey = r2.objectKey(directionCode, folder, id, storedFileName)
+    await r2.putFile(tmpPath, storageKey, mimeType)
+    const storageUrl = r2.publicUrlForKey(storageKey)
 
-    // Extract APK icon if this is an APK file
-    let iconUrl = null
-    if (storedFileName.toLowerCase().endsWith('.apk')) {
-      // Large APKs can cause high memory/CPU usage during ZIP parsing and may crash small hosts.
-      // Skip icon extraction for large APKs; the upload should still succeed.
-      const APK_ICON_MAX_BYTES = 25 * 1024 * 1024 // 25 MB
-      if (fileSize <= APK_ICON_MAX_BYTES) {
-        try {
-          const apkBufForIcon = dataForDb || fs.readFileSync(tmpPath)
-          const iconBuffer = extractApkIcon(apkBufForIcon)
-          if (iconBuffer) {
-            const cloudinaryFolder = `intranet/${directionCode}/${folder}`
-            iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
-          }
-        } catch (err) {
-          console.error('[apk-icon] Skipping icon extraction (error):', err?.message || err)
-        }
-      }
-    }
-
-    // Store in DB — large files go in the `data` bytea column, small files use Cloudinary URL
     await pool.query(
-      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data, icon_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data, icon_url, storage_key, storage_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, NULL, NULL, $8, $9)`,
       [
         id,
         storedFileName,
@@ -4587,15 +4551,12 @@ app.post('/api/files', (req, res, next) => {
         folder,
         directionId,
         uploadedBy,
-        cloudinaryUrl,
-        cloudinaryPublicId,
-        useCloudinary ? null : dataForDb,
-        iconUrl,
+        storageKey,
+        storageUrl,
       ]
     )
 
-    // The view_url always works because /files/:id serves from Cloudinary OR bytea
-    const publicUrl = cloudinaryUrl || `${BASE_URL}/files/${encodeURIComponent(id)}`
+    const publicUrl = `${BASE_URL}/files/${encodeURIComponent(id)}`
 
     await insertActivityLog(pool, {
       action: 'upload_file',
@@ -4652,7 +4613,6 @@ app.post('/api/files', (req, res, next) => {
       url: publicUrl,
       view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
-      icon_url: iconUrl || undefined,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -4673,7 +4633,21 @@ app.post('/api/files', (req, res, next) => {
 
 app.post('/api/files/sign', async (req, res) => {
   try {
-    const { folder, direction_id: directionId, identifiant, mime_type: mimeType, size } = req.body || {}
+    if (!r2.isConfigured()) {
+      return res.status(503).json({
+        error:
+          'Stockage fichiers non configuré (Cloudflare R2). Voir R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET.',
+      })
+    }
+
+    const {
+      folder,
+      direction_id: directionId,
+      identifiant,
+      mime_type: mimeType,
+      file_name: fileName,
+      size,
+    } = req.body || {}
 
     if (!directionId) {
       return res.status(400).json({ error: 'Direction requise pour l\'upload.' })
@@ -4694,7 +4668,6 @@ app.post('/api/files/sign', async (req, res) => {
     const u = userRes.rows[0]
     const uploadedBy = u.id
 
-    // Check if user has access to upload to this direction
     const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
     if (!hasAccess) {
       return res.status(403).json({
@@ -4710,41 +4683,29 @@ app.post('/api/files/sign', async (req, res) => {
       return res.status(400).json({ error: 'Direction invalide.' })
     }
     const directionCode = (dirRes.rows[0].code || 'DEF').toString().toUpperCase()
-
-    const fileSize = Number(size) || 0
-    if (fileSize > CLOUDINARY_MAX_UPLOAD_BYTES) {
-      return res.json({ use_direct: false, direction_code: directionCode })
-    }
-
-    const mime = (mimeType || '').toLowerCase()
-    let resourceType = 'raw'
-    if (mime.startsWith('image/')) resourceType = 'image'
-    else if (mime.startsWith('video/') || mime.startsWith('audio/')) resourceType = 'video'
-
+    const folderName = folder || 'default'
     const id = uuidv4()
-    const cloudinaryFolder = `intranet/${directionCode}/${folder || 'default'}`
-    const timestamp = Math.round(Date.now() / 1000)
 
-    const paramsToSign = {
-      timestamp,
-      folder: cloudinaryFolder,
-      public_id: id,
+    let baseName = (fileName || 'document').replace(/^.*[/\\]/, '').trim() || 'document'
+    if (baseName.toUpperCase().startsWith(directionCode + '_')) {
+      baseName = baseName.slice(directionCode.length + 1)
     }
-    const signature = cloudinary.utils.api_sign_request(
-      paramsToSign,
-      process.env.CLOUDINARY_API_SECRET
-    )
+    const storedFileName = directionCode + '_' + baseName
+    const contentType = (mimeType && String(mimeType).trim()) || 'application/octet-stream'
+    const storageKey = r2.objectKey(directionCode, folderName, id, storedFileName)
+    const uploadUrl = r2.presignPut(storageKey, contentType, 3600)
 
     return res.json({
       use_direct: true,
       id,
-      signature,
-      timestamp,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      folder: cloudinaryFolder,
+      upload_url: uploadUrl,
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      storage_key: storageKey,
+      storage_url: r2.publicUrlForKey(storageKey),
       direction_code: directionCode,
-      resource_type: resourceType,
+      name: storedFileName,
+      size: Number(size) || 0,
     })
   } catch (err) {
     console.error('file sign error', err?.message || err)
@@ -4763,15 +4724,13 @@ app.post('/api/files/register', async (req, res) => {
       folder,
       direction_id: directionId,
       identifiant,
-      cloudinary_url: cloudinaryUrl,
-      cloudinary_public_id: cloudinaryPublicId,
-      direction_code: directionCode,
+      storage_key: storageKey,
+      storage_url: storageUrl,
     } = req.body || {}
 
-    if (!id || !name || !directionId || !cloudinaryUrl) {
+    if (!id || !name || !directionId || !storageKey) {
       return res.status(400).json({ error: 'Paramètres manquants.' })
     }
-
     if (!identifiant) {
       return res.status(401).json({ error: 'Authentification requise pour l\'enregistrement de fichiers.' })
     }
@@ -4783,11 +4742,7 @@ app.post('/api/files/register', async (req, res) => {
     if (userRes.rows.length === 0) {
       return res.status(401).json({ error: 'Utilisateur non trouvé.' })
     }
-
-    const u = userRes.rows[0]
-    const uploadedBy = u.id
-
- 
+    const uploadedBy = userRes.rows[0].id
     const hasAccess = await hasDirectionAccess(uploadedBy, directionId)
     if (!hasAccess) {
       return res.status(403).json({
@@ -4795,60 +4750,25 @@ app.post('/api/files/register', async (req, res) => {
       })
     }
 
-    // Idempotency: clients can retry /api/files/register (network / app lifecycle).
-    // If the file is already registered, do NOT re-send notifications.
     const existingById = await pool.query(
-      'SELECT id, name, size, folder, direction_id, cloudinary_url, icon_url FROM files WHERE id = $1 LIMIT 1',
+      'SELECT id, name, size, folder, direction_id FROM files WHERE id = $1 LIMIT 1',
       [id]
     )
     if (existingById.rows.length > 0) {
       const row = existingById.rows[0]
-      const publicUrl = row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`
       return res.json({
         id: row.id,
         name: row.name,
         size: Number(row.size) || 0,
-        url: publicUrl,
+        url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
         view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
         direction_id: row.direction_id,
-        icon_url: row.icon_url || undefined,
         deduped: true,
       })
     }
 
-    if (cloudinaryPublicId) {
-      const existingByPublicId = await pool.query(
-        'SELECT id, name, size, folder, direction_id, cloudinary_url, icon_url FROM files WHERE cloudinary_public_id = $1 LIMIT 1',
-        [cloudinaryPublicId]
-      )
-      if (existingByPublicId.rows.length > 0) {
-        const row = existingByPublicId.rows[0]
-        const publicUrl = row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`
-        return res.json({
-          id: row.id,
-          name: row.name,
-          size: Number(row.size) || 0,
-          url: publicUrl,
-          view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
-          direction_id: row.direction_id,
-          icon_url: row.icon_url || undefined,
-          deduped: true,
-        })
-      }
-    }
-
-    const code = (directionCode || 'DEF').toString().toUpperCase()
-
- 
-    let baseName = (name || 'document').replace(/^.*[/\\]/, '').trim() || 'document'
-    if (baseName.toUpperCase().startsWith(code + '_')) {
-      baseName = baseName.slice(code.length + 1)
-    }
-    const storedFileName = code + '_' + baseName
-
     const folderName = folder || 'default'
     const folderId = uuidv4()
-
     await pool.query(
       `INSERT INTO folders (id, name, direction_id)
        VALUES ($1, $2, $3)
@@ -4856,24 +4776,10 @@ app.post('/api/files/register', async (req, res) => {
       [folderId, folderName, directionId]
     )
 
-    // Extract APK icon if this is an APK file (download from Cloudinary first)
-    let iconUrl = null
-    if (storedFileName.toLowerCase().endsWith('.apk') && cloudinaryUrl) {
-      try {
-        const apkBuffer = await downloadFileBuffer(cloudinaryUrl)
-        const iconBuffer = extractApkIcon(apkBuffer)
-        if (iconBuffer) {
-          const cloudinaryFolder = `intranet/${code}/${folderName}`
-          iconUrl = await uploadApkIconToCloudinary(iconBuffer, cloudinaryFolder, id)
-        }
-      } catch (dlErr) {
-        console.error('[apk-icon] Could not download APK for icon extraction:', dlErr?.message)
-      }
-    }
-
+    const storedFileName = name
     await pool.query(
-      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, cloudinary_url, cloudinary_public_id, data, icon_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10)`,
+      `INSERT INTO files (id, name, mime_type, size, folder, direction_id, uploaded_by, data, storage_key, storage_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9)`,
       [
         id,
         storedFileName,
@@ -4882,13 +4788,10 @@ app.post('/api/files/register', async (req, res) => {
         folderName,
         directionId,
         uploadedBy,
-        cloudinaryUrl,
-        cloudinaryPublicId || null,
-        iconUrl,
+        storageKey,
+        storageUrl || r2.publicUrlForKey(storageKey),
       ]
     )
-
-    const publicUrl = cloudinaryUrl
 
     await insertActivityLog(pool, {
       action: 'upload_file',
@@ -4899,10 +4802,8 @@ app.post('/api/files/register', async (req, res) => {
       entityId: id,
       details: { name: storedFileName, folder: folderName, size: Number(size) || 0 },
     })
-
     broadcastDataChange('files', 'created', { id, directionId, folder: folderName })
 
-    // Notifier les membres de la direction et les utilisateurs avec accès au dossier (app mobile)
     const folderRow = await pool.query(
       'SELECT id FROM folders WHERE direction_id = $1 AND name = $2 LIMIT 1',
       [directionId, folderName]
@@ -4912,8 +4813,6 @@ app.post('/api/files/register', async (req, res) => {
       ? await getIdentifiantsToNotifyForFolder(folderIdForNotify, identifiant)
       : await getIdentifiantsToNotifyForDirection(directionId, identifiant)
     if (toNotify.length > 0) {
-      const dirRow = await pool.query('SELECT name FROM directions WHERE id = $1 LIMIT 1', [directionId])
-      const directionName = (dirRow.rows[0]?.name || '').toString().trim() || 'Direction'
       const uploaderRow = await pool.query(
         'SELECT name, prenoms FROM users WHERE identifiant = $1 LIMIT 1',
         [identifiant]
@@ -4921,18 +4820,16 @@ app.post('/api/files/register', async (req, res) => {
       const uploaderName = uploaderRow.rows[0]
         ? [uploaderRow.rows[0].name, uploaderRow.rows[0].prenoms].filter(Boolean).join(' ').trim() || identifiant
         : identifiant
-      const bodyText = `${directionName} a ajouté un fichier "${storedFileName}"`
       sendPushToIdentifiants(
         toNotify,
-        'Nouveau fichier',
-        bodyText,
+        'Nouveau document',
+        `${storedFileName} — déposé par ${uploaderName}`,
         {
           type: 'document_uploaded',
           fileId: id,
           fileName: storedFileName,
           uploaderName,
           directionId,
-          direction_name: directionName,
           folder: folderName,
           channelId: 'approval_mixkit_v1',
           sound: 'mixkit_correct_answer_tone_2870',
@@ -4945,10 +4842,9 @@ app.post('/api/files/register', async (req, res) => {
       id,
       name: storedFileName,
       size: Number(size) || 0,
-      url: publicUrl,
+      url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       view_url: `${BASE_URL}/files/${encodeURIComponent(id)}`,
       direction_id: directionId,
-      icon_url: iconUrl || undefined,
     })
   } catch (err) {
     console.error('file register error', err?.message || err, err?.stack)
@@ -5725,7 +5621,7 @@ app.get('/api/files', async (req, res) => {
       mime_type: row.mime_type || '',
       folder: normalizeFolderPath(row.folder),
       direction_id: row.direction_id,
-      url: row.cloudinary_url || `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
+      url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
       view_url: `${BASE_URL}/files/${encodeURIComponent(row.id)}`,
       icon_url: row.icon_url || null,
       created_at: row.created_at,
@@ -5743,7 +5639,7 @@ app.get('/files/:id', async (req, res) => {
   try {
     const { id } = req.params
     const result = await pool.query(
-      'SELECT name, mime_type, data, cloudinary_url FROM files WHERE id = $1',
+      'SELECT name, mime_type, data, cloudinary_url, storage_key, storage_url FROM files WHERE id = $1',
       [id]
     )
     if (result.rows.length === 0) {
@@ -5752,10 +5648,49 @@ app.get('/files/:id', async (req, res) => {
 
     const file = result.rows[0]
 
-    // If stored on Cloudinary, proxy the content with correct headers.
-    // A redirect breaks MS Office Viewer because the Cloudinary URL has no
-    // file extension (public_id is a UUID), so the viewer cannot identify
-    // the document type.  By proxying we set the proper Content-Type.
+    if (file.storage_key) {
+      try {
+        if (file.storage_url) {
+          return res.redirect(302, file.storage_url)
+        }
+        const upstream = await fetch(
+          r2.presignGet(file.storage_key, {
+            fileName: file.name,
+            contentType: file.mime_type,
+          })
+        )
+        if (!upstream.ok) {
+          return res.status(502).send('Failed to fetch file from storage')
+        }
+        const len = upstream.headers.get('content-length')
+        if (len) res.setHeader('Content-Length', len)
+        res.setHeader('Content-Type', file.mime_type || 'application/octet-stream')
+        res.setHeader(
+          'Content-Disposition',
+          `inline; filename="${encodeURIComponent(file.name)}"`
+        )
+        if (upstream.body && typeof Readable.fromWeb === 'function') {
+          await pipeline(Readable.fromWeb(upstream.body), res)
+          return
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer())
+        return res.send(buf)
+      } catch (fetchErr) {
+        console.error('[r2] proxy error', fetchErr)
+        return res.status(502).send('Failed to fetch file from storage')
+      }
+    }
+
+    if (file.data) {
+      res.setHeader('Content-Type', file.mime_type || 'application/octet-stream')
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${encodeURIComponent(file.name)}"`
+      )
+      return res.send(file.data)
+    }
+
+    // Legacy files that were uploaded to Cloudinary before this change.
     if (file.cloudinary_url) {
       try {
         const upstream = await fetch(file.cloudinary_url)
@@ -5782,16 +5717,6 @@ app.get('/files/:id', async (req, res) => {
         // Fallback: redirect as before
         return res.redirect(file.cloudinary_url)
       }
-    }
-
-    // Legacy: serve from bytea column
-    if (file.data) {
-      res.setHeader('Content-Type', file.mime_type)
-      res.setHeader(
-        'Content-Disposition',
-        `inline; filename="${encodeURIComponent(file.name)}"`
-      )
-      return res.send(file.data)
     }
 
     return res.status(404).send('File data not found')
@@ -6378,7 +6303,7 @@ app.get('/api/trash', requireAdmin, async (_req, res) => {
         direction_id: r.direction_id,
         direction_name: r.direction_name,
         size: Number(r.size) || 0,
-        url: r.cloudinary_url || null,
+        url: `${BASE_URL}/files/${encodeURIComponent(r.id)}`,
         deleted_at: r.deleted_at,
         deleted_by: r.deleted_by,
       })),
@@ -6491,12 +6416,8 @@ app.delete('/api/trash/:type/:id', requireAdmin, async (req, res) => {
     const { type, id } = req.params
 
     if (type === 'file') {
-      // Delete from Cloudinary first
-      const fileRow = await pool.query('SELECT cloudinary_public_id FROM files WHERE id = $1', [id])
-      if (fileRow.rows.length > 0 && fileRow.rows[0].cloudinary_public_id) {
-        try { await cloudinary.uploader.destroy(fileRow.rows[0].cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
-        try { await cloudinary.uploader.destroy(fileRow.rows[0].cloudinary_public_id) } catch (_) { /* ignore */ }
-      }
+      const fileRow = await pool.query('SELECT cloudinary_public_id, storage_key FROM files WHERE id = $1', [id])
+      if (fileRow.rows.length > 0) await deleteStoredBlobs(fileRow.rows[0])
       await pool.query('DELETE FROM files WHERE id = $1', [id])
     } else if (type === 'link') {
       await pool.query('DELETE FROM links WHERE id = $1', [id])
@@ -6504,12 +6425,8 @@ app.delete('/api/trash/:type/:id', requireAdmin, async (req, res) => {
       const folderRow = await pool.query('SELECT name, direction_id FROM folders WHERE id = $1', [id])
       if (folderRow.rows.length > 0) {
         const { name, direction_id } = folderRow.rows[0]
-        // Delete Cloudinary resources for all files in the folder
-        const filesToDelete = await pool.query('SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL', [name, direction_id])
-        for (const f of filesToDelete.rows) {
-          try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
-          try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
-        }
+        const filesToDelete = await pool.query('SELECT cloudinary_public_id, storage_key FROM files WHERE folder = $1 AND direction_id = $2', [name, direction_id])
+        await deleteStoredBlobs(filesToDelete.rows)
         await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [name, direction_id])
         await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [name, direction_id])
         await pool.query('DELETE FROM folders WHERE id = $1', [id])
@@ -6529,11 +6446,8 @@ app.delete('/api/trash/:type/:id', requireAdmin, async (req, res) => {
 app.delete('/api/trash', requireAdmin, async (_req, res) => {
   try {
     // Delete Cloudinary resources for all soft-deleted files
-    const filesToDelete = await pool.query('SELECT cloudinary_public_id FROM files WHERE deleted_at IS NOT NULL AND cloudinary_public_id IS NOT NULL')
-    for (const f of filesToDelete.rows) {
-      try { await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' }) } catch (_) { /* ignore */ }
-      try { await cloudinary.uploader.destroy(f.cloudinary_public_id) } catch (_) { /* ignore */ }
-    }
+    const filesToDelete = await pool.query('SELECT cloudinary_public_id, storage_key FROM files WHERE deleted_at IS NOT NULL')
+    await deleteStoredBlobs(filesToDelete.rows)
 
     await pool.query('DELETE FROM links WHERE deleted_at IS NOT NULL')
     await pool.query('DELETE FROM files WHERE deleted_at IS NOT NULL')
@@ -6553,21 +6467,10 @@ async function cleanupOldTrash() {
     
     // Get all files to delete (older than 7 days) - including those with Cloudinary resources
     const filesToDelete = await pool.query(
-      'SELECT cloudinary_public_id FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1',
+      'SELECT cloudinary_public_id, storage_key FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1',
       [oneWeekAgo]
     )
-    
-    // Delete Cloudinary resources for files that have them
-    for (const f of filesToDelete.rows) {
-      if (f.cloudinary_public_id) {
-        try {
-          await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' })
-        } catch (_) { /* ignore */ }
-        try {
-          await cloudinary.uploader.destroy(f.cloudinary_public_id)
-        } catch (_) { /* ignore */ }
-      }
-    }
+    await deleteStoredBlobs(filesToDelete.rows)
     
     // Count items before deletion for logging
     const linksCountRes = await pool.query(
@@ -6598,17 +6501,10 @@ async function cleanupOldTrash() {
       const { name, direction_id } = folder
       // Delete Cloudinary resources for files in this folder
       const folderFiles = await pool.query(
-        'SELECT cloudinary_public_id FROM files WHERE folder = $1 AND direction_id = $2 AND cloudinary_public_id IS NOT NULL',
+        'SELECT cloudinary_public_id, storage_key FROM files WHERE folder = $1 AND direction_id = $2',
         [name, direction_id]
       )
-      for (const f of folderFiles.rows) {
-        try {
-          await cloudinary.uploader.destroy(f.cloudinary_public_id, { resource_type: 'raw' })
-        } catch (_) { /* ignore */ }
-        try {
-          await cloudinary.uploader.destroy(f.cloudinary_public_id)
-        } catch (_) { /* ignore */ }
-      }
+      await deleteStoredBlobs(folderFiles.rows)
       // Delete files and links in the folder
       await pool.query('DELETE FROM links WHERE folder = $1 AND direction_id = $2', [name, direction_id])
       await pool.query('DELETE FROM files WHERE folder = $1 AND direction_id = $2', [name, direction_id])
@@ -6859,7 +6755,7 @@ wss.on('connection', async (ws, req) => {
 })
 
 // eslint-disable-next-line no-console
-console.log(`[boot] PORT=${port} NODE_ENV=${process.env.NODE_ENV || ''} dist=${fs.existsSync(FRONTEND_INDEX_FILE) ? 'yes' : 'no'}`)
+console.log(`[boot] PORT=${port} NODE_ENV=${process.env.NODE_ENV || ''} dist=${fs.existsSync(FRONTEND_INDEX_FILE) ? 'yes' : 'no'} lowMemory=${LOW_MEMORY} r2=${r2.isConfigured() ? 'yes' : 'no'}`)
 
 
 server.listen(port, '0.0.0.0', () => {

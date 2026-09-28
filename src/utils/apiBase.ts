@@ -58,3 +58,31 @@ export function getWsUrl(): string {
   return normalizeBaseUrl(base).replace(/^http/, 'ws') + '/ws'
 }
 
+/** Ping the API so a sleeping Render free instance starts before login. */
+export function wakeApi(): void {
+  fetch(`${getApiBaseUrl()}/api/health`, { method: 'GET', cache: 'no-store' }).catch(() => {})
+}
+
+/** fetch() that retries while Render is cold-starting (502/503/504 or network error). */
+export async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const attempts = 4
+  let lastResponse: Response | undefined
+  let lastError: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      lastResponse = await fetch(url, init)
+      if (lastResponse.status !== 502 && lastResponse.status !== 503 && lastResponse.status !== 504) {
+        return lastResponse
+      }
+    } catch (err) {
+      lastError = err
+    }
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 2500 * (i + 1)))
+    }
+  }
+  if (lastResponse) return lastResponse
+  throw lastError instanceof Error ? lastError : new Error('API unreachable')
+}
+
+

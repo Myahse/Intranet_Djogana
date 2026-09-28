@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getApiBaseUrl, getWsUrl } from '../utils/apiBase'
+import { getApiBaseUrl, getWsUrl, apiFetch } from '../utils/apiBase'
 
 const AUTH_STORAGE_KEY = import.meta.env.VITE_AUTH_STORAGE_KEY??'intranet_djogana_user'
 const AUTH_TOKEN_KEY = import.meta.env.VITE_AUTH_TOKEN_KEY??'intranet_djogana_token'
@@ -185,7 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (identifiant: string, motDePasse: string): Promise<boolean> => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
+        const res = await apiFetch(`${getApiBaseUrl()}/api/auth/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -372,7 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       | { error: string }
     > => {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/auth/device/request`, {
+        const res = await apiFetch(`${getApiBaseUrl()}/api/auth/device/request`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(

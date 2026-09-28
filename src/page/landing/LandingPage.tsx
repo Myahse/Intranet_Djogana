@@ -1,10 +1,11 @@
-import { useRef } from "react"
+import { useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Link } from "react-router-dom"
 import logoDjogana from "@/assets/logo_djogana.png"
 import { useAuth } from "@/contexts/AuthContext"
 import { User } from "lucide-react"
 import { useStaggerChildren, useScrollReveal } from "@/hooks/useAnimations"
+import { wakeApi } from "@/utils/apiBase"
 
 /**
  * APK download link.
@@ -24,6 +25,10 @@ const Landing = () => {
 
   useStaggerChildren(heroRef, '> *')
   useScrollReveal(cardsRef)
+
+  useEffect(() => {
+    wakeApi()
+  }, [])
 
   return (
     <div className="min-h-svh flex flex-col bg-gradient-to-b from-background to-muted/30">

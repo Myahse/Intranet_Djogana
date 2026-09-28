@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
-import { getWsUrl } from "@/utils/apiBase"
+import { getWsUrl, wakeApi } from "@/utils/apiBase"
 import logoDjogana from "@/assets/logo_djogana.png"
 import { User, Eye, EyeOff, RefreshCw, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -28,6 +28,10 @@ const Login = () => {
 
   const mainRef = useRef<HTMLDivElement>(null)
   useFadeIn(mainRef, { direction: 'up', duration: 0.5 })
+
+  useEffect(() => {
+    wakeApi()
+  }, [])
 
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
